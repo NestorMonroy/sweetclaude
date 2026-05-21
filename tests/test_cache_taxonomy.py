@@ -1093,3 +1093,153 @@ class TestCompletionCriteriaTableStillWorksForEpics:
         assert len(criteria) == 3
         done_count = sum(1 for c in criteria if c["done"])
         assert done_count == 2
+
+
+# ---------------------------------------------------------------------------
+# QA caucus additions
+# ---------------------------------------------------------------------------
+
+
+class TestBacklogUnlinkedOnly:
+    """backlog(unlinked_only=True) must exclude items with an epic field — used by big-picture."""
+
+    def test_unlinked_only_excludes_items_with_epic(self, tmp_path):
+        project_dir = setup_project(tmp_path)
+        base = str(tmp_path / ".sweetclaude" / "product")
+        write_frontmatter_file(
+            os.path.join(base, "roadmap", "epics", "EP-001-e.md"),
+            {"id": "EP-001", "type": "epic", "title": "E", "status": "active"},
+        )
+        write_frontmatter_file(
+            os.path.join(base, "backlog", "ISSUE-001-linked.md"),
+            {"id": "ISSUE-001", "type": "enhancement", "title": "Linked", "status": "new", "epic": "EP-001"},
+        )
+        write_frontmatter_file(
+            os.path.join(base, "backlog", "ISSUE-002-unlinked.md"),
+            {"id": "ISSUE-002", "type": "bug-fix", "title": "Unlinked", "status": "new"},
+        )
+
+        rebuild(project_dir)
+        backlog = query_backlog(project_dir, unlinked_only=True)
+        ids = [item["id"] for item in backlog]
+
+        assert "ISSUE-002" in ids
+        assert "ISSUE-001" not in ids
+
+
+class TestSummaryReleasesKeyAbsent:
+    """summary must return 'milestones' key and NOT return 'releases' key."""
+
+    def test_releases_key_absent_from_summary(self, tmp_path):
+        project_dir = setup_project(tmp_path)
+        base = str(tmp_path / ".sweetclaude" / "product")
+        write_frontmatter_file(
+            os.path.join(base, "roadmap", "milestones", "MS-001-m.md"),
+            {"id": "MS-001", "type": "milestone", "title": "M", "status": "active"},
+        )
+
+        rebuild(project_dir)
+        summary = query_summary(project_dir)
+
+        assert "milestones" in summary, "summary must contain 'milestones' key"
+        assert "releases" not in summary, "summary must not contain legacy 'releases' key"
+
+
+class TestStatusNormalizationFlowsToSummaryCounts:
+    """A 'done (2026-05-02)' item must increment by_status['done'], not create a new bucket."""
+
+    def test_compound_status_counted_as_bare_keyword(self, tmp_path):
+        project_dir = setup_project(tmp_path)
+        base = str(tmp_path / ".sweetclaude" / "product")
+        write_frontmatter_file(
+            os.path.join(base, "roadmap", "issues", "done", "ISSUE-023-done.md"),
+            {"id": "ISSUE-023", "type": "enhancement", "title": "Done", "status": "done (2026-05-02)"},
+        )
+        write_frontmatter_file(
+            os.path.join(base, "roadmap", "issues", "done", "ISSUE-024-done.md"),
+            {"id": "ISSUE-024", "type": "spike", "title": "Also done", "status": "done"},
+        )
+
+        rebuild(project_dir)
+        summary = query_summary(project_dir)
+
+        assert summary["by_status"].get("done", 0) == 2
+        assert "done (2026-05-02)" not in summary["by_status"]
+
+
+class TestMilestonesCompactJsonShape:
+    """Milestones-compact returned dicts must contain the keys big-picture expects."""
+
+    def test_milestone_dict_has_required_keys(self, tmp_path):
+        project_dir = setup_project(tmp_path)
+        base = str(tmp_path / ".sweetclaude" / "product")
+        write_frontmatter_file(
+            os.path.join(base, "roadmap", "milestones", "MS-001-m.md"),
+            {"id": "MS-001", "type": "milestone", "title": "M", "status": "active"},
+        )
+        write_frontmatter_file(
+            os.path.join(base, "roadmap", "epics", "EP-001-e.md"),
+            {"id": "EP-001", "type": "epic", "title": "E", "status": "active", "milestone": "MS-001",
+             "completion_criteria": ["A"], "completion_criteria_done": []},
+        )
+        write_frontmatter_file(
+            os.path.join(base, "roadmap", "issues", "ISSUE-010-a.md"),
+            {"id": "ISSUE-010", "type": "enhancement", "title": "A", "status": "new", "epic": "EP-001"},
+        )
+
+        rebuild(project_dir)
+
+        assert query_milestones_compact is not None, "query_milestones_compact must be importable"
+        result = query_milestones_compact(project_dir)
+
+        assert len(result) >= 1
+        ms = result[0]
+        for key in ("id", "title", "status", "epics"):
+            assert key in ms, f"milestone dict missing key '{key}'"
+
+        ep = ms["epics"][0]
+        for key in ("id", "title", "status", "criteria_done", "criteria_total", "stories"):
+            assert key in ep, f"epic dict missing key '{key}'"
+
+        story = ep["stories"][0]
+        for key in ("id", "title", "status"):
+            assert key in story, f"story dict missing key '{key}'"
+
+
+class TestCliRegistersNewQueryNames:
+    """The CLI argparse choices must include milestones-compact and epic-issues."""
+
+    def test_milestones_compact_in_cli_choices(self):
+        import cache
+        import argparse
+        import io
+        parser = argparse.ArgumentParser()
+        # Re-parse the source to find the choices list
+        import inspect
+        source = inspect.getsource(cache.main)
+        assert "milestones-compact" in source, "milestones-compact must be registered in CLI choices"
+
+    def test_epic_issues_in_cli_choices(self):
+        import cache
+        import inspect
+        source = inspect.getsource(cache.main)
+        assert "epic-issues" in source, "epic-issues must be registered in CLI choices"
+
+
+class TestNextIdEmptyCache:
+    """next-id on an empty cache (new taxonomy paths) should return ISSUE-001."""
+
+    def test_next_id_returns_001_when_no_issues_in_new_paths(self, tmp_path):
+        project_dir = setup_project(tmp_path)
+        base = str(tmp_path / ".sweetclaude" / "product")
+        write_frontmatter_file(
+            os.path.join(base, "roadmap", "milestones", "MS-001-m.md"),
+            {"id": "MS-001", "type": "milestone", "title": "M", "status": "active"},
+        )
+
+        rebuild(project_dir)
+        result = query_next_id(project_dir, "ISSUE")
+
+        assert result["next_id"] == "ISSUE-001"
+        item_count = len(get_all_items(project_dir))
+        assert item_count >= 1, "rebuild must find items in new taxonomy paths"
