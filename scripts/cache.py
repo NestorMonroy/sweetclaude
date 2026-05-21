@@ -118,7 +118,7 @@ def scan_files(project_dir):
 
 def _normalize_status(status):
     if not status or not isinstance(status, str):
-        return status
+        return 'new'
     # Strip everything after first '(' or ' — ' (em-dash with spaces) or '—'
     # Handle em-dash variants
     for sep in [' — ', '—']:
@@ -155,67 +155,72 @@ def _rebuild_cache(project_dir):
     os.makedirs(os.path.dirname(dbp), exist_ok=True)
     tmp_path = dbp + '.tmp'
     conn = sqlite3.connect(tmp_path)
-    conn.executescript(SCHEMA_SQL)
+    try:
+        conn.executescript(SCHEMA_SQL)
 
-    for fpath in scan_files(project_dir):
-        fm = parse_frontmatter(fpath)
-        if not fm or 'id' not in fm or 'type' not in fm:
-            continue
+        for fpath in scan_files(project_dir):
+            fm = parse_frontmatter(fpath)
+            if not fm or 'id' not in fm or 'type' not in fm:
+                continue
 
-        rel_path = os.path.relpath(fpath, project_dir)
-        item_type = fm.get('type', '')
+            rel_path = os.path.relpath(fpath, project_dir)
+            item_type = fm.get('type', '')
 
-        status = _normalize_status(fm.get('status', 'new'))
-        milestone = _normalize_milestone(fm.get('milestone'))
+            status = _normalize_status(fm.get('status', 'new'))
+            milestone = _normalize_milestone(fm.get('milestone'))
 
-        conn.execute(
-            """INSERT OR REPLACE INTO items
-               (id, type, title, status, priority, effort, epic, epic_sequence,
-                milestone, objective, source_path, created, updated, closed_date)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                fm['id'],
-                item_type,
-                fm.get('title', ''),
-                status,
-                fm.get('priority'),
-                fm.get('effort'),
-                fm.get('epic') if fm.get('epic') not in (None, 'null') else None,
-                fm.get('epic_sequence'),
-                milestone,
-                fm.get('objective'),
-                rel_path,
-                fm.get('created'),
-                fm.get('updated'),
-                fm.get('closed_date'),
-            ),
-        )
-
-        for tag in fm.get('tags', []) or []:
             conn.execute(
-                "INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?, ?)",
-                (fm['id'], tag),
+                """INSERT OR REPLACE INTO items
+                   (id, type, title, status, priority, effort, epic, epic_sequence,
+                    milestone, objective, source_path, created, updated, closed_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    fm['id'],
+                    item_type,
+                    fm.get('title', ''),
+                    status,
+                    fm.get('priority'),
+                    fm.get('effort'),
+                    fm.get('epic') if fm.get('epic') not in (None, 'null') else None,
+                    fm.get('epic_sequence'),
+                    milestone,
+                    fm.get('objective'),
+                    rel_path,
+                    fm.get('created'),
+                    fm.get('updated'),
+                    fm.get('closed_date'),
+                ),
             )
 
-        if item_type == 'epic':
-            done_indexes = set(fm.get('completion_criteria_done', []) or [])
-            for i, crit in enumerate(fm.get('completion_criteria', []) or []):
+            for tag in fm.get('tags', []) or []:
                 conn.execute(
-                    """INSERT OR REPLACE INTO completion_criteria
-                       (epic_id, seq, criterion, done) VALUES (?, ?, ?, ?)""",
-                    (fm['id'], i, crit, 1 if i in done_indexes else 0),
+                    "INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?, ?)",
+                    (fm['id'], tag),
                 )
 
-        # Store depends_on for ANY item type
-        for dep in fm.get('depends_on', []) or []:
-            conn.execute(
-                "INSERT OR IGNORE INTO dependencies (item_id, depends_on) VALUES (?, ?)",
-                (fm['id'], dep),
-            )
+            if item_type == 'epic':
+                done_indexes = set(fm.get('completion_criteria_done', []) or [])
+                for i, crit in enumerate(fm.get('completion_criteria', []) or []):
+                    conn.execute(
+                        """INSERT OR REPLACE INTO completion_criteria
+                           (epic_id, seq, criterion, done) VALUES (?, ?, ?, ?)""",
+                        (fm['id'], i, crit, 1 if i in done_indexes else 0),
+                    )
 
-    conn.commit()
-    conn.close()
-    os.replace(tmp_path, dbp)
+            for dep in fm.get('depends_on', []) or []:
+                conn.execute(
+                    "INSERT OR IGNORE INTO dependencies (item_id, depends_on) VALUES (?, ?)",
+                    (fm['id'], dep),
+                )
+
+        conn.commit()
+        conn.close()
+        os.replace(tmp_path, dbp)
+    except BaseException:
+        conn.close()
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
     return dbp
 
 
