@@ -27,6 +27,7 @@ from fixtures.migrate_taxonomy_fixtures import (
     milestones_dir,
     state_dir,
     collision_map_path,
+    archive_spikes_dir,
     make_yaml_frontmatter_file,
     make_bold_format_file,
     project_dir,  # noqa: F401 — pytest fixture
@@ -282,8 +283,8 @@ class TestCollidingStoryUsesRemappedNumber:
 # Scenario: spike-BL routes to backlog with type spike
 # ---------------------------------------------------------------------------
 
-class TestSpikeBLRoutesToBacklogWithTypeSpike:
-    def test_spike_bl_routes_to_backlog_with_spike_type(self, project_dir):
+class TestSpikeBLRoutesToArchive:
+    def test_spike_bl_routes_to_archive_spikes_directory(self, project_dir):
         sd = spike_dir(project_dir)
         sd.mkdir(parents=True, exist_ok=True)
         make_yaml_frontmatter_file(
@@ -294,12 +295,12 @@ class TestSpikeBLRoutesToBacklogWithTypeSpike:
 
         plan = build_plan(project_dir=str(project_dir))
 
-        move = _find_move(plan, "ISSUE-016")
-        assert move is not None
+        spike_moves = [m for m in plan.moves if m.new_id == "spike-BL-016"]
+        assert len(spike_moves) == 1
+        move = spike_moves[0]
+        assert move.action == "spike_archive"
         dest = str(move.dest).replace("\\", "/")
-        assert "backlog" in dest
-        assert move.frontmatter.get("type") == "spike"
-        assert move.frontmatter.get("migrated_from") == "spike-BL-016"
+        assert "archive/spikes/" in dest
 
 
 # ---------------------------------------------------------------------------
@@ -604,8 +605,9 @@ class TestDuplicateDestPathsAbortPlan:
 # Scenario: Duplicate new_ids abort plan
 # ---------------------------------------------------------------------------
 
-class TestDuplicateNewIdsAbortPlan:
-    def test_duplicate_new_id_from_bl_and_spike_raises_error(self, project_dir):
+class TestSpikeArchiveBehavior:
+    def test_spike_bl_gets_spike_archive_action_not_migrate(self, project_dir):
+        """spike-BL-016 + BL-016 both exist: spike gets spike_archive, BL gets migrate."""
         bl = backlog_dir(project_dir)
         bl.mkdir(parents=True, exist_ok=True)
         make_yaml_frontmatter_file(
@@ -620,8 +622,76 @@ class TestDuplicateNewIdsAbortPlan:
         )
         _write_collision_map(project_dir, {})
 
-        with pytest.raises(Exception, match="ISSUE-016"):
-            build_plan(project_dir=str(project_dir))
+        plan = build_plan(project_dir=str(project_dir))
+
+        spike_moves = [m for m in plan.moves if m.new_id == "spike-BL-016"]
+        assert len(spike_moves) == 1
+        assert spike_moves[0].action == "spike_archive"
+        assert "archive/spikes/" in str(spike_moves[0].dest)
+
+        bl_moves = [m for m in plan.moves if m.new_id == "ISSUE-016"]
+        assert len(bl_moves) == 1
+        assert bl_moves[0].action == "migrate"
+
+    def test_spike_bl_without_matching_bl_still_archived(self, project_dir):
+        """Standalone spike-BL-099 with no BL-099: still gets spike_archive."""
+        sd = spike_dir(project_dir)
+        sd.mkdir(parents=True, exist_ok=True)
+        make_yaml_frontmatter_file(
+            sd / "spike-BL-099-standalone.md",
+            {"id": "spike-BL-099", "title": "Standalone spike", "status": "done"},
+        )
+        _write_collision_map(project_dir, {})
+
+        plan = build_plan(project_dir=str(project_dir))
+
+        spike_moves = [m for m in plan.moves if m.new_id == "spike-BL-099"]
+        assert len(spike_moves) == 1
+        assert spike_moves[0].action == "spike_archive"
+
+    def test_spike_archive_excluded_from_new_id_uniqueness_check(self, project_dir):
+        """spike_archive moves don't produce ISSUE-NNN ids, so no uniqueness conflict."""
+        bl = backlog_dir(project_dir)
+        bl.mkdir(parents=True, exist_ok=True)
+        make_yaml_frontmatter_file(
+            bl / "BL-016-thing.md",
+            {"id": "BL-016", "title": "Thing", "status": "open"},
+        )
+        sd = spike_dir(project_dir)
+        sd.mkdir(parents=True, exist_ok=True)
+        make_yaml_frontmatter_file(
+            sd / "spike-BL-016-thing.md",
+            {"id": "spike-BL-016", "title": "Spike thing", "status": "done"},
+        )
+        _write_collision_map(project_dir, {})
+
+        plan = build_plan(project_dir=str(project_dir))
+        migrate_new_ids = [m.new_id for m in plan.moves if m.action == "migrate"]
+        assert "ISSUE-016" in migrate_new_ids
+        spike_new_ids = [m.new_id for m in plan.moves if m.action == "spike_archive"]
+        assert all("ISSUE" not in nid for nid in spike_new_ids)
+
+    def test_spike_report_backlink_in_parent_issue_frontmatter(self, project_dir):
+        """When spike-BL-016 exists alongside BL-016, the BL's ISSUE gets spike_report field."""
+        bl = backlog_dir(project_dir)
+        bl.mkdir(parents=True, exist_ok=True)
+        make_yaml_frontmatter_file(
+            bl / "BL-016-thing.md",
+            {"id": "BL-016", "title": "Thing", "status": "open"},
+        )
+        sd = spike_dir(project_dir)
+        sd.mkdir(parents=True, exist_ok=True)
+        make_yaml_frontmatter_file(
+            sd / "spike-BL-016-thing.md",
+            {"id": "spike-BL-016", "title": "Spike thing", "status": "done"},
+        )
+        _write_collision_map(project_dir, {})
+
+        plan = build_plan(project_dir=str(project_dir))
+
+        bl_move = [m for m in plan.moves if m.new_id == "ISSUE-016"][0]
+        assert "spike_report" in bl_move.frontmatter
+        assert "archive/spikes/" in bl_move.frontmatter["spike_report"]
 
 
 # ---------------------------------------------------------------------------
@@ -661,6 +731,66 @@ class TestDependsOnRemapping:
         assert move is not None
         assert "ISSUE-040" in move.frontmatter.get("depends_on", [])
         assert "ISSUE-087" in move.frontmatter.get("depends_on", [])
+
+    def test_depends_on_none_sentinel_yields_no_depends_on(self, project_dir):
+        """Bold-format 'depends_on: none' should not iterate characters."""
+        bl = backlog_dir(project_dir)
+        bl.mkdir(parents=True, exist_ok=True)
+        make_bold_format_file(
+            bl / "BL-001-sentinel.md",
+            "BL-001: Sentinel test",
+            {"Status": "open", "Depends on": "none"},
+        )
+        _write_collision_map(project_dir, {})
+
+        plan = build_plan(project_dir=str(project_dir))
+
+        move = _find_move(plan, "ISSUE-001")
+        assert move is not None
+        assert move.frontmatter.get("depends_on") is None
+
+    def test_depends_on_na_sentinel_yields_no_depends_on(self, project_dir):
+        bl = backlog_dir(project_dir)
+        bl.mkdir(parents=True, exist_ok=True)
+        make_bold_format_file(
+            bl / "BL-002-na.md",
+            "BL-002: N/A test",
+            {"Status": "open", "Depends on": "n/a"},
+        )
+        _write_collision_map(project_dir, {})
+
+        plan = build_plan(project_dir=str(project_dir))
+
+        move = _find_move(plan, "ISSUE-002")
+        assert move is not None
+        assert move.frontmatter.get("depends_on") is None
+
+    def test_depends_on_comma_separated_string_split_into_list(self, project_dir):
+        """Bold-format comma-separated depends_on is split and remapped."""
+        bl = backlog_dir(project_dir)
+        bl.mkdir(parents=True, exist_ok=True)
+        make_bold_format_file(
+            bl / "BL-043-comma.md",
+            "BL-043: Comma deps",
+            {"Status": "active", "Depends on": "BL-040 (done), BL-041"},
+        )
+        make_yaml_frontmatter_file(
+            bl / "BL-040-dep.md",
+            {"id": "BL-040", "title": "Dep A", "status": "open"},
+        )
+        make_yaml_frontmatter_file(
+            bl / "BL-041-dep.md",
+            {"id": "BL-041", "title": "Dep B", "status": "open"},
+        )
+        _write_collision_map(project_dir, {})
+
+        plan = build_plan(project_dir=str(project_dir))
+
+        move = _find_move(plan, "ISSUE-043")
+        assert move is not None
+        deps = move.frontmatter.get("depends_on", [])
+        assert "ISSUE-040" in deps
+        assert "ISSUE-041" in deps
 
 
 # ---------------------------------------------------------------------------

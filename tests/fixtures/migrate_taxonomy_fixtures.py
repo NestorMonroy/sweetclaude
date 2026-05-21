@@ -62,6 +62,10 @@ def backlog_archived_dir(project_dir):
     return backlog_dir(project_dir) / "archived"
 
 
+def archive_spikes_dir(project_dir):
+    return product_base(project_dir) / "archive" / "spikes"
+
+
 def state_dir(project_dir):
     return project_dir / ".sweetclaude" / "state"
 
