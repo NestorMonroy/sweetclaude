@@ -35,9 +35,7 @@ If the guard fires: print the message and stop. Do not proceed.
 ```python
 import pathlib, yaml, re, datetime, shutil
 
-BACKLOG_BASE = pathlib.Path('docs/product/backlog')
-TYPE_DIRS = {'story': 'stories', 'bug': 'bugs', 'debt': 'debt', 'chore': 'chores'}
-TYPE_PREFIX = {'story': 'STORY', 'bug': 'BUG', 'debt': 'DEBT', 'chore': 'CHORE'}
+BACKLOG_BASE = pathlib.Path('.sweetclaude/product/backlog')
 SKIP_FILES = {'INDEX.md', 'MIGRATION-MAP.md', 'SCHEMA.md'}
 
 def read_story_file(path):
@@ -63,10 +61,9 @@ def find_story_by_id(story_id):
 def make_slug(title):
     return re.sub(r'-+', '-', re.sub(r'[^a-z0-9]+', '-', title.lower())).strip('-')
 
-def assign_new_id(typ):
+def assign_new_id():
     import subprocess, json
-    prefix = TYPE_PREFIX[typ]
-    r = subprocess.run(['python3', 'scripts/cache.py', '--project-dir', '.', '--query', 'next-id', '--prefix', prefix],
+    r = subprocess.run(['python3', 'scripts/cache.py', '--project-dir', '.', '--query', 'next-id', '--prefix', 'ISSUE'],
         capture_output=True, text=True)
     return json.loads(r.stdout)['next_id']
 
@@ -135,16 +132,16 @@ for p in files:
         stories.append(fm)
 
 # Sort: priority order, then by id
-PRIORITY_ORDER = {'now': 1, 'soon': 2, 'later': 3, 'someday': 4, None: 5}
+PRIORITY_ORDER = {'P0': 0, 'P1': 1, 'P2': 2, 'P3': 3, None: 5}
 stories.sort(key=lambda fm: (PRIORITY_ORDER.get(fm.get('priority'), 5), fm.get('id', '')))
 ```
 
 Present as a compact table. Sort: done/abandoned last, then by priority, then by ID.
 
 ```
-ID         Type    Status      Pri       Eff  Title
-STORY-001  story   new         soon      m    Add OAuth login
-BUG-001    bug     active      now       s    Crash on empty input
+ID          Type    Status      Pri   Eff  Title
+ISSUE-001   story   new         P2    m    Add OAuth login
+ISSUE-002   bug     active      P0    s    Crash on empty input
 ...
 ```
 
@@ -179,9 +176,9 @@ else:
 Present as:
 
 ```
-STORY-001 — Add OAuth login
+ISSUE-001 — Add OAuth login
 Type:      story          Status:   new
-Priority:  soon           Effort:   m
+Priority:  P2             Effort:   m
 Epic:      (none)         Sprint:   (none)
 Origin:    manual
 
@@ -205,10 +202,10 @@ If the issue has been in 2+ sprints without completing, add a warning:
 Ask one question at a time. Do not present a form.
 
 1. **Title** — "What's the issue? One line."
-2. **Type** — "story / bug / debt / chore?" (default: story)
+2. **Type** — "story / bug / debt / chore / enhancement / spike?" (default: story)
 3. **Description** — For stories: "As a [who], they want [what] so that [why]?" For bugs: "Steps to reproduce?" For debt: "What's the structural problem?" For chores: "What needs to be done?"
 4. **Acceptance criteria** (story/bug only) — "What conditions make this done? List them one per line, or say none."
-5. **Priority** — "now / soon / later / someday?" (default: soon)
+5. **Priority** — "P0 / P1 / P2 / P3?" (default: P2)
 6. **Effort** — "s / m / l / xl?" (default: m)
 7. **Epic** — "Does this belong to an epic?" List available epics first, or say none.
 
@@ -216,8 +213,8 @@ Once all answers collected:
 
 ```python
 today = datetime.date.today().isoformat()
-typ = '<type>'  # story, bug, debt, or chore
-new_id = assign_new_id(typ)
+typ = '<type>'  # story, bug, debt, chore, enhancement, spike
+new_id = assign_new_id()
 slug = make_slug('<title>')
 fm = {
     'id': new_id,
@@ -235,7 +232,7 @@ fm = {
     'updated': today,
     'closed_date': None,
 }
-dest = BACKLOG_BASE / TYPE_DIRS[typ] / f"{new_id}-{slug}.md"
+dest = BACKLOG_BASE / f"{new_id}-{slug}.md"
 body = f"\n## Description\n\n<description>\n\n## Acceptance Criteria\n\n<ac>\n"
 write_story_file(dest, fm, body)
 ```
@@ -284,8 +281,7 @@ fm['status'] = 'done'
 fm['closed_date'] = today
 fm['updated'] = today
 
-typ = fm.get('type', 'story')
-done_dir = BACKLOG_BASE / TYPE_DIRS.get(typ, 'stories') / 'done'
+done_dir = BACKLOG_BASE / 'done'
 done_dir.mkdir(parents=True, exist_ok=True)
 new_path = done_dir / path.name
 write_story_file(path, fm, body)  # write first
@@ -310,8 +306,7 @@ fm['sprint'] = None
 fm['closed_date'] = None
 fm['updated'] = today
 
-typ = fm.get('type', 'story')
-active_dir = BACKLOG_BASE / TYPE_DIRS.get(typ, 'stories')
+active_dir = BACKLOG_BASE
 new_path = active_dir / path.name
 write_story_file(path, fm, body)
 if '/done/' in str(path):
@@ -325,7 +320,7 @@ Confirm: `Reopened {ID} — returned to backlog`
 ## Rules
 
 - Never delete an issue — use `close` (status=done, moved to done/) or set status=abandoned for items that won't be done.
-- Closing a story moves the file from `<type>s/<ID>-<slug>.md` to `<type>s/done/<ID>-<slug>.md`. The file is never deleted.
+- Closing an issue moves the file from `<ID>-<slug>.md` to `done/<ID>-<slug>.md`. The file is never deleted.
 - Sprint assignment always goes through `update`, not direct write, so sprint history in the body is maintained.
-- If `$ARGUMENTS` contains an ID that doesn't look like a v4 ID (`STORY-NNN`, `BUG-NNN`, `DEBT-NNN`, `CHORE-NNN`), say: "That doesn't look like a v4 issue ID. IDs take the form STORY-NNN, BUG-NNN, DEBT-NNN, or CHORE-NNN."
-- All reads and writes go directly to `docs/product/backlog/<type>s/<ID>-<slug>.md` files. Never touch `.sweetclaude/product/backlog/`.
+- If `$ARGUMENTS` contains an ID that doesn't look like an issue ID (`ISSUE-NNN`), say: "That doesn't look like an issue ID. IDs take the form ISSUE-NNN."
+- All reads and writes go to `.sweetclaude/product/backlog/<ID>-<slug>.md` files.

@@ -259,7 +259,7 @@ ls .sweetclaude/testing/sessions/QA-*.md 2>/dev/null
 Present each with type, scope, status, and bug count:
 
 ```
-QA-001  scripted    RM-001 Auth flow       closed  2 bugs
+QA-001  scripted    MS-001 Auth flow       closed  2 bugs
 QA-002  exploratory file upload            open    1 bug
 ```
 

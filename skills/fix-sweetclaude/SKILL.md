@@ -239,7 +239,7 @@ For each data-owning skill, check whether it is present in `skills.yaml`. Use th
 If `skills.yaml` is missing entirely: propose creating it (schema v2) with entries inferred from the above.
 If entries are missing from an existing `skills.yaml`: propose adding them with the inferred state.
 
-If `skills.yaml` exists with `schema_version: 1`: do **not** re-implement the migration here. Invoke the registry-driven migration runner (BL-065 refactor):
+If `skills.yaml` exists with `schema_version: 1`: do **not** re-implement the migration here. Invoke the registry-driven migration runner (ISSUE-065 refactor):
 
 ```bash
 RUNNER=~/.claude/scripts/sweetclaude/migrations/runner.py
@@ -647,7 +647,7 @@ Auto-repair: set counter to max(observed, current).
 ```python
 import pathlib, yaml, re
 
-BACKLOG_BASE = pathlib.Path('docs/product/backlog')
+BACKLOG_BASE = pathlib.Path('.sweetclaude/product/backlog')
 import subprocess
 subprocess.run(['python3', 'scripts/cache.py', '--project-dir', '.', '--rebuild'], capture_output=True)
 ```
@@ -666,7 +666,7 @@ Require user confirmation before moving. Do NOT auto-apply.
 import shutil, pathlib
 
 # path = the file in done/
-# active_dir = path.parent.parent  (e.g. docs/product/backlog/stories/)
+# active_dir = path.parent.parent  (e.g. .sweetclaude/product/backlog/)
 active_dir = path.parent.parent
 new_path = active_dir / path.name
 shutil.move(str(path), str(new_path))
@@ -731,4 +731,4 @@ Override the prior heal-context instruction: explicitly state that bootstrap is 
 - **Do not move project files without asking.** The user may have reasons for current locations.
 - **Retroactive register entries are drafts.** Mark them `[retroactive]` so the user knows they were not captured in real-time.
 - **Do not judge the project.** This skill fixes SweetClaude configuration, not project quality.
-- **v4 repairs apply only to `docs/product/backlog/`.** Never touch `.sweetclaude/product/backlog/`.
+- **Repairs apply only to `.sweetclaude/product/backlog/`.**

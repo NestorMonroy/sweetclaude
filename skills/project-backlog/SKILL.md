@@ -49,8 +49,7 @@ All other modes: proceed normally.
 ```python
 import pathlib, yaml, re, datetime
 
-BACKLOG_BASE = pathlib.Path('docs/product/backlog')
-TYPE_DIRS = {'story': 'stories', 'bug': 'bugs', 'debt': 'debt', 'chore': 'chores'}
+BACKLOG_BASE = pathlib.Path('.sweetclaude/product/backlog')
 
 def read_story_file(path):
     raw = pathlib.Path(path).read_bytes().decode('utf-8').replace('\r\n', '\n')
@@ -109,21 +108,21 @@ Use the items loaded above. Present backlog grouped by priority bucket:
 ```
 Backlog — {N} unscheduled issues
 
-NOW ({n})
-  STORY-001  story  xs  Title of issue
+P0 ({n})
+  ISSUE-001  story  xs  Title of issue
 
-SOON ({n})
-  STORY-002  story  m   Title of issue
-  BUG-001    bug    s   Title of issue
+P1 ({n})
+  ISSUE-002  story  m   Title of issue
+  ISSUE-003  bug    s   Title of issue
 
-LATER ({n})
+P2 ({n})
   ...
 
 UNESTIMATED ({n} — no priority or effort set)
-  STORY-NNN  story  —   Title of issue
+  ISSUE-NNN  story  —   Title of issue
 ```
 
-Priority buckets: `now`, `soon`, `later`, `someday` (in that order). Items with no priority → UNESTIMATED.
+Priority buckets: `P0`, `P1`, `P2`, `P3` (in that order). Items with no priority → UNESTIMATED.
 
 After the list, surface any of these conditions if present:
 
@@ -212,4 +211,4 @@ After all reviewed: "Reviewed {N} imported issues: {kept} kept, {edited} edited,
 - Promoting into a sprint does not start the sprint. Sprint activation is done in `project-sprints`.
 - An issue promoted into an active sprint gets status `ready`. An issue promoted into a planned sprint stays `ready`.
 - Never auto-promote an entire backlog into a sprint — always promote individual issues deliberately.
-- All reads and writes go directly to `docs/product/backlog/<type>s/<ID>-<slug>.md` files. Never touch `.sweetclaude/product/backlog/`.
+- All reads and writes go to `.sweetclaude/product/backlog/<ID>-<slug>.md` files.

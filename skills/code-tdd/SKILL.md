@@ -22,7 +22,7 @@ Tests specify behavior. Implementation satisfies tests. Hooks enforce this. No e
 git branch --show-current
 ```
 
-If the current branch already starts with a story ID prefix (e.g., `BL-046/...`, `issue-42/...`) — continue. Branch setup was already handled by the calling skill.
+If the current branch already starts with an issue ID prefix (e.g., `ISSUE-046/...`, `issue-42/...`) — continue. Branch setup was already handled by the calling skill.
 
 If not (direct invocation): derive a branch name from session state `active_work_item.id` + title or from `$ARGUMENTS`. Format: `{ID}/{slug}`. Offer via AskUserQuestion: **Create branch `{branch-name}`** (Recommended) / **Stay on current branch** / **Something else**.
 

@@ -43,8 +43,8 @@ Run these checks any time health is invoked. Each check is gated as noted. Outpu
 ```python
 import pathlib, yaml, re
 
-BACKLOG_BASE = pathlib.Path('docs/product/backlog')
-ROADMAP_BASE = pathlib.Path('docs/product/roadmap')
+BACKLOG_BASE = pathlib.Path('.sweetclaude/product/backlog')
+ROADMAP_BASE = pathlib.Path('.sweetclaude/product/roadmap')
 SC_YAML = pathlib.Path('.sweetclaude/state/sweetclaude.yaml')
 
 lint_findings = []
@@ -58,10 +58,7 @@ def read_fm(path):
         return {}
 
 if BACKLOG_BASE.exists():
-    TYPE_DIRS = {'story': 'stories', 'bug': 'bugs', 'debt': 'debt', 'chore': 'chores'}
-    TYPE_PREFIX = {'story': 'STORY', 'bug': 'BUG', 'debt': 'DEBT', 'chore': 'CHORE'}
-
-    # Rule 1: No story ID in both backlog and roadmap (gate: skip if roadmap absent)
+    # Rule 1: No issue ID in both backlog and roadmap (gate: skip if roadmap absent)
     if ROADMAP_BASE.exists():
         backlog_ids = set()
         for p in BACKLOG_BASE.rglob('*.md'):
@@ -86,22 +83,20 @@ if BACKLOG_BASE.exists():
 
     # Rule 3: Counter state matches file count (cache-based)
     import subprocess, json as json_mod
-    for typ, dir_name in TYPE_DIRS.items():
-        prefix = TYPE_PREFIX[typ]
-        max_seen = 0
-        for p in (BACKLOG_BASE / dir_name).rglob('*.md'):
-            m = re.match(rf'^{prefix}-(\d+)-', p.name)
-            if m:
-                max_seen = max(max_seen, int(m.group(1)))
-        try:
-            r = subprocess.run(['python3', 'scripts/cache.py', '--project-dir', '.', '--query', 'next-id', '--prefix', prefix],
-                capture_output=True, text=True)
-            cache_next = json_mod.loads(r.stdout).get('next_id', '')
-            cache_max = int(re.search(r'(\d+)', cache_next).group(1)) - 1 if cache_next else 0
-        except Exception:
-            cache_max = max_seen
-        if max_seen > cache_max:
-            lint_findings.append(f"counter-drift:{typ} (cache_max={cache_max}, file_max={max_seen})")
+    max_seen = 0
+    for p in BACKLOG_BASE.rglob('*.md'):
+        m = re.match(r'^ISSUE-(\d+)-', p.name)
+        if m:
+            max_seen = max(max_seen, int(m.group(1)))
+    try:
+        r = subprocess.run(['python3', 'scripts/cache.py', '--project-dir', '.', '--query', 'next-id', '--prefix', 'ISSUE'],
+            capture_output=True, text=True)
+        cache_next = json_mod.loads(r.stdout).get('next_id', '')
+        cache_max = int(re.search(r'(\d+)', cache_next).group(1)) - 1 if cache_next else 0
+    except Exception:
+        cache_max = max_seen
+    if max_seen > cache_max:
+        lint_findings.append(f"counter-drift:issue (cache_max={cache_max}, file_max={max_seen})")
 
     # Rule 4: No v3 BL-NNN files present
     sc_version = ''
@@ -123,21 +118,17 @@ if BACKLOG_BASE.exists():
         lint_findings.append(f"v3-files-present:{len(v3_files)} BL-NNN files remain under {v3_backlog}/. Run /sweetclaude:migrate.")
 
     # Rule 5: done/ ↔ status invariant
-    for typ, dir_name in TYPE_DIRS.items():
-        type_dir = BACKLOG_BASE / dir_name
-        done_dir = type_dir / 'done'
-        # Files in done/ must have status done or abandoned
-        if done_dir.exists():
-            for p in done_dir.glob('*.md'):
-                fm = read_fm(p)
-                if fm.get('status') not in ('done', 'abandoned'):
-                    lint_findings.append(f"done-status-mismatch:{p.name} is in done/ but has status={fm.get('status')}")
-        # Files with done/abandoned status must be in done/
-        if type_dir.exists():
-            for p in type_dir.glob('*.md'):  # only immediate children, not done/
-                fm = read_fm(p)
-                if fm.get('status') in ('done', 'abandoned'):
-                    lint_findings.append(f"done-status-mismatch:{p.name} has status={fm.get('status')} but is not in done/")
+    done_dir = BACKLOG_BASE / 'done'
+    if done_dir.exists():
+        for p in done_dir.glob('*.md'):
+            fm = read_fm(p)
+            if fm.get('status') not in ('done', 'abandoned'):
+                lint_findings.append(f"done-status-mismatch:{p.name} is in done/ but has status={fm.get('status')}")
+    if BACKLOG_BASE.exists():
+        for p in BACKLOG_BASE.glob('ISSUE-*.md'):
+            fm = read_fm(p)
+            if fm.get('status') in ('done', 'abandoned'):
+                lint_findings.append(f"done-status-mismatch:{p.name} has status={fm.get('status')} but is not in done/")
 
     # Rule 6: Open epics missing completion_criteria frontmatter
     if ROADMAP_BASE.exists():

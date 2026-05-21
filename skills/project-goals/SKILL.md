@@ -61,7 +61,7 @@ MS-NNN — First paying customer
 ─────────────────────────────────────────
 Status:    pending
 Achieved:  —
-Release:   REL-001
+Milestone: MS-001
 
 Criteria
   First paying customer has completed a transaction.

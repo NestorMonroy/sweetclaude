@@ -30,7 +30,7 @@ Only run if `.sweetclaude/` exists in the current project directory.
 
 Read `.sweetclaude/state/skills.yaml` if it exists.
 
-**Step 1 — schema migration:** If `skills.yaml` exists with `schema_version: 1`, invoke the registry-driven migration runner (BL-066 refactor):
+**Step 1 — schema migration:** If `skills.yaml` exists with `schema_version: 1`, invoke the registry-driven migration runner (ISSUE-066 refactor):
 
 ```bash
 RUNNER=~/.claude/scripts/sweetclaude/migrations/runner.py

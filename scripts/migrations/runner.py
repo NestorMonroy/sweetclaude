@@ -83,7 +83,7 @@ class RecoverableMigrationError(Exception):
         current_file: Path of the specific file the handler was processing
                       when the error occurred. Used by Skip semantics when
                       the runner re-invokes the handler.
-        current_id:   String ID (e.g., "BL-007") of the offending item.
+        current_id:   String ID (e.g., "ISSUE-007") of the offending item.
     """
 
     def __init__(

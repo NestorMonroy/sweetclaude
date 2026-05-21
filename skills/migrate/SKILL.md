@@ -1,6 +1,6 @@
 ---
 name: sweetclaude:migrate
-description: Migrate v3 BL-NNN stories to v4 docs/product/backlog/ layout. User-invocable as /sweetclaude:migrate. Builds backup, validates, previews, executes, verifies, finalizes.
+description: Migrate v3 BL-NNN stories to .sweetclaude/product/backlog/ layout. User-invocable as /sweetclaude:migrate. Builds backup, validates, previews, executes, verifies, finalizes.
 ---
 
 !`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:migrate" 2>/dev/null || true`
@@ -101,8 +101,8 @@ print('|---|---|---|---|---|')
 for it in items:
     import os
     v3_basename = os.path.basename(it['v3_file'])
-    dest_relative = it['dest_path'].split('docs/product/backlog/', 1)[-1]
-    print(f\"| {it['v3_id']} | {v3_basename} | {it['v4_id']} | {it['type']} | docs/product/backlog/{dest_relative} |\")
+    dest_relative = it['dest_path'].split('.sweetclaude/product/backlog/', 1)[-1]
+    print(f\"| {it['v3_id']} | {v3_basename} | {it['v4_id']} | {it['type']} | .sweetclaude/product/backlog/{dest_relative} |\")
 "
 ```
 
@@ -182,12 +182,12 @@ If the backup verification fails, v3 BL files are NOT removed (so the user can r
 ```
 Migration complete.
 
-  Created:       {count} files in docs/product/backlog/
+  Created:       {count} files in .sweetclaude/product/backlog/
   Counters:      story=X bug=Y debt=Z chore=W
   Skipped done:  {skipped_done if any}
   v3 BL files:   {removed | LEFT IN PLACE — backup invalid, see warning above}
   Backup:        $BACKUP_FILE
-  Map:           docs/product/backlog/MIGRATION-MAP.md
+  Map:           .sweetclaude/product/backlog/MIGRATION-MAP.md
 
 To inspect the original v3 BL files, extract the backup:
   tar -xzf $BACKUP_FILE -C /tmp/v3-backup
@@ -206,7 +206,7 @@ Invoked by Step 2 (validation failures) or Step 7 (verify failures).
    tar -xzf "$BACKUP_FILE"
    ```
 
-2. **Remove created files:** Read the saved `.sweetclaude/state/.migrate-created-paths.json` (if Step 5 ran) and delete every path in it. Do not touch anything outside `docs/product/backlog/`.
+2. **Remove created files:** Read the saved `.sweetclaude/state/.migrate-created-paths.json` (if Step 5 ran) and delete every path in it. Do not touch anything outside `.sweetclaude/product/backlog/`.
 
    ```bash
    python3 -c "

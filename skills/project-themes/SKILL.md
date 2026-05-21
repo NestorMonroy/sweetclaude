@@ -191,4 +191,4 @@ Confirm: `TH-NNN closed — {title}`
 - A theme has no "definition of done" — it is a label, not a delivery commitment.
 - No maximum size. Themes can hold 1 issue or 30. They're navigation aids, not sprint containers.
 - Closing a theme does not close its issues.
-- If the user tries to tag a story already tagged with another theme, note it: "I-NNN is currently tagged with TH-NNN. Retag it here?" and wait for confirmation.
+- If the user tries to tag an issue already tagged with another theme, note it: "ISSUE-NNN is currently tagged with TH-NNN. Retag it here?" and wait for confirmation.

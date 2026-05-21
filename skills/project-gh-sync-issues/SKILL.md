@@ -35,7 +35,7 @@ If the guard fires: print the message and stop. Do not proceed.
 ```python
 import pathlib, yaml, datetime, shutil
 
-BACKLOG_BASE = pathlib.Path('docs/product/backlog')
+BACKLOG_BASE = pathlib.Path('.sweetclaude/product/backlog')
 
 def read_story_file(path):
     raw = pathlib.Path(path).read_bytes().decode('utf-8').replace('\r\n', '\n')
@@ -49,9 +49,9 @@ def write_story_file(path, fm, body):
     content = f"---\n{yaml.safe_dump(fm, default_flow_style=False, sort_keys=False).rstrip()}\n---\n{body}"
     pathlib.Path(path).write_text(content, encoding='utf-8')
 
-def all_backlog_story_files():
-    """Enumerate v4 story files under docs/product/backlog/ only.
-    Explicitly excludes docs/product/roadmap/ (out of scope — Phase 2).
+def all_backlog_issue_files():
+    """Enumerate issue files under .sweetclaude/product/backlog/ only.
+    Explicitly excludes .sweetclaude/product/roadmap/ (out of scope — Phase 2).
     """
     roadmap_base = BACKLOG_BASE.parent / 'roadmap'
     result = []
@@ -86,7 +86,7 @@ def close_story_file(path, fm, body):
 
 # GitHub Issues — Sync
 
-Bidirectional status sync between local v4 story files and GitHub Issues. Operates on `docs/product/backlog/` story files only. Roadmap sync is out of scope. Arguments: `$ARGUMENTS`
+Bidirectional status sync between local issue files and GitHub Issues. Operates on `.sweetclaude/product/backlog/` issue files only. Roadmap sync is out of scope. Arguments: `$ARGUMENTS`
 
 ---
 
@@ -114,10 +114,10 @@ If the local story's status is not `done` or `abandoned`, close it:
 
 ```python
 new_path = close_story_file(path, fm, body)
-# File is now at docs/product/backlog/<type>s/done/<ID>-<slug>.md
+# File is now at .sweetclaude/product/backlog/done/<ID>-<slug>.md
 ```
 
-**Guard:** `docs/product/roadmap/` is explicitly out of scope. The `all_backlog_story_files()` function above silently skips any file under that directory if it exists.
+**Guard:** `.sweetclaude/product/roadmap/` is explicitly out of scope. The `all_backlog_issue_files()` function above silently skips any file under that directory if it exists.
 
 ---
 
@@ -162,7 +162,6 @@ If any `gh issue close` fails (e.g., permissions): note the ID and continue. Lis
 
 ## Rules
 
-- Only syncs `docs/product/backlog/` story files. Files under `docs/product/roadmap/` (Phase 2) are silently ignored.
-- Closing a local story via sync moves it to `<type>s/done/` exactly as `project-issues close` does.
+- Only syncs `.sweetclaude/product/backlog/` issue files. Files under `.sweetclaude/product/roadmap/` (Phase 2) are silently ignored.
+- Closing a local issue via sync moves it to `done/` exactly as `project-issues close` does.
 - Import is one-way only (Pass 1 direction for new issues — handled by `project-gh-import-issues`).
-- Never touch `.sweetclaude/product/backlog/`.

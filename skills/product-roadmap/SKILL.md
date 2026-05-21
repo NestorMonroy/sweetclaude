@@ -25,14 +25,14 @@ The roadmap tracks what gets built and when — major features, enhancements, an
 | Arguments | Operation |
 |---|---|
 | (empty) or `list` | → **View** full roadmap stack |
-| `view <RM-NNN>` | → **View** single item |
+| `view <MS-NNN>` | → **View** single item |
 | `new` | → **Create** roadmap item |
-| `activate <RM-NNN>` | → **Activate** — kick off the correct downstream workflow |
-| `defer <RM-NNN>` | → **Defer** item |
-| `complete <RM-NNN>` | → **Mark** complete |
-| `cancel <RM-NNN>` | → **Cancel** item |
+| `activate <MS-NNN>` | → **Activate** — kick off the correct downstream workflow |
+| `defer <MS-NNN>` | → **Defer** item |
+| `complete <MS-NNN>` | → **Mark** complete |
+| `cancel <MS-NNN>` | → **Cancel** item |
 | `release new` | → **Create** a release |
-| `release view <REL-NNN>` | → **View** release and its items |
+| `release view <MS-NNN>` | → **View** release and its items |
 
 ---
 
@@ -47,16 +47,16 @@ Roadmap — {N} items
 ══════════════════════════════════════════════════════════════
 
 IN PROGRESS
-  #1  RM-001  major_feature   Auth SSO support            REL-002
-  #3  RM-005  enhancement     Bulk export                 —
+  #1  MS-001  major_feature   Auth SSO support            MS-002
+  #3  MS-005  enhancement     Bulk export                 —
 
 PLANNED
-  #2  RM-002  minor_feature   Webhook integrations        REL-002
-  #4  RM-003  enhancement     Dark mode                   —
-  #5  RM-004  sunset          Legacy API v1               REL-003
+  #2  MS-002  minor_feature   Webhook integrations        MS-002
+  #4  MS-003  enhancement     Dark mode                   —
+  #5  MS-004  sunset          Legacy API v1               MS-003
 
 IDEAS
-  #6  RM-006  major_feature   Mobile app                  —
+  #6  MS-006  major_feature   Mobile app                  —
 ```
 
 After the stack: `{N} items  ({in_progress} active, {planned} planned, {idea} ideas)`
@@ -64,8 +64,8 @@ After the stack: `{N} items  ({in_progress} active, {planned} planned, {idea} id
 If `release` list is non-empty, group planned/active items by release under the main stack:
 ```
 Releases
-  REL-002  v2.1.0  target: 2026-06-01  RM-001, RM-002
-  REL-003  v2.2.0  target: 2026-07-01  RM-004
+  MS-002  v2.1.0  target: 2026-06-01  MS-001, MS-002
+  MS-003  v2.2.0  target: 2026-07-01  MS-004
 ```
 
 ---
@@ -74,16 +74,16 @@ Releases
 
 ```bash
 _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
-sc_artifact_read <RM-NNN>
+sc_artifact_read <MS-NNN>
 ```
 
 Present:
 
 ```
-RM-NNN — Auth SSO support
+MS-NNN — Auth SSO support
 ─────────────────────────────────────────
 Type:      major_feature    Priority:  1
-Status:    in_progress      Release:   REL-002
+Status:    in_progress      Release:   MS-002
 
 Description
   ...
@@ -100,14 +100,14 @@ Load contributing epics:
 
 ```bash
 _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
-sc_artifact_query epic roadmap_item_id=<RM-NNN>
+sc_artifact_query epic roadmap_item_id=<MS-NNN>
 ```
 
 Load direct issues (no epic):
 
 ```bash
 _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
-sc_artifact_query issue roadmap_item_id=<RM-NNN> epic_id=
+sc_artifact_query issue roadmap_item_id=<MS-NNN> epic_id=
 ```
 
 ---
@@ -142,7 +142,7 @@ _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc
 sc_artifact_list roadmap_item
 ```
 
-Update each displaced item: `sc_artifact_write <RM-NNN> '{"priority": <new_number>}'`
+Update each displaced item: `sc_artifact_write <MS-NNN> '{"priority": <new_number>}'`
 
 Then create:
 
@@ -153,13 +153,13 @@ sc_artifact_create roadmap_item '{
   "type": "<type>",
   "description": "<description>",
   "rationale": "<rationale>",
-  "release_id": "<REL-NNN or null>",
+  "release_id": "<MS-NNN or null>",
   "priority": <N>,
   "status": "planned"
 }'
 ```
 
-Confirm: `Created RM-NNN at priority #{N} — {title}`
+Confirm: `Created MS-NNN at priority #{N} — {title}`
 
 ---
 
@@ -169,7 +169,7 @@ Activating a roadmap item kicks off the downstream workflow appropriate for its 
 
 ```bash
 _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
-sc_artifact_read <RM-NNN>
+sc_artifact_read <MS-NNN>
 ```
 
 **Workflow routing by type:**
@@ -185,10 +185,10 @@ Set status to `in_progress`:
 
 ```bash
 _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
-sc_artifact_write <RM-NNN> '{"status": "in_progress"}'
+sc_artifact_write <MS-NNN> '{"status": "in_progress"}'
 ```
 
-Confirm: `RM-NNN activated — {workflow guidance}`
+Confirm: `MS-NNN activated — {workflow guidance}`
 
 ---
 
@@ -197,28 +197,28 @@ Confirm: `RM-NNN activated — {workflow guidance}`
 **Defer:**
 ```bash
 _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
-sc_artifact_write <RM-NNN> '{"status": "deferred"}'
+sc_artifact_write <MS-NNN> '{"status": "deferred"}'
 ```
 
 **Complete:**
 ```bash
 _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
-sc_artifact_write <RM-NNN> '{"status": "complete"}'
+sc_artifact_write <MS-NNN> '{"status": "complete"}'
 ```
 
 Check if this item's release has all items complete:
 
 ```bash
 _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
-sc_artifact_query roadmap_item release_id=<REL-NNN>
+sc_artifact_query roadmap_item release_id=<MS-NNN>
 ```
 
-If all complete: "All items in REL-NNN are complete. Run `product-roadmap release view REL-NNN` to ship the release."
+If all complete: "All items in MS-NNN are complete. Run `product-roadmap release view MS-NNN` to ship the release."
 
 **Cancel:**
 ```bash
 _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
-sc_artifact_write <RM-NNN> '{"status": "cancelled"}'
+sc_artifact_write <MS-NNN> '{"status": "cancelled"}'
 ```
 
 Ask: "Any contributing epics or issues to cancel as well, or leave them in the backlog?"
@@ -252,7 +252,7 @@ sc_artifact_create release '{
 }'
 ```
 
-Confirm: `Created REL-NNN — {title}`
+Confirm: `Created MS-NNN — {title}`
 
 ---
 
@@ -260,23 +260,23 @@ Confirm: `Created REL-NNN — {title}`
 
 ```bash
 _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
-sc_artifact_read <REL-NNN>
-sc_artifact_query roadmap_item release_id=<REL-NNN>
+sc_artifact_read <MS-NNN>
+sc_artifact_query roadmap_item release_id=<MS-NNN>
 ```
 
 Present:
 
 ```
-REL-NNN — v2.1.0
+MS-NNN — v2.1.0
 ─────────────────────────────────────────
 Status:       planned
 Target date:  2026-06-01
 Milestone:    MS-002
 
 Items (3)
-  RM-001  in_progress  #1  Auth SSO support
-  RM-002  planned      #2  Webhook integrations
-  RM-003  complete     #4  Dark mode
+  MS-001  in_progress  #1  Auth SSO support
+  MS-002  planned      #2  Webhook integrations
+  MS-003  complete     #4  Dark mode
 ```
 
 Progress: `{complete} / {total} items done`
