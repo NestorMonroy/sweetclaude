@@ -7,17 +7,17 @@ schema_version: 1
 skills:
   product-milestones:
     description: "Roadmap targets"
-    data_signal: "{base_path}/milestones/MS-*.md"
+    data_signal: "{base_path}/roadmap/milestones/MS-*.md"
     dependencies: []
 
   epics:
     description: "Epic and objective management"
-    data_signal: "docs/product/roadmap/epics/EP-*.md"
+    data_signal: "{base_path}/roadmap/epics/EP-*.md"
     dependencies: []
 
   product-parking-lot:
     description: "Deferred work items"
-    data_signal: "docs/product/backlog/stories/*.md"
+    data_signal: "{base_path}/backlog/ISSUE-*.md"
     dependencies: []
 
   product-sprint-plan:
@@ -32,7 +32,7 @@ skills:
 
   product-user-stories:
     description: "User stories"
-    data_signal: "{base_path}/stories/US-*.md"
+    data_signal: "{base_path}/roadmap/issues/ISSUE-*.md"
     dependencies: [user-personas]
 
   document-corpus:
