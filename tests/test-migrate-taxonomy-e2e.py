@@ -85,6 +85,10 @@ class TestFullMigrationMixedFormatCorpus:
             bl / "EP-001-taxonomy.md",
             {"id": "EP-001", "title": "Taxonomy", "status": "active"},
         )
+        make_yaml_frontmatter_file(
+            bl / "EP-009-release.md",
+            {"id": "EP-009", "title": "Release v4.1", "status": "active"},
+        )
 
         d = done_dir(project_dir)
         d.mkdir(parents=True, exist_ok=True)
