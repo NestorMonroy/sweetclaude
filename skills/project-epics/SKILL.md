@@ -78,14 +78,14 @@ Present:
 EP-NNN — Auth refactor
 ─────────────────────────────────────────
 Status:       active
-Roadmap item: RM-001
+Milestone: MS-001
 Goal:         When this ships, users can log in with SSO.
 
 Issues (7)
-  ready        I-001  s   Login form validation
-  in_progress  I-002  m   OAuth callback handler
-  done         I-003  xs  Remove legacy session code
-  backlog      I-004  l   Audit log for auth events
+  ready        ISSUE-001  s   Login form validation
+  in_progress  ISSUE-002  m   OAuth callback handler
+  done         ISSUE-003  xs  Remove legacy session code
+  backlog      ISSUE-004  l   Audit log for auth events
   ...
 
 Progress: 3 / 7 done
@@ -105,7 +105,7 @@ Ask one question at a time:
 
 ```bash
 _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
-sc_artifact_list roadmap_item
+sc_artifact_list milestone
 ```
 
 "Does this epic belong to a roadmap item? List the ID, or say none."
@@ -126,7 +126,7 @@ _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc
 sc_artifact_create epic '{
   "title": "<title>",
   "goal": "<goal>",
-  "roadmap_item_id": "<RM-NNN or null>",
+  "milestone": "<MS-NNN or null>",
   "status": "active"
 }'
 ```
@@ -190,6 +190,6 @@ For each: `sc_artifact_write <issue_id> '{"epic_id": null}'`
 
 - Epics are optional. Never require them. If a user asks to skip epics, that's valid.
 - Very large epics (20+ issues, 4+ sprints) often lose coherence as a goal lens. If an epic grows past 20 stories, surface: "EP-NNN has {N} stories across multiple milestones. Consider whether this is one goal or several."
-- Issue membership is exclusive — one issue, one epic. If assigning an issue already in another epic, say: "I-NNN is in EP-NNN. Remove it from there first?"
+- Issue membership is exclusive — one issue, one epic. If assigning an issue already in another epic, say: "ISSUE-NNN is in EP-NNN. Remove it from there first?"
 - Closing an epic does not close its issues.
 - Cancelling an epic does not cancel its issues.

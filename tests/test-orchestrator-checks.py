@@ -71,7 +71,7 @@ def _make_step(output_artifact=None, input_artifacts=None):
 
 def _make_state(artifacts=None):
     return {
-        "workflow_id": "STORY-TEST",
+        "workflow_id": "ISSUE-TEST",
         "artifacts": artifacts or {},
     }
 

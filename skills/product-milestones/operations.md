@@ -247,11 +247,8 @@ Dropped:
 
 ## `link <work-item> <MS-XXX>` — Bidirectional attach
 
-1. Validate the work-item ref: must match `^(US|BL)-\d+$`. If not, tell the user the expected format and stop.
-2. Locate the work-item file:
-   - `US-XXX` → search `stories/**/US-XXX-*.md` then `.sweetclaude/stories/**/US-XXX-*.md`.
-   - `BL-XXX` → search `{base_path}/backlog/BL-XXX-*.md`.
-   - If not found, tell the user and stop.
+1. Validate the work-item ref: must match `^ISSUE-\d+$`. If not, tell the user the expected format and stop.
+2. Locate the work-item file: search `.sweetclaude/product/backlog/ISSUE-NNN-*.md` and `.sweetclaude/product/roadmap/issues/ISSUE-NNN-*.md`. If not found, tell the user and stop.
 3. Validate `{base_path}/milestones/MS-XXX-*.md` exists. If not, tell the user and stop.
 4. Read the work item. Check for an existing `**Milestone:**` header (exact match: line starting with `**Milestone:**`).
    - If present and equals the requested MS: no-op. Say "Already linked."
@@ -301,9 +298,9 @@ Non-goals:
   - Not a pricing change
 
 Contributing work items:
-  US-012  (done)        Landing page redesign
-  US-015  (in-progress) Press kit generator
-  BL-007  (pending)     Analytics tracking
+  ISSUE-012  (done)        Landing page redesign
+  ISSUE-015  (in-progress) Press kit generator
+  ISSUE-007  (pending)     Analytics tracking
 
 Recent notes:
   2026-04-18 — Narrative arc finalized.
@@ -330,8 +327,8 @@ Blockers for MS-001 Exit Stealth
   - product/market-messaging.md finalized
 
 ⚠ Open work items (2):
-  US-015  (in-progress) Press kit generator
-  BL-007  (pending)     Analytics tracking
+  ISSUE-015  (in-progress) Press kit generator
+  ISSUE-007  (pending)     Analytics tracking
 
 ⚠ Dependencies not met (1):
   MS-000  Company name finalized  (status: proposed)
@@ -387,26 +384,21 @@ Then delegate to `sweetclaude:product/backlog`, passing horizon and priority hin
 
 ## `unassigned` — Hygiene check
 
-1. Scan work-item files:
-   - Stories: `stories/**/US-*.md` and `.sweetclaude/stories/**/US-*.md`.
-   - Backlog: `{base_path}/backlog/BL-*.md`.
-2. For each file, check for a `**Milestone:**` header line.
-3. Group items with no header by type:
+1. Scan issue files in `.sweetclaude/product/backlog/ISSUE-*.md` and `.sweetclaude/product/roadmap/issues/ISSUE-*.md`.
+2. For each file, check the YAML frontmatter `milestone` field.
+3. List items with no milestone:
 
 ```
-Unassigned work items (5)
-═════════════════════════
+Unassigned issues (5)
+═════════════════════
 
-⚠ Stories (2):
-  US-008  Onboarding email flow
-  US-011  Usage dashboard
-
-⚠ Backlog (3):
-  BL-003  Migrate to Postgres
-  BL-005  Add rate limiting
-  BL-009  Vendor management page
+  ISSUE-003  Migrate to Postgres
+  ISSUE-005  Add rate limiting
+  ISSUE-008  Onboarding email flow
+  ISSUE-009  Vendor management page
+  ISSUE-011  Usage dashboard
 ```
 
-4. Tell the user: "These have no milestone. Either link them to a milestone (`/sweetclaude:product-milestones link <item> <MS-XXX>`) or confirm they are distractions / out of roadmap. Not doing anything is also fine — this check is advisory."
+4. Tell the user: "These have no milestone. Either link them to a milestone (`/sweetclaude:product-milestones link <ISSUE-NNN> <MS-NNN>`) or confirm they are distractions / out of roadmap. Not doing anything is also fine — this check is advisory."
 5. Do not force action. Do not modify files. Surface only.
 

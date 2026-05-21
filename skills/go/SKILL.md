@@ -35,7 +35,7 @@ python3 scripts/cache.py --project-dir . --query backlog 2>/dev/null
 python3 scripts/cache.py --project-dir . --query active-epic 2>/dev/null
 ```
 
-If cache.py is not found or fails, scan `docs/product/backlog/` directly for markdown files with YAML frontmatter.
+If cache.py is not found or fails, scan `.sweetclaude/product/backlog/` directly for markdown files with YAML frontmatter.
 
 Do not call `gh`. Do not read backlog file contents for routing — the cache output is enough. **Skip any item whose ID appears in recent commits when evaluating Priority 4.** If state is `STATE_NOT_FOUND`, note it but continue.
 
@@ -204,7 +204,7 @@ Locate the story file:
 python3 - "{STORY-ID}" << 'PY'
 import sys, pathlib
 story_id = sys.argv[1]
-for p in pathlib.Path('docs/product/backlog').rglob(f'{story_id}-*.md'):
+for p in pathlib.Path('.sweetclaude/product/backlog').rglob(f'{story_id}-*.md'):
     if 'INDEX' not in p.name.upper() and '/done/' not in str(p):
         print(p); exit()
 print('NOT_FOUND')
@@ -242,7 +242,7 @@ First, locate the story file and resolve `story_file_path`:
 python3 - "{STORY-ID}" << 'PY'
 import sys, pathlib
 story_id = sys.argv[1]
-for p in pathlib.Path('docs/product/backlog').rglob(f'{story_id}-*.md'):
+for p in pathlib.Path('.sweetclaude/product/backlog').rglob(f'{story_id}-*.md'):
     if 'INDEX' not in p.name.upper() and '/done/' not in str(p):
         print(p); exit()
 print('NOT_FOUND')

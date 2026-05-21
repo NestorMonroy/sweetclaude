@@ -90,7 +90,7 @@ Classify the invocation by the first word of `$ARGUMENTS`:
 | `offboard` | Export data and optionally remove SweetClaude artifacts |
 | `add` | Create a new milestone |
 | `review` | List milestones grouped by Now / Next / Later |
-| `link <item> <MS-XXX>` | Attach a product work item to a milestone |
+| `link <ISSUE-NNN> <MS-NNN>` | Attach an issue to a milestone |
 | `status <MS-XXX>` | Detail view of one milestone |
 | `blockers <MS-XXX>` | List what's unfinished on a milestone |
 | `complete <MS-XXX>` | Mark a milestone achieved + chain follow-ups |
@@ -134,8 +134,8 @@ One paragraph describing what this milestone represents and why it matters.
 - Second explicit exclusion
 
 ## Contributing work items
-- US-012 — Landing page redesign
-- BL-007 — Analytics tracking
+- ISSUE-012 — Landing page redesign
+- ISSUE-007 — Analytics tracking
 
 ## Notes
 Free-form log of decisions, scope changes, blockers encountered.
@@ -169,7 +169,7 @@ Routes by `$ARGUMENTS` first word (see [Routing](#routing) above) into one of 11
 | `onboard` | Explicit first-time setup; scans for existing milestone/roadmap data |
 | `add` | Create a new MS-XXX milestone |
 | `review` | List milestones grouped Now / Later (and Achieved / Dropped if `--all`) |
-| `link <item> <MS-XXX>` | Bidirectional attach a US/BL work item to a milestone |
+| `link <ISSUE-NNN> <MS-NNN>` | Bidirectional attach an issue to a milestone |
 | `status <MS-XXX>` | Detail view: criteria, contributing work items, recent notes |
 | `blockers <MS-XXX>` | List unmet criteria, open work items, unmet dependencies |
 | `complete <MS-XXX>` | Mark achieved, prompt for follow-ups (delegated to product-parking-lot) |
@@ -181,7 +181,7 @@ Read [operations.md](operations.md) and execute the matching sub-section.
 
 The milestones skill is the single source of truth for milestone data. Other skills should follow this protocol rather than writing their own milestone logic:
 
-- **`sweetclaude:product/user-story`**: after creating a story, prompt "Assign this story to a milestone? [list of active + proposed milestones, or 'none / later']". On user selection, invoke `sweetclaude:product-milestones link <US-XXX> <MS-XXX>`.
+- **`sweetclaude:project-issues`**: after creating an issue, prompt "Assign this issue to a milestone? [list of active + proposed milestones, or 'none / later']". On user selection, invoke `sweetclaude:product-milestones link <ISSUE-NNN> <MS-NNN>`.
 - **`sweetclaude:product/sprint-plan`**: after stories are chosen for a sprint, read each story's `**Milestone:**` header. Report which milestones the sprint advances and count unassigned stories. If > 50% of sprint stories are unassigned, flag it as a scope concern.
 - **`sweetclaude:status`**: in the orient view, include an "Active milestones" section showing each `active` milestone with its criterion-met count.
 

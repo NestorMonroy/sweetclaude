@@ -220,7 +220,7 @@ Check for `.sweetclaude/log.md`. If not found, create it.
 
 **Discovery contract:** Read `.sweetclaude/state/discovery.yaml`.
 
-- If it exists: use `target_user_summary` as a starting point for persona seeds. Also read `segments`, `scenarios`, `attitudinal_axes`, and `jtbd_candidates` if present — these are structured persona-precursor fields produced by BL-013 improvements to discovery. If these fields are absent (pre-BL-013 discovery files), do not block entry — proceed with what's available and note the gap: "Your discovery file predates structured segment and scenario capture. Consider re-running `/sweetclaude:product-discovery` to enrich it, or we'll build personas from what you have."
+- If it exists: use `target_user_summary` as a starting point for persona seeds. Also read `segments`, `scenarios`, `attitudinal_axes`, and `jtbd_candidates` if present — these are structured persona-precursor fields produced by ISSUE-013 improvements to discovery. If these fields are absent (pre-ISSUE-013 discovery files), do not block entry — proceed with what's available and note the gap: "Your discovery file predates structured segment and scenario capture. Consider re-running `/sweetclaude:product-discovery` to enrich it, or we'll build personas from what you have."
 - If it does not exist: surface this gap before proceeding.
 
   Present:

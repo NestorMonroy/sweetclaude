@@ -16,7 +16,7 @@ def sample_state():
     """Minimal valid workflow state dict."""
     return {
         "schema_version": 1,
-        "workflow_id": "STORY-025",
+        "workflow_id": "ISSUE-025",
         "workflow_type": "net-new-feature",
         "workflow_shape": "full-pipeline",
         "template_version": "1",
@@ -107,11 +107,11 @@ def sample_template():
 def workflow_project_dir(tmp_path, sample_state):
     """
     Project directory with a real workflows/ state directory and
-    a pre-written STORY-025.yaml state file.
+    a pre-written ISSUE-025.yaml state file.
     """
     workflows_dir = tmp_path / ".sweetclaude" / "state" / "workflows"
     workflows_dir.mkdir(parents=True)
-    state_file = workflows_dir / "STORY-025.yaml"
+    state_file = workflows_dir / "ISSUE-025.yaml"
     state_file.write_text(yaml.safe_dump(sample_state))
     return tmp_path
 

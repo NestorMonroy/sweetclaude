@@ -12,7 +12,7 @@ Internal skill. Called by `bootstrap` Step 5b when the registry-driven drift sca
 
 - Pre-migration snapshot (tarball + git tag) before any handler runs.
 - Recoverable-error menus surfacing handler-provided options.
-- End-of-session report with Accept / Initiate rollback (+ Defer if BL-068 hook is installed).
+- End-of-session report with Accept / Initiate rollback (+ Defer if ISSUE-068 hook is installed).
 - User-initiated rollback with explicit typed confirmation.
 
 ## Step 0: Detect state and route
@@ -117,14 +117,14 @@ Review the changes. Then:
   [Accept]              Migration is good. Keep changes.
   [Initiate rollback]   Restore project to pre-migration state.
   [Defer decision]      Inspect manually; decide later. Snapshot stays available
-                        for 24h. (Only shown if BL-068 hook is installed.)
+                        for 24h. (Only shown if ISSUE-068 hook is installed.)
 ```
 
 Present via **AskUserQuestion**.
 
 ### Step 4a: Accept
 
-Clear both pending markers — the migration-decision marker (BL-068) AND the drift-decision marker (so the next session's drift-gate scans fresh against the migrated state instead of re-surfacing the pre-migration prompt):
+Clear both pending markers — the migration-decision marker (ISSUE-068) AND the drift-decision marker (so the next session's drift-gate scans fresh against the migrated state instead of re-surfacing the pre-migration prompt):
 
 ```bash
 rm -f .sweetclaude/state/pending-migration-decision.yaml \
@@ -153,7 +153,7 @@ rm -f .sweetclaude/state/pending-migration-decision.yaml 2>/dev/null || true
 
 ### Step 4c: Defer decision
 
-(Only available if `hooks/migration-decision-reminder.sh` from BL-068 is installed.) Write `.sweetclaude/state/pending-migration-decision.yaml` with snapshot data and `turn_count: 0`. The hook will inject reminders every prompt and hard-block at turn 10 until Accept or Initiate rollback.
+(Only available if `hooks/migration-decision-reminder.sh` from ISSUE-068 is installed.) Write `.sweetclaude/state/pending-migration-decision.yaml` with snapshot data and `turn_count: 0`. The hook will inject reminders every prompt and hard-block at turn 10 until Accept or Initiate rollback.
 
 ---
 

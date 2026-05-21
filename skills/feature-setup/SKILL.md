@@ -64,26 +64,20 @@ Steps 3–5 operate on the current working directory (the user's project), not `
 
 ```bash
 [ -f .sweetclaude/state/sweetclaude.yaml ] || echo "NO_SWEETCLAUDE"
-[ -d docs/product/backlog ] || echo "NO_BACKLOG_DIR"
+[ -d .sweetclaude/product/backlog ] || echo "NO_BACKLOG_DIR"
 ```
 
 If `NO_SWEETCLAUDE`: stop with:
 > "No SweetClaude state found in this project. Run `/sweetclaude:setup` first."
 
-If `NO_BACKLOG_DIR`: create the v4 directory tree:
+If `NO_BACKLOG_DIR`: create the directory tree:
 
 ```bash
-for subdir in stories/done bugs/done debt/done chores/done; do
-  mkdir -p "docs/product/backlog/$subdir"
-done
-```
-
-Always create the roadmap directory structure (idempotent):
-
-```bash
-mkdir -p docs/product/roadmap/epics/done
-mkdir -p docs/product/roadmap/releases
-echo "ROADMAP_DIRS_READY"
+mkdir -p .sweetclaude/product/backlog/done
+mkdir -p .sweetclaude/product/roadmap/epics/done
+mkdir -p .sweetclaude/product/roadmap/milestones
+mkdir -p .sweetclaude/product/roadmap/issues/done
+echo "DIRS_READY"
 ```
 
 ## Step 4: Build the cache

@@ -19,7 +19,7 @@ Manage epics: $ARGUMENTS
 
 An epic is a **capability area** — a named body of work that delivers a distinct capability. Each epic has one objective (its success statement) and a set of completion criteria (phase-gate checklist). Version/release is metadata on the epic, not its organizing principle (DEC-29).
 
-Epics live in `docs/product/roadmap/epics/EP-NNN-slug.md`. The SQLite cache at `.sweetclaude/cache/roadmap.db` provides fast queries; markdown files are the source of truth.
+Epics live in `.sweetclaude/product/roadmap/epics/EP-NNN-slug.md`. The SQLite cache at `.sweetclaude/cache/roadmap.db` provides fast queries; markdown files are the source of truth.
 
 ## Cache Helper
 
@@ -64,7 +64,7 @@ Required:
 - **Completion criteria** — ordered checklist (minimum 2 items)
 
 Optional (with defaults):
-- **Target release** — `REL-NNN` or null. List available releases from cache: `python3 scripts/cache.py --project-dir . --query releases`
+- **Milestone** — `MS-NNN` or null. List available milestones from cache: `python3 scripts/cache.py --project-dir . --query milestones-compact`
 - **Depends on** — list of `EP-NNN` IDs. List existing epics for reference.
 - **Status** — defaults to `new`
 
@@ -78,7 +78,7 @@ python3 scripts/cache.py --project-dir . --query next-id --prefix EP
 
 Derive slug from title: lowercase, replace non-alphanumeric with hyphens, collapse consecutive hyphens, trim trailing hyphens, truncate to 40 characters.
 
-Write to `docs/product/roadmap/epics/EP-{NNN}-{slug}.md`:
+Write to `.sweetclaude/product/roadmap/epics/EP-{NNN}-{slug}.md`:
 
 ```yaml
 ---
@@ -169,7 +169,7 @@ python3 scripts/cache.py --project-dir . --query backlog --include-done 2>/dev/n
 
 Find the item by ID in the result. If not found, error: "Item {ITEM-ID} not found in backlog."
 
-Verify the epic exists by checking `docs/product/roadmap/epics/EP-{NNN}-*.md` via glob.
+Verify the epic exists by checking `.sweetclaude/product/roadmap/epics/EP-{NNN}-*.md` via glob.
 
 ### Step 2: Check existing link
 
@@ -278,10 +278,10 @@ Write the updated file.
 ### Step 3: Move to done directory
 
 ```bash
-mv docs/product/roadmap/epics/EP-{NNN}-{slug}.md docs/product/roadmap/epics/done/
+mv .sweetclaude/product/roadmap/epics/EP-{NNN}-{slug}.md .sweetclaude/product/roadmap/epics/done/
 ```
 
-Ensure `docs/product/roadmap/epics/done/` exists first.
+Ensure `.sweetclaude/product/roadmap/epics/done/` exists first.
 
 ### Step 4: Rebuild and confirm
 

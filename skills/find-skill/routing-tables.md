@@ -28,7 +28,7 @@ Eight buckets. Each row maps a work type to the skill that handles it, plus the 
 
 | Work Type | Template Phases | Skill to invoke |
 |---|---|---|
-| Concept articulation / framing | DISCOVER, DEFINE, SHIP | `sweetclaude:product-discovery` *(fallback — `sweetclaude:concept-framing` planned, see BL-008)* |
+| Concept articulation / framing | DISCOVER, DEFINE, SHIP | `sweetclaude:product-discovery` *(fallback — `sweetclaude:concept-framing` planned, see ISSUE-008)* |
 | Pain analysis | DISCOVER, DEFINE, SHIP | `sweetclaude:product-discovery` |
 | Customer profiling | DISCOVER, DEFINE, SHIP | `sweetclaude:user-personas` |
 | Synthetic panel research / concept testing | DISCOVER, DEFINE | `sweetclaude:product-user-focus-group` *(requires validated personas — gate enforced)* |

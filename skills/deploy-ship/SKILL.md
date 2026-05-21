@@ -226,7 +226,7 @@ Then ask via AskUserQuestion:
 | **Create POST-MORTEM item now** | Write a new CHORE backlog item linked to this hotfix and open it |
 | **Skip — I'll create it later** | The decision-log entry marks the obligation; create it manually |
 
-If "Create POST-MORTEM item now": write a new CHORE item to `docs/product/backlog/chores/CHORE-NNN-post-mortem-{work-item-id}.md` with:
+If "Create POST-MORTEM item now": write a new issue to `.sweetclaude/product/backlog/ISSUE-NNN-post-mortem-{work-item-id}.md` with:
 ```yaml
 type: chore
 title: POST-MORTEM — {hotfix title}

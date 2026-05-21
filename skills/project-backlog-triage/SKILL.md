@@ -35,8 +35,7 @@ If the guard fires: print the message and stop. Do not proceed.
 ```python
 import pathlib, yaml, re, datetime
 
-BACKLOG_BASE = pathlib.Path('docs/product/backlog')
-TYPE_DIRS = {'story': 'stories', 'bug': 'bugs', 'debt': 'debt', 'chore': 'chores'}
+BACKLOG_BASE = pathlib.Path('.sweetclaude/product/backlog')
 
 def read_story_file(path):
     raw = pathlib.Path(path).read_bytes().decode('utf-8').replace('\r\n', '\n')
@@ -238,4 +237,4 @@ If `remaining > 0`: "Run `project-backlog-triage` again to continue."
 - Skipped issues stay ungroomed and will reappear next session.
 - Status is set to `ready` (not `new`) when groomed — this signals the issue is sprint-eligible.
 - Every write updates the individual story file and rebuilds the cache.
-- All reads and writes go directly to `docs/product/backlog/<type>s/<ID>-<slug>.md` files. Never touch `.sweetclaude/product/backlog/`.
+- All reads and writes go to `.sweetclaude/product/backlog/<ID>-<slug>.md` files.

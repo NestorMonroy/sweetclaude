@@ -31,7 +31,7 @@ RICE scoring and stack-rank analysis for roadmap items — surface misalignment,
 |---|---|
 | (empty) or `analyze` | → **Full analysis** — RICE scoring + stack-rank proposal |
 | `alignment` | → **Alignment check** — scope and milestone alignment only |
-| `item <RM-NNN>` | → **Single item** — deep RICE and rationale for one item |
+| `item <MS-NNN>` | → **Single item** — deep RICE and rationale for one item |
 
 ---
 
@@ -110,11 +110,11 @@ Roadmap RICE Analysis
 
  ID       Title                        R   I    C    E    RICE   Current
  ──────────────────────────────────────────────────────────────────────
- RM-001   Auth SSO support             4 × 3 × 1.0 ÷ 8 = 1.50   #1
- RM-003   Dark mode                    3 × 0.5 × 0.8 ÷ 2 = 0.60  #4
- RM-002   Webhook integrations         5 × 2 × 0.8 ÷ 4 = 2.00   #2
- RM-005   Bulk export                  3 × 1 × 0.5 ÷ 2 = 0.75   #3
- RM-004   Legacy API v1 sunset         2 × 1 × 1.0 ÷ 4 = 0.50   #5
+ MS-001   Auth SSO support             4 × 3 × 1.0 ÷ 8 = 1.50   #1
+ MS-003   Dark mode                    3 × 0.5 × 0.8 ÷ 2 = 0.60  #4
+ MS-002   Webhook integrations         5 × 2 × 0.8 ÷ 4 = 2.00   #2
+ MS-005   Bulk export                  3 × 1 × 0.5 ÷ 2 = 0.75   #3
+ MS-004   Legacy API v1 sunset         2 × 1 × 1.0 ÷ 4 = 0.50   #5
 ```
 
 Show scores sorted by RICE descending. Include current priority for comparison.
@@ -133,8 +133,8 @@ For each roadmap item, check whether it fits the scope statement and in-scope li
 
 ```
 Scope alignment
-  RM-003  Dark mode — MAY CONFLICT: scope out-of-scope includes "cosmetic customization"
-  RM-001  Auth SSO support — IN SCOPE
+  MS-003  Dark mode — MAY CONFLICT: scope out-of-scope includes "cosmetic customization"
+  MS-001  Auth SSO support — IN SCOPE
 ```
 
 If no conflicts: "All items appear aligned with current scope."
@@ -146,7 +146,7 @@ For each pending milestone, check whether the roadmap provides a path to achievi
 ```
 Milestone alignment
   MS-002  First paying customer — no roadmap items directly support this milestone
-  MS-003  100 active projects — RM-001 (Auth SSO) may be a dependency
+  MS-003  100 active projects — MS-001 (Auth SSO) may be a dependency
 ```
 
 If a milestone has no supporting roadmap item, flag it as a planning gap.
@@ -159,11 +159,11 @@ Based on RICE scores, present a proposed priority order:
 
 ```
 Proposed stack-rank (by RICE)
-  #1  RM-002  Webhook integrations     RICE: 2.00  (currently #2 — no change)
-  #2  RM-001  Auth SSO support         RICE: 1.50  (currently #1 — move down 1)
-  #3  RM-005  Bulk export              RICE: 0.75  (currently #3 — no change)
-  #4  RM-003  Dark mode                RICE: 0.60  (currently #4 — no change)
-  #5  RM-004  Legacy API v1 sunset     RICE: 0.50  (currently #5 — no change)
+  #1  MS-002  Webhook integrations     RICE: 2.00  (currently #2 — no change)
+  #2  MS-001  Auth SSO support         RICE: 1.50  (currently #1 — move down 1)
+  #3  MS-005  Bulk export              RICE: 0.75  (currently #3 — no change)
+  #4  MS-003  Dark mode                RICE: 0.60  (currently #4 — no change)
+  #5  MS-004  Legacy API v1 sunset     RICE: 0.50  (currently #5 — no change)
 ```
 
 Include a one-line rationale for each item that moves.
@@ -178,21 +178,21 @@ On user confirmation (`yes`):
 
 ```bash
 _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
-sc_artifact_write <RM-NNN> '{"priority": <N>}'
+sc_artifact_write <MS-NNN> '{"priority": <N>}'
 ```
 
 Apply for each item that changed. Confirm:
 
 ```
 Stack-rank updated
-  RM-002  #1  (was #2)
-  RM-001  #2  (was #1)
-  (no change: RM-005, RM-003, RM-004)
+  MS-002  #1  (was #2)
+  MS-001  #2  (was #1)
+  (no change: MS-005, MS-003, MS-004)
 ```
 
 On `adjust`:
 
-Ask: "Which item do you want to change, and what's the updated input?" Accept: `RM-NNN reach=5`, `RM-NNN confidence=1.0`, etc. Recalculate and re-present the table.
+Ask: "Which item do you want to change, and what's the updated input?" Accept: `MS-NNN reach=5`, `MS-NNN confidence=1.0`, etc. Recalculate and re-present the table.
 
 On `no`: "Stack-rank unchanged."
 
@@ -210,19 +210,19 @@ End with: "Run `product-roadmap-analysis` for full RICE scoring."
 
 ## Single Item
 
-Arguments: `item <RM-NNN>`
+Arguments: `item <MS-NNN>`
 
 ```bash
 _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
-sc_artifact_read <RM-NNN>
-sc_artifact_query epic roadmap_item_id=<RM-NNN>
-sc_artifact_query issue roadmap_item_id=<RM-NNN> epic_id=
+sc_artifact_read <MS-NNN>
+sc_artifact_query epic roadmap_item_id=<MS-NNN>
+sc_artifact_query issue roadmap_item_id=<MS-NNN> epic_id=
 ```
 
 Run full RICE scoring for this one item. Present:
 
 ```
-RM-NNN — {title}
+MS-NNN — {title}
 ─────────────────────────────────────────
 Type:     {type}         Priority:  #{N}
 Status:   {status}
@@ -251,6 +251,6 @@ Offer: "Update RICE inputs? Say `reach=N`, `impact=N`, `confidence=N`, or `effor
 
 - RICE scores are estimates — the model cannot know exact reach or impact. Present reasoning so the user can challenge inputs.
 - RICE is an input to prioritization, not a mandate. The user decides the final order.
-- If a `deferred` or `idea` item scores higher than active items, surface it: "RM-NNN is deferred but scores {X} — higher than {N} active items. Worth reconsidering?"
+- If a `deferred` or `idea` item scores higher than active items, surface it: "MS-NNN is deferred but scores {X} — higher than {N} active items. Worth reconsidering?"
 - Sunset items carry hidden cost: not sunsetting has a reach/impact cost too. Factor in tech debt and support burden.
 - Never apply a stack-rank without explicit user confirmation. Roadmap priority is a business decision.

@@ -40,9 +40,9 @@ Use shell output above. Present:
 
 ```
 Test Plans
-  TP-001  release   REL-002  v2.1.0 release test plan      draft
-  TP-002  feature   RM-005   Bulk export QA                 active
-  TP-003  feature   RM-001   Auth SSO integration testing   complete
+  TP-001  release   MS-002   v2.1.0 release test plan      draft
+  TP-002  feature   MS-005   Bulk export QA                 active
+  TP-003  feature   MS-001   Auth SSO integration testing   complete
 ```
 
 If no plans: "No test plans yet. Run `testing-plan new` to create one."

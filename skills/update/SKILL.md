@@ -247,7 +247,7 @@ Present AskUserQuestion with this body block before any sync:
 
 > **SweetClaude v4 is available — this is a major release.**
 >
-> Stories move from `.sweetclaude/` to `docs/product/` in a new per-type directory structure with new IDs. Each project migrates independently the first time you open it after updating.
+> All work items use the ISSUE-NNN prefix and are stored in `.sweetclaude/product/backlog/`. Each project migrates independently the first time you open it after updating.
 >
 > Migration creates a safety backup and can be rolled back. Active and future stories must migrate. Done stories are optional.
 
@@ -497,6 +497,41 @@ Files still drifted:
 ```
 
 Stop. Do NOT continue to Step 7.
+
+---
+
+## Step 6b2: Taxonomy migration detection
+
+Only run if `.sweetclaude/state/sweetclaude.yaml` exists in the current project directory — skip silently otherwise.
+
+Check for old-taxonomy files that need migration to the ISSUE-NNN format:
+
+```bash
+OLD_TAXONOMY=0
+if [ -d .sweetclaude/product/backlog ]; then
+  BL_COUNT=$(find .sweetclaude/product/backlog -maxdepth 1 -name 'BL-*.md' 2>/dev/null | wc -l | tr -d ' ')
+  STORY_COUNT=$(find .sweetclaude/product/backlog -maxdepth 2 -name 'STORY-*.md' 2>/dev/null | wc -l | tr -d ' ')
+  BUG_COUNT=$(find .sweetclaude/product/backlog -maxdepth 2 -name 'BUG-*.md' 2>/dev/null | wc -l | tr -d ' ')
+  DEBT_COUNT=$(find .sweetclaude/product/backlog -maxdepth 2 -name 'DEBT-*.md' 2>/dev/null | wc -l | tr -d ' ')
+  CHORE_COUNT=$(find .sweetclaude/product/backlog -maxdepth 2 -name 'CHORE-*.md' 2>/dev/null | wc -l | tr -d ' ')
+  OLD_TAXONOMY=$((BL_COUNT + STORY_COUNT + BUG_COUNT + DEBT_COUNT + CHORE_COUNT))
+fi
+echo "OLD_TAXONOMY=$OLD_TAXONOMY"
+```
+
+If `OLD_TAXONOMY` is 0: skip — project is already on the new taxonomy.
+
+If `OLD_TAXONOMY > 0`: present via **AskUserQuestion**:
+
+> "Found {OLD_TAXONOMY} work item(s) using the old taxonomy (BL-/STORY-/BUG-/DEBT-/CHORE- prefixes). These need to be migrated to the ISSUE-NNN format."
+>
+> Options:
+> - **Migrate now** — run taxonomy migration with dry-run preview and safety snapshot
+> - **Skip for now** — migrate later with `/sweetclaude:migrate`
+
+If **Migrate now**: run `python3 scripts/migrate/migrate_taxonomy.py --project-dir . --dry-run` first to preview, then on confirmation run without `--dry-run`. Report results.
+
+If **Skip for now**: continue to Step 6c. The migration guard in skills will prompt the user when they next invoke a skill that reads work items.
 
 ---
 

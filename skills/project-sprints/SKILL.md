@@ -361,4 +361,4 @@ sc_artifact_write $SPRINT_ID '{"retrospective": "<text>"}'
 - A sprint cannot be closed while another sprint is being planned — sprint state is linear.
 - Velocity = count of `done` issues at close time, not story points or effort.
 - Sprint history on issues is append-only. Never overwrite existing entries.
-- If an issue is carried over 3+ times across sprints, surface a pointed warning: "I-NNN has been carried over {N} times. Consider breaking it down or descoping it."
+- If an issue is carried over 3+ times across sprints, surface a pointed warning: "ISSUE-NNN has been carried over {N} times. Consider breaking it down or descoping it."

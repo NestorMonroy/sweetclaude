@@ -142,7 +142,7 @@ Confirm: "Proceed with shift?"
 ### Cascade check (upshift to more structured mode)
 
 **Shifting to Agile:**
-Check for backlog item files (`docs/product/backlog/stories/*.md`) and at least one epic (`docs/product/roadmap/epics/EP-*.md`). If missing:
+Check for backlog item files (`.sweetclaude/product/backlog/ISSUE-*.md`) and at least one epic (`.sweetclaude/product/roadmap/epics/EP-*.md`). If missing:
 > "Agile works best with an organized backlog and epics. Missing: {list}. Set these up now, or skip and set them up later? (setup now / skip)"
 
 **Shifting to Shape Up:**

@@ -35,13 +35,11 @@ If the guard fires: print the message and stop. Do not proceed.
 ```python
 import pathlib, yaml, re, datetime
 
-BACKLOG_BASE = pathlib.Path('docs/product/backlog')
-TYPE_PREFIX = {'story': 'STORY', 'bug': 'BUG', 'debt': 'DEBT', 'chore': 'CHORE'}
+BACKLOG_BASE = pathlib.Path('.sweetclaude/product/backlog')
 
-def assign_new_id(typ):
+def assign_new_id():
     import subprocess, json
-    prefix = TYPE_PREFIX[typ]
-    r = subprocess.run(['python3', 'scripts/cache.py', '--project-dir', '.', '--query', 'next-id', '--prefix', prefix],
+    r = subprocess.run(['python3', 'scripts/cache.py', '--project-dir', '.', '--query', 'next-id', '--prefix', 'ISSUE'],
         capture_output=True, text=True)
     return json.loads(r.stdout)['next_id']
 
@@ -72,7 +70,7 @@ def github_number_already_imported(gh_number):
 
 # GitHub Issues — Import
 
-Pull open issues from GitHub into the local issue store as v4 story files under `docs/product/backlog/`. Idempotent — issues already imported by GitHub number are skipped. Arguments: `$ARGUMENTS`
+Pull open issues from GitHub into the local issue store as issue files under `.sweetclaude/product/backlog/`. Idempotent — issues already imported by GitHub number are skipped. Arguments: `$ARGUMENTS`
 
 ---
 
@@ -171,5 +169,4 @@ If N > 20 imported: "That's a large import. Consider running `/sweetclaude:proje
 - All imported issues get `origin: imported` (not `source: github`) to follow the v4 story schema.
 - `github_issue_number` and `github_url` are stored as extra frontmatter fields for sync purposes.
 - ID assignment uses the cache next-id query to derive the next sequential ID.
-- All files land under `docs/product/backlog/stories/` (type defaults to `story` on import).
-- Never write to `.sweetclaude/product/backlog/`.
+- All files land under `.sweetclaude/product/backlog/` (type defaults to `story` on import).

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """SweetClaude roadmap cache — SQLite cache built from markdown source files.
 
-Scans docs/product/backlog/ and docs/product/roadmap/ for markdown files with
-YAML frontmatter, builds a SQLite database at .sweetclaude/cache/roadmap.db,
+Scans .sweetclaude/product/backlog/ and .sweetclaude/product/roadmap/ for markdown
+files with YAML frontmatter, builds a SQLite database at .sweetclaude/cache/roadmap.db,
 and exposes query commands for skills to consume.
 
 The cache is gitignored. It is rebuilt on session start and after writes.
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS items (
     effort TEXT,
     epic TEXT,
     epic_sequence INTEGER,
-    release TEXT,
+    milestone TEXT,
     objective TEXT,
     source_path TEXT NOT NULL,
     created TEXT,
@@ -50,11 +50,11 @@ CREATE TABLE IF NOT EXISTS completion_criteria (
     FOREIGN KEY (epic_id) REFERENCES items(id)
 );
 
-CREATE TABLE IF NOT EXISTS epic_dependencies (
-    epic_id TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS dependencies (
+    item_id TEXT NOT NULL,
     depends_on TEXT NOT NULL,
-    PRIMARY KEY (epic_id, depends_on),
-    FOREIGN KEY (epic_id) REFERENCES items(id)
+    PRIMARY KEY (item_id, depends_on),
+    FOREIGN KEY (item_id) REFERENCES items(id)
 );
 
 CREATE TABLE IF NOT EXISTS tags (
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS tags (
 CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
 CREATE INDEX IF NOT EXISTS idx_items_status ON items(status);
 CREATE INDEX IF NOT EXISTS idx_items_epic ON items(epic);
-CREATE INDEX IF NOT EXISTS idx_items_release ON items(release);
+CREATE INDEX IF NOT EXISTS idx_items_milestone ON items(milestone);
 CREATE INDEX IF NOT EXISTS idx_items_priority ON items(priority);
 CREATE INDEX IF NOT EXISTS idx_tags_item ON tags(item_id);
 CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
@@ -94,21 +94,60 @@ def parse_frontmatter(path):
 
 
 def scan_files(project_dir):
-    backlog = os.path.join(project_dir, 'docs', 'product', 'backlog')
-    roadmap = os.path.join(project_dir, 'docs', 'product', 'roadmap')
-    skip_dirs = {os.path.join(backlog, 'epics')}
+    base_product = os.path.join(project_dir, '.sweetclaude', 'product')
+    scan_bases = [
+        os.path.join(base_product, 'backlog'),
+        os.path.join(base_product, 'roadmap', 'issues'),
+        os.path.join(base_product, 'roadmap', 'epics'),
+        os.path.join(base_product, 'roadmap', 'milestones'),
+    ]
     files = []
-    for base in [backlog, roadmap]:
+    for base in scan_bases:
         if not os.path.isdir(base):
             continue
         for root, dirs, filenames in os.walk(base):
-            if root in skip_dirs or os.path.dirname(root) in skip_dirs:
-                continue
             for fname in filenames:
-                if fname.endswith('.md') and fname != 'SCHEMA.md':
-                    full = os.path.join(root, fname)
-                    files.append(full)
+                if not fname.endswith('.md'):
+                    continue
+                if fname == 'SCHEMA.md':
+                    continue
+                full = os.path.join(root, fname)
+                files.append(full)
     return files
+
+
+def _normalize_status(status):
+    if not status or not isinstance(status, str):
+        return 'new'
+    # Strip everything after first '(' or ' — ' (em-dash with spaces) or '—'
+    # Handle em-dash variants
+    for sep in [' — ', '—']:
+        if sep in status:
+            status = status.split(sep)[0]
+            break
+    # Handle parenthetical
+    if '(' in status:
+        status = status.split('(')[0]
+    return status.strip()
+
+
+def _normalize_milestone(milestone):
+    if not milestone or not isinstance(milestone, str):
+        return None
+    val = milestone.strip()
+    if not val:
+        return None
+    # "(unassigned)" or any value starting with '('
+    if val.startswith('('):
+        return None
+    # TBD or tbd
+    if val.lower() == 'tbd':
+        return None
+    # Extract ID prefix: everything before first space or '('
+    m = re.match(r'^([^\s(]+)', val)
+    if m:
+        return m.group(1)
+    return val
 
 
 def _rebuild_cache(project_dir):
@@ -116,62 +155,72 @@ def _rebuild_cache(project_dir):
     os.makedirs(os.path.dirname(dbp), exist_ok=True)
     tmp_path = dbp + '.tmp'
     conn = sqlite3.connect(tmp_path)
-    conn.executescript(SCHEMA_SQL)
+    try:
+        conn.executescript(SCHEMA_SQL)
 
-    for fpath in scan_files(project_dir):
-        fm = parse_frontmatter(fpath)
-        if not fm or 'id' not in fm or 'type' not in fm:
-            continue
+        for fpath in scan_files(project_dir):
+            fm = parse_frontmatter(fpath)
+            if not fm or 'id' not in fm or 'type' not in fm:
+                continue
 
-        rel_path = os.path.relpath(fpath, project_dir)
-        item_type = fm.get('type', '')
+            rel_path = os.path.relpath(fpath, project_dir)
+            item_type = fm.get('type', '')
 
-        conn.execute(
-            """INSERT OR REPLACE INTO items
-               (id, type, title, status, priority, effort, epic, epic_sequence,
-                release, objective, source_path, created, updated, closed_date)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                fm['id'],
-                item_type,
-                fm.get('title', ''),
-                fm.get('status', 'new'),
-                fm.get('priority'),
-                fm.get('effort'),
-                fm.get('epic') if fm.get('epic') not in (None, 'null') else None,
-                fm.get('epic_sequence'),
-                fm.get('release') if fm.get('release') not in (None, 'null') else None,
-                fm.get('objective'),
-                rel_path,
-                fm.get('created'),
-                fm.get('updated'),
-                fm.get('closed_date'),
-            ),
-        )
+            status = _normalize_status(fm.get('status', 'new'))
+            milestone = _normalize_milestone(fm.get('milestone'))
 
-        for tag in fm.get('tags', []) or []:
             conn.execute(
-                "INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?, ?)",
-                (fm['id'], tag),
+                """INSERT OR REPLACE INTO items
+                   (id, type, title, status, priority, effort, epic, epic_sequence,
+                    milestone, objective, source_path, created, updated, closed_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    fm['id'],
+                    item_type,
+                    fm.get('title', ''),
+                    status,
+                    fm.get('priority'),
+                    fm.get('effort'),
+                    fm.get('epic') if fm.get('epic') not in (None, 'null') else None,
+                    fm.get('epic_sequence'),
+                    milestone,
+                    fm.get('objective'),
+                    rel_path,
+                    fm.get('created'),
+                    fm.get('updated'),
+                    fm.get('closed_date'),
+                ),
             )
 
-        if item_type == 'epic':
-            done_indexes = set(fm.get('completion_criteria_done', []) or [])
-            for i, crit in enumerate(fm.get('completion_criteria', []) or []):
+            for tag in fm.get('tags', []) or []:
                 conn.execute(
-                    """INSERT OR REPLACE INTO completion_criteria
-                       (epic_id, seq, criterion, done) VALUES (?, ?, ?, ?)""",
-                    (fm['id'], i, crit, 1 if i in done_indexes else 0),
+                    "INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?, ?)",
+                    (fm['id'], tag),
                 )
+
+            if item_type == 'epic':
+                done_indexes = set(fm.get('completion_criteria_done', []) or [])
+                for i, crit in enumerate(fm.get('completion_criteria', []) or []):
+                    conn.execute(
+                        """INSERT OR REPLACE INTO completion_criteria
+                           (epic_id, seq, criterion, done) VALUES (?, ?, ?, ?)""",
+                        (fm['id'], i, crit, 1 if i in done_indexes else 0),
+                    )
+
             for dep in fm.get('depends_on', []) or []:
                 conn.execute(
-                    "INSERT OR IGNORE INTO epic_dependencies (epic_id, depends_on) VALUES (?, ?)",
+                    "INSERT OR IGNORE INTO dependencies (item_id, depends_on) VALUES (?, ?)",
                     (fm['id'], dep),
                 )
 
-    conn.commit()
-    conn.close()
-    os.replace(tmp_path, dbp)
+        conn.commit()
+        conn.close()
+        os.replace(tmp_path, dbp)
+    except BaseException:
+        conn.close()
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
     return dbp
 
 
@@ -207,17 +256,17 @@ def query_active_epic(project_dir):
     return result
 
 
-def query_epic_stories(project_dir, epic_id, include_done=False):
+def query_epic_issues(project_dir, epic_id, include_done=False):
     conn = get_conn(project_dir)
     if include_done:
         rows = conn.execute(
-            """SELECT * FROM items WHERE epic=? AND type IN ('story','bug','chore','debt')
+            """SELECT * FROM items WHERE epic=? AND type NOT IN ('epic', 'milestone')
                ORDER BY epic_sequence, id""",
             (epic_id,),
         ).fetchall()
     else:
         rows = conn.execute(
-            """SELECT * FROM items WHERE epic=? AND type IN ('story','bug','chore','debt')
+            """SELECT * FROM items WHERE epic=? AND type NOT IN ('epic', 'milestone')
                AND status NOT IN ('done', 'abandoned', 'deferred')
                ORDER BY epic_sequence, id""",
             (epic_id,),
@@ -226,19 +275,27 @@ def query_epic_stories(project_dir, epic_id, include_done=False):
     return [dict(r) for r in rows]
 
 
+def query_epic_stories(project_dir, epic_id, include_done=False):
+    return query_epic_issues(project_dir, epic_id, include_done)
+
+
 def query_backlog(project_dir, unlinked_only=False):
     conn = get_conn(project_dir)
     sql = """SELECT * FROM items
-           WHERE type IN ('story','bug','chore','debt')
+           WHERE type NOT IN ('epic', 'milestone')
            AND status NOT IN ('done', 'abandoned', 'deferred')"""
     if unlinked_only:
         sql += " AND (epic IS NULL OR epic = '')"
     sql += """
            ORDER BY
              CASE priority
+               WHEN 'P0' THEN 0
                WHEN 'now' THEN 1
+               WHEN 'P1' THEN 1
                WHEN 'sooner' THEN 2
+               WHEN 'P2' THEN 2
                WHEN 'soon' THEN 3
+               WHEN 'P3' THEN 3
                WHEN 'later' THEN 4
                WHEN 'someday' THEN 5
                ELSE 6
@@ -266,23 +323,23 @@ def query_next_id(project_dir, prefix):
 def query_releases(project_dir):
     conn = get_conn(project_dir)
 
-    releases = conn.execute(
-        "SELECT * FROM items WHERE type='release' ORDER BY id"
+    milestones = conn.execute(
+        "SELECT * FROM items WHERE type='milestone' ORDER BY id"
     ).fetchall()
 
     result = []
-    for rel in releases:
-        rel_dict = dict(rel)
+    for ms in milestones:
+        ms_dict = dict(ms)
         epics = conn.execute(
-            "SELECT * FROM items WHERE type='epic' AND release=? ORDER BY id",
-            (rel_dict['id'],),
+            "SELECT * FROM items WHERE type='epic' AND milestone=? ORDER BY id",
+            (ms_dict['id'],),
         ).fetchall()
 
         epic_list = []
         for ep in epics:
             ep_dict = dict(ep)
             stories = conn.execute(
-                """SELECT * FROM items WHERE epic=? AND type IN ('story','bug','chore','debt')
+                """SELECT * FROM items WHERE epic=? AND type NOT IN ('epic', 'milestone')
                    ORDER BY epic_sequence, id""",
                 (ep_dict['id'],),
             ).fetchall()
@@ -297,25 +354,25 @@ def query_releases(project_dir):
             ep_dict['criteria_total'] = len(criteria)
             epic_list.append(ep_dict)
 
-        rel_dict['epics'] = epic_list
-        result.append(rel_dict)
+        ms_dict['epics'] = epic_list
+        result.append(ms_dict)
 
     conn.close()
     return result
 
 
-def query_releases_compact(project_dir):
-    """Releases hierarchy with only the fields needed for big-picture tree rendering."""
+def query_milestones_compact(project_dir):
+    """Milestones hierarchy with only the fields needed for big-picture tree rendering."""
     conn = get_conn(project_dir)
-    releases = conn.execute(
-        "SELECT id, title, status FROM items WHERE type='release' ORDER BY id"
+    milestones = conn.execute(
+        "SELECT id, title, status FROM items WHERE type='milestone' ORDER BY id"
     ).fetchall()
     result = []
-    for rel in releases:
-        rel_dict = {'id': rel['id'], 'title': rel['title'], 'status': rel['status'], 'epics': []}
+    for ms in milestones:
+        ms_dict = {'id': ms['id'], 'title': ms['title'], 'status': ms['status'], 'epics': []}
         epics = conn.execute(
-            "SELECT id, title, status FROM items WHERE type='epic' AND release=? ORDER BY id",
-            (rel_dict['id'],),
+            "SELECT id, title, status FROM items WHERE type='epic' AND milestone=? ORDER BY id",
+            (ms_dict['id'],),
         ).fetchall()
         for ep in epics:
             criteria = conn.execute(
@@ -324,11 +381,11 @@ def query_releases_compact(project_dir):
             ).fetchall()
             stories = conn.execute(
                 """SELECT id, title, status, epic_sequence
-                   FROM items WHERE epic=? AND type IN ('story','bug','chore','debt')
+                   FROM items WHERE epic=? AND type NOT IN ('epic', 'milestone')
                    ORDER BY epic_sequence, id""",
                 (ep['id'],),
             ).fetchall()
-            rel_dict['epics'].append({
+            ms_dict['epics'].append({
                 'id': ep['id'],
                 'title': ep['title'],
                 'status': ep['status'],
@@ -336,9 +393,14 @@ def query_releases_compact(project_dir):
                 'criteria_total': len(criteria),
                 'stories': [dict(s) for s in stories],
             })
-        result.append(rel_dict)
+        result.append(ms_dict)
     conn.close()
     return result
+
+
+def query_releases_compact(project_dir):
+    """Alias for query_milestones_compact — releases are now milestones."""
+    return query_milestones_compact(project_dir)
 
 
 def query_epics(project_dir, include_done=False):
@@ -365,7 +427,7 @@ def query_epics(project_dir, include_done=False):
         ep['criteria_done'] = sum(1 for c in criteria if c['done'])
         ep['criteria_total'] = len(criteria)
         stories = conn.execute(
-            """SELECT * FROM items WHERE epic=? AND type IN ('story','bug','chore','debt')
+            """SELECT * FROM items WHERE epic=? AND type NOT IN ('epic', 'milestone')
                ORDER BY epic_sequence, id""",
             (ep['id'],),
         ).fetchall()
@@ -378,7 +440,6 @@ def query_epics(project_dir, include_done=False):
 
 def query_summary(project_dir):
     conn = get_conn(project_dir)
-    work_types = "('story','bug','chore','debt')"
 
     type_counts = {}
     for row in conn.execute("SELECT type, COUNT(*) as c FROM items GROUP BY type"):
@@ -392,28 +453,32 @@ def query_summary(project_dir):
     for row in conn.execute("SELECT status, COUNT(*) as c FROM items WHERE type='epic' GROUP BY status"):
         epic_by_status[row['status']] = row['c']
 
-    release_count = conn.execute("SELECT COUNT(*) as c FROM items WHERE type='release'").fetchone()['c']
+    milestone_count = conn.execute("SELECT COUNT(*) as c FROM items WHERE type='milestone'").fetchone()['c']
+
+    milestone_by_status = {}
+    for row in conn.execute("SELECT status, COUNT(*) as c FROM items WHERE type='milestone' GROUP BY status"):
+        milestone_by_status[row['status']] = row['c']
 
     linked_total = conn.execute(
-        f"SELECT COUNT(*) as c FROM items WHERE type IN {work_types} AND epic IS NOT NULL AND epic != ''"
+        "SELECT COUNT(*) as c FROM items WHERE type NOT IN ('epic', 'milestone') AND epic IS NOT NULL AND epic != ''"
     ).fetchone()['c']
     linked_open = conn.execute(
-        f"SELECT COUNT(*) as c FROM items WHERE type IN {work_types} AND epic IS NOT NULL AND epic != '' AND status NOT IN ('done','abandoned','deferred')"
+        "SELECT COUNT(*) as c FROM items WHERE type NOT IN ('epic', 'milestone') AND epic IS NOT NULL AND epic != '' AND status NOT IN ('done','abandoned','deferred')"
     ).fetchone()['c']
     linked_done = conn.execute(
-        f"SELECT COUNT(*) as c FROM items WHERE type IN {work_types} AND epic IS NOT NULL AND epic != '' AND status = 'done'"
+        "SELECT COUNT(*) as c FROM items WHERE type NOT IN ('epic', 'milestone') AND epic IS NOT NULL AND epic != '' AND status = 'done'"
     ).fetchone()['c']
 
     unlinked_total = conn.execute(
-        f"SELECT COUNT(*) as c FROM items WHERE type IN {work_types} AND (epic IS NULL OR epic = '')"
+        "SELECT COUNT(*) as c FROM items WHERE type NOT IN ('epic', 'milestone') AND (epic IS NULL OR epic = '')"
     ).fetchone()['c']
     unlinked_open = conn.execute(
-        f"SELECT COUNT(*) as c FROM items WHERE type IN {work_types} AND (epic IS NULL OR epic = '') AND status NOT IN ('done','abandoned','deferred')"
+        "SELECT COUNT(*) as c FROM items WHERE type NOT IN ('epic', 'milestone') AND (epic IS NULL OR epic = '') AND status NOT IN ('done','abandoned','deferred')"
     ).fetchone()['c']
 
     unlinked_by_priority = {}
     for row in conn.execute(
-        f"SELECT COALESCE(priority, 'none') as p, COUNT(*) as c FROM items WHERE type IN {work_types} AND (epic IS NULL OR epic = '') AND status NOT IN ('done','abandoned','deferred') GROUP BY p"
+        "SELECT COALESCE(priority, 'none') as p, COUNT(*) as c FROM items WHERE type NOT IN ('epic', 'milestone') AND (epic IS NULL OR epic = '') AND status NOT IN ('done','abandoned','deferred') GROUP BY p"
     ):
         unlinked_by_priority[row['p']] = row['c']
 
@@ -424,7 +489,7 @@ def query_summary(project_dir):
         "by_type": type_counts,
         "by_status": status_counts,
         "epics": {"total": type_counts.get('epic', 0), "by_status": epic_by_status},
-        "releases": {"total": release_count},
+        "milestones": {"total": milestone_count, "by_status": milestone_by_status},
         "linked": {"total": linked_total, "open": linked_open, "done": linked_done},
         "unlinked": {"total": unlinked_total, "open": unlinked_open, "by_priority": unlinked_by_priority},
     }
@@ -448,10 +513,10 @@ def main():
     parser.add_argument('--project-dir', default='.', help='Project root directory')
     parser.add_argument('--rebuild', action='store_true', help='Rebuild the cache from source files')
     parser.add_argument('--query', choices=[
-        'item-count', 'active-epic', 'epic-stories', 'epics', 'backlog',
-        'next-id', 'releases', 'releases-compact', 'tags', 'summary',
+        'item-count', 'active-epic', 'epic-stories', 'epic-issues', 'epics', 'backlog',
+        'next-id', 'releases', 'releases-compact', 'milestones-compact', 'tags', 'summary',
     ], help='Query to run')
-    parser.add_argument('--epic', help='Epic ID for epic-stories query')
+    parser.add_argument('--epic', help='Epic ID for epic-stories/epic-issues query')
     parser.add_argument('--prefix', help='ID prefix for next-id query')
     parser.add_argument('--tag', help='Tag name for tags query')
     parser.add_argument('--include-done', action='store_true', help='Include done items')
@@ -476,6 +541,10 @@ def main():
         if not args.epic:
             sys.exit("--epic required for epic-stories query")
         result = query_epic_stories(args.project_dir, args.epic, args.include_done)
+    elif args.query == 'epic-issues':
+        if not args.epic:
+            sys.exit("--epic required for epic-issues query")
+        result = query_epic_issues(args.project_dir, args.epic, args.include_done)
     elif args.query == 'epics':
         result = query_epics(args.project_dir, args.include_done)
     elif args.query == 'backlog':
@@ -488,6 +557,8 @@ def main():
         result = query_releases(args.project_dir)
     elif args.query == 'releases-compact':
         result = query_releases_compact(args.project_dir)
+    elif args.query == 'milestones-compact':
+        result = query_milestones_compact(args.project_dir)
     elif args.query == 'summary':
         result = query_summary(args.project_dir)
     elif args.query == 'tags':

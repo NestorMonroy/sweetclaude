@@ -183,8 +183,8 @@ with tempfile.NamedTemporaryFile('w', dir=str(privacy_path.parent), suffix='.tmp
 os.replace(tmp_name, str(privacy_path))
 
 # 2. Create backlog directory tree
-for subdir in ['stories/done', 'bugs/done', 'debt/done', 'chores/done']:
-    p = pathlib.Path(f'docs/product/backlog/{subdir}')
+for subdir in ['backlog/done', 'roadmap/epics/done', 'roadmap/milestones', 'roadmap/issues/done']:
+    p = pathlib.Path(f'.sweetclaude/product/{subdir}')
     p.mkdir(parents=True, exist_ok=True)
     (p / '.gitkeep').touch()
 

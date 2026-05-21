@@ -31,7 +31,7 @@ Drop `onboarded_at`/`offboarded_at`. Set `schema_version: 2`. Write atomically (
 Read `~/.claude/config/sweetclaude/skills-registry.yaml`. Find `skills.product-parking-lot.dependencies`. This skill has no dependencies — skip.
 
 **If `skills.yaml` does not exist, OR exists but has no entry for `skills.product-parking-lot`:**
-- Check whether `{base_path}/backlog/BACKLOG-INDEX.md` exists
+- Check whether `{base_path}/backlog/INDEX.md` exists
 - If yes: write entry with `status: active`, `last_changed_at: {today}`, `last_changed_by: migrated`
 - If no: write entry with `status: uninitialized`, `last_changed_at: ~`, `last_changed_by: ~`
 - Use write protocol below.
@@ -92,9 +92,8 @@ Never silently put a non-technical item in docs/backlog/.
 
 ```
 {base_path}/backlog/
-  BACKLOG-INDEX.md          # Master index with priority, summary, links
-  BL-001-short-name.md      # Detail file per item
-  BL-002-short-name.md
+  ISSUE-001-short-name.md      # Detail file per item
+  ISSUE-002-short-name.md
   ...
 ```
 
@@ -120,7 +119,7 @@ Invoked with argument `offboard`.
 1. **Inventory what exists:**
 
 ```bash
-ls {base_path}/backlog/BL-*.md 2>/dev/null | wc -l
+ls {base_path}/backlog/ISSUE-*.md 2>/dev/null | wc -l
 ls {base_path}/backlog/ 2>/dev/null
 ```
 
@@ -138,8 +137,8 @@ If nothing exists, say: "No backlog data found. Nothing to export." Stop.
 
 3. **Export:**
 
-- **github:** For each BL-*.md, run `gh issue create --title "{title}" --body "{summary + initial thinking}"`. Report what was created.
-- **markdown:** Ask "Which directory?" Copy all `BL-*.md` files and `BACKLOG-INDEX.md` there. Report files copied.
+- **github:** For each ISSUE-*.md, run `gh issue create --title "{title}" --body "{summary + initial thinking}"`. Report what was created.
+- **markdown:** Ask "Which directory?" Copy all `ISSUE-*.md` files and `INDEX.md` there. Report files copied.
 - **csv:** Ask "Which path?" Write one row per item: ID, title, priority, depends on, one-line summary. Report path written.
 - **none:** Skip.
 
@@ -156,8 +155,8 @@ If nothing exists, say: "No backlog data found. Nothing to export." Stop.
 
 - **markdown verification:**
   ```bash
-  source_count=$(ls {base_path}/backlog/BL-*.md 2>/dev/null | wc -l)
-  dest_count=$(ls {dest_dir}/BL-*.md 2>/dev/null | wc -l)
+  source_count=$(ls {base_path}/backlog/ISSUE-*.md 2>/dev/null | wc -l)
+  dest_count=$(ls {dest_dir}/ISSUE-*.md 2>/dev/null | wc -l)
   ```
   If dest_count ≥ source_count: "Export verified — {source_count} files at `{dest_dir}`."
   If dest_count < source_count: "⚠ File count mismatch — {source_count} source files, {dest_count} at destination."
@@ -209,9 +208,9 @@ Runs when the skill is invoked normally but `status` is `uninitialized`. Does NO
    ```bash
    gh issue list --state open --limit 30 2>/dev/null
    ```
-   Create `BACKLOG-INDEX.md` with the standard header. For each issue found, create a `BL-XXX` file with title, issue number, and body summary. Report how many were imported.
+   Create `INDEX.md` with the standard header. For each issue found, create a `BL-XXX` file with title, issue number, and body summary. Report how many were imported.
 
-4. If **no** or **skip**: Create `{base_path}/backlog/BACKLOG-INDEX.md` with the standard header only.
+4. If **no** or **skip**: Create `{base_path}/backlog/INDEX.md` with the standard header only.
 
 5. Write state (using write protocol): `status: active`, `last_changed_at: {today}`, `last_changed_by: first-invocation`.
 
@@ -252,7 +251,7 @@ If nothing found:
 
 3. **If import:** For each item found, create a `BL-XXX` file using the backlog template. Populate from source data. Present a summary. Tell the user: "Use `/sweetclaude:product-parking-lot` to review your backlog."
 
-4. **If fresh / yes:** Create `{base_path}/backlog/BACKLOG-INDEX.md` with the standard header. Tell the user: "Ready. Describe a backlog item and I'll add it."
+4. **If fresh / yes:** Create `{base_path}/backlog/INDEX.md` with the standard header. Tell the user: "Ready. Describe a backlog item and I'll add it."
 
 5. **If cancel:** "OK. Run `/sweetclaude:product-parking-lot onboard` when ready."
 
@@ -261,7 +260,7 @@ If nothing found:
 ## Adding a Backlog Item
 
 ### Step 1: Assign the next BL number
-Read `{base_path}/backlog/BACKLOG-INDEX.md`, find the highest BL-XXX number, increment by 1.
+Read `{base_path}/backlog/INDEX.md`, find the highest BL-XXX number, increment by 1.
 
 ### Step 2: Determine priority
 If not obvious from context, use AskUserQuestion with these options:
@@ -297,7 +296,7 @@ One paragraph describing what this is and why it matters.
 Always include substantive initial thinking, not just a title. Capture context while it is fresh. Initial thinking written during the conversation is far more valuable than reconstructing it later.
 
 ### Step 4: Update the index
-Add a row to `{base_path}/backlog/BACKLOG-INDEX.md`, grouped by category:
+Add a row to `{base_path}/backlog/INDEX.md`, grouped by category:
 ```
 | BL-XXX | Short description | Priority | [BL-XXX](BL-XXX-short-name.md) |
 ```
@@ -308,7 +307,7 @@ Tell the user: "Added BL-XXX to the backlog: [title]. [one-sentence summary]."
 ## Reviewing the Backlog
 
 When the user asks to review:
-1. Read `{base_path}/backlog/BACKLOG-INDEX.md`.
+1. Read `{base_path}/backlog/INDEX.md`.
 2. Summarize: total items, count by priority, stale items.
 3. Identify items now unblocked (dependencies completed).
 4. Suggest re-prioritization if project context changed.
@@ -331,7 +330,7 @@ When a backlog item is ready to be built:
 ## Rules
 
 - Every item gets a file. The index is just an index.
-- BL numbers are permanent. Never renumber. Gaps are fine.
+- ISSUE numbers are permanent. Never renumber. Gaps are fine.
 - Group by category in the index, not by date or priority alone.
-- Link dependencies. If BL-013 depends on BL-010, say so in both files.
+- Link dependencies. If ISSUE-013 depends on ISSUE-010, say so in both files.
 - Spikes produce a recommendation, not deliverables.

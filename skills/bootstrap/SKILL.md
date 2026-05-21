@@ -181,7 +181,7 @@ if $PLUGIN_IS_V4 && ( $PROJECT_NOT_V4 || [ "$V3_FILES" -gt 0 ] ); then
     echo "Found $V3_FILES v3 stories at ${PRODUCT_BASE}/backlog/."
   fi
   echo ""
-  echo "Migration creates a safety backup and moves stories to docs/product/. Your"
+  echo "Migration creates a safety backup and moves items to .sweetclaude/product/. Your"
   echo "current work is not affected. A clean git working tree is not required."
   echo ""
   echo "Run: /sweetclaude:migrate"
