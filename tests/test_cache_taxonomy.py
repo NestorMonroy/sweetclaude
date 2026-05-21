@@ -1000,6 +1000,7 @@ class TestEpicStoriesAliasForEpicIssues:
         result_stories = query_epic_stories(project_dir, "EP-001", include_done=True)
         result_issues = query_epic_issues(project_dir, "EP-001", include_done=True)
 
+        assert len(result_issues) >= 1, "alias test requires non-empty results to be meaningful"
         assert result_stories == result_issues
 
 
