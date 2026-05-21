@@ -259,12 +259,15 @@ def find_active_workflows(project_dir="."):
     return result
 
 
-def extract_output_signal(step, agent_output_path):
-    try:
-        with open(agent_output_path, "r") as f:
-            content = f.read()
-    except (OSError, IOError):
-        return None
+def extract_output_signal(step_or_content, agent_output_path=None):
+    if agent_output_path is None:
+        content = step_or_content
+    else:
+        try:
+            with open(agent_output_path, "r") as f:
+                content = f.read()
+        except (OSError, IOError):
+            return None
 
     if not content.startswith("---\n") and not content.startswith("---\r\n"):
         return None
