@@ -43,13 +43,12 @@ ls scratch/ 2>/dev/null | grep -iE "checkpoint|continue|resume|handoff" | head -
 ls .rag-index/lancedb/ 2>/dev/null | wc -l
 find corpus/canonical/ -type f 2>/dev/null | wc -l
 
-# Roadmap (milestones) — path from pre-loaded session state
-product_base=$(cat .sweetclaude/state/session-state.yaml 2>/dev/null | python3 -c "import yaml,sys; d=yaml.safe_load(sys.stdin); print(d.get('paths',{}).get('product_base','.sweetclaude/product'))" 2>/dev/null || echo "MANIFEST_MISSING")
-if [ "$product_base" != "MANIFEST_MISSING" ]; then
-  ls ${product_base}/milestones/MS-*.md 2>/dev/null | head -10
-  grep -rh "\*\*Status:\*\*" ${product_base}/milestones/ 2>/dev/null | head -10
+# Migration guard — check that product dir exists before reading data
+if [[ -d .sweetclaude/product/ ]]; then
+  echo "PRODUCT_DIR_OK"
 else
-  echo "ARTIFACT_PRIVACY_NOT_CONFIGURED"
+  echo "PRODUCT_DIR_MISSING"
+  echo "This project has not been migrated. Run sweetclaude:migrate to migrate your product files."
 fi
 
 # Versions
@@ -88,104 +87,39 @@ else:
     print('KNOWN_CONFLICTS=0')
 " 2>/dev/null || echo "KNOWN_CONFLICTS=0"
 
-# Roadmap, issues, and backlog details
-product_base=$(cat .sweetclaude/state/session-state.yaml 2>/dev/null | python3 -c "import yaml,sys; d=yaml.safe_load(sys.stdin); print(d.get('paths',{}).get('product_base','.sweetclaude/product'))" 2>/dev/null || echo ".sweetclaude/product")
-
-python3 - <<'PYEOF'
-import os, re, glob, json
-
-base = os.environ.get('product_base', '.sweetclaude/product')
-
-def field(content, name):
-    m = re.search(rf'\*\*{name}:\*\*\s*(.+)', content)
-    return m.group(1).strip() if m else ''
-
-def title(content):
-    m = re.search(r'^# (.+)', content, re.MULTILINE)
-    return m.group(1).strip() if m else ''
-
-DONE = {'done', 'complete', 'achieved', 'closed', 'complete'}
-
-# --- Roadmap ---
-roadmap = []
-for f in sorted(glob.glob(f'{base}/roadmap/RM-*.md')):
-    c = open(f).read()
-    roadmap.append({'id': os.path.basename(f).split('.')[0], 'title': title(c),
-                    'status': field(c, 'Status').lower(), 'type': field(c, 'Type')})
-print('ROADMAP_START')
-print(json.dumps(roadmap))
-print('ROADMAP_END')
-
-# --- Issues ---
-issues = []
-for f in sorted(glob.glob(f'{base}/issues/I-*.md')):
-    c = open(f).read()
-    s = field(c, 'Status').lower()
-    issues.append({'id': os.path.basename(f).split('.')[0], 'title': title(c),
-                   'status': s, 'roadmap': field(c, 'Roadmap Item'), 'epic': field(c, 'Epic'),
-                   'priority': field(c, 'Priority'), 'open': s not in DONE})
-print('ISSUES_START')
-print(json.dumps(issues))
-print('ISSUES_END')
-
-# --- Backlog ---
-backlog = []
-_HORIZON_ORDER = {'now': 0, 'next': 0, 'sooner': 1, 'soon': 2, 'later': 3, 'someday': 4}
-_DONE_STATUSES = {'done', 'complete', 'achieved', 'closed', 'cancelled', 'canceled'}
-
-def _item_title(c):
-    # YAML frontmatter title: takes precedence over H1
-    fm = re.match(r'^---\s*\n(.*?)\n---', c, re.DOTALL)
-    if fm:
-        tm = re.search(r'^title:\s*(.+)', fm.group(1), re.MULTILINE)
-        if tm:
-            return tm.group(1).strip().strip('"\'')
-    return title(c)
-
-# v4: typed subdirs — priority field serves as horizon
-_V4_SUBDIRS = [('stories', 'STORY'), ('bugs', 'BUG'), ('debt', 'DEBT'), ('chores', 'CHORE')]
-for _subdir, _prefix in _V4_SUBDIRS:
-    for f in sorted(glob.glob(f'{base}/backlog/{_subdir}/{_prefix}-*.md')):
-        c = open(f).read()
-        s = (field(c, 'status') or field(c, 'Status')).lower()
-        if s in _DONE_STATUSES:
-            continue
-        h_raw = (field(c, 'priority') or field(c, 'Priority') or '').lower()
-        h = ('now' if h_raw == 'next' else h_raw) if h_raw in _HORIZON_ORDER else 'unscheduled'
-        m = re.match(rf'({_prefix}-\d+)', os.path.basename(f))
-        item_id = m.group(1) if m else os.path.basename(f).split('.')[0]
-        backlog.append({'id': item_id, 'title': _item_title(c), 'priority': h_raw.upper(),
-                        'status': s, 'horizon': h, 'horizon_order': _HORIZON_ORDER.get(h, 6)})
-
-# v3 backwards compat: BL-*.md in backlog/
-for f in sorted(glob.glob(f'{base}/backlog/BL-*.md')):
-    c = open(f).read()
-    s = field(c, 'Status').lower()
-    p = field(c, 'Priority').upper()
-    h_raw = field(c, 'Horizon').lower()
-    h = ('now' if h_raw == 'next' else h_raw) if h_raw in _HORIZON_ORDER else 'unscheduled'
-    if 'DONE' not in s.upper() and 'COMPLETE' not in s.upper():
-        backlog.append({'id': os.path.basename(f).split('.')[0],
-                        'title': title(c), 'priority': p, 'status': s,
-                        'horizon': h, 'horizon_order': _HORIZON_ORDER.get(h, 6)})
-print('BACKLOG_START')
-print(json.dumps(backlog))
-print('BACKLOG_END')
-PYEOF
+# Rebuild cache and query for roadmap/backlog data using cache.py
+python3 scripts/cache.py --project-dir . --rebuild 2>/dev/null
+echo "SUMMARY_START"
+python3 scripts/cache.py --project-dir . --query summary 2>/dev/null
+echo "SUMMARY_END"
+echo "BACKLOG_START"
+python3 scripts/cache.py --project-dir . --query backlog 2>/dev/null
+echo "BACKLOG_END"
 ```
 
 ## Step 3: Present status
 
-Parse the JSON blocks from Step 2 output (between `*_START` / `*_END` markers). Use all data gathered. No further reads or commands.
+If Step 2 output contains `PRODUCT_DIR_MISSING`, output:
+> `.sweetclaude/product/` directory not found — this project has not been migrated. Run `/sweetclaude:migrate` to migrate your product files before running status.
+
+Stop.
+
+Otherwise, parse the JSON blocks from Step 2 output (between `*_START` / `*_END` markers). Use all data gathered. No further reads or commands.
 
 Compute derived values:
 - **UNCOMMITTED_COUNT** = number of lines in `git status --short` output
-- **OPEN_ISSUES** = issues where `open: true`
-- **IN_PROGRESS_ISSUES** = open issues where status = `in_progress`
-- **ROADMAP_ACHIEVED** = roadmap items where status ∈ {complete, achieved}
-- **ROADMAP_ACTIVE** = roadmap items where status ∈ {in_progress, active}
-- **ROADMAP_PLANNED** = all others (not achieved/complete)
-- **BACKLOG_BY_HORIZON** = backlog items grouped by horizon: now, sooner, soon, later, someday, unscheduled (items where `horizon` field is absent or unrecognized; `next` is treated as alias for `now`)
+- **ROADMAP_ACHIEVED** = `summary.milestones.by_status.done` (milestones where status = 'done')
+- **ROADMAP_ACTIVE** = `summary.milestones.by_status.active` (milestones where status = 'active')
+- **ROADMAP_PLANNED** = `summary.milestones.total` - ROADMAP_ACHIEVED - ROADMAP_ACTIVE
+- **OPEN_ITEMS** = backlog items from the backlog query (all are open — done/abandoned/deferred are excluded by cache.py)
+- **IN_PROGRESS_ITEMS** = backlog items where status = `in_progress`
+- **BACKLOG_BY_HORIZON** = backlog items grouped by horizon bucket, derived from priority field:
+  - P0 or 'now' → Now
+  - P1 or 'sooner' → Sooner
+  - P2 or 'soon' → Soon
+  - P3 or 'later' → Later
+  - 'someday' → Someday
+  - anything else → Unscheduled
 
 Output in this format. Use clean markdown — no box-drawing characters, no ANSI codes.
 
@@ -198,51 +132,26 @@ For each of the following, emit a `-` list item if the condition is true. If non
 - UNCOMMITTED_COUNT > 0: `- {N} uncommitted file(s) in working tree`
 - checkpoint_next is set (non-null, non-empty): `- Checkpoint: {checkpoint_next}`
 - scratch files found: `- Scratch: {filenames}`
-- IN_PROGRESS_ISSUES non-empty: `- {N} issue(s) in progress: {comma-separated IDs}`
-- MODE=kanban AND WIP_LIMIT is not null AND len(IN_PROGRESS_ISSUES) >= WIP_LIMIT: `- ⚠ WIP limit reached: {N}/{WIP_LIMIT} items in progress`
+- IN_PROGRESS_ITEMS non-empty: `- {N} item(s) in progress: {comma-separated IDs}`
+- MODE=kanban AND WIP_LIMIT is not null AND len(IN_PROGRESS_ITEMS) >= WIP_LIMIT: `- ⚠ WIP limit reached: {N}/{WIP_LIMIT} items in progress`
 - MODE=agile AND HAS_ACTIVE_SPRINT=false: `- ⚠ No active sprint`
 
 Then:
 
 ### Roadmap
 
-
-If no roadmap files exist:
+If `summary.milestones.total` is 0:
 ```
 No roadmap configured. Ask me to build one with `/sweetclaude:product-roadmap`.
 ```
 
-Otherwise: `{total} items · {ROADMAP_ACHIEVED} achieved · {ROADMAP_ACTIVE} active · {ROADMAP_PLANNED} planned`
-
-Then, if ROADMAP_ACTIVE > 0, list active items one per line:
-
-`**Active:** {id} — {title}`
-
-Else if ROADMAP_PLANNED > 0, list up to 3 planned items one per line:
-
-`**Up next:** {id} — {title}`
-
-Then:
-
-### Epics
-
-Group OPEN_ISSUES by their `roadmap` field. For each active or planned roadmap item that has open issues, show:
-
-**{roadmap-id} — {roadmap title}**
-- {issue-id}: {title} [{status}]
-
-After linked issues, if any open issues have `roadmap` = "(none)" or empty:
-
-**Unlinked**
-- {issue-id}: {title} [{status}]
-
-If no open issues at all: `No open epics.`
+Otherwise: `{total} milestones · {ROADMAP_ACHIEVED} done · {ROADMAP_ACTIVE} active · {ROADMAP_PLANNED} planned`
 
 Then:
 
 ### Backlog
 
-For each horizon bucket that is non-empty, in order: now, sooner, soon, later, someday, unscheduled. Use `horizon_order` from the JSON to determine sort order (now=0 sorts first, unscheduled=5 sorts last). Items with `horizon` = `next` are displayed in the `Now` bucket.
+For each horizon bucket that is non-empty, in order: Now, Sooner, Soon, Later, Someday, Unscheduled.
 
 Output the bucket heading as bold markdown followed by the item count:
 `**{Bucket_Label}** ({N}{suffix})`
@@ -252,7 +161,7 @@ Where `{Bucket_Label}` is the bucket name in title case (e.g. `Now`, `Sooner`, `
 Under each heading, show up to 5 items:
 `- {id}  [{priority_badge}]  {title}`
 
-Where `{priority_badge}` is the item's **Priority:** value (e.g. `P1`, `SPIKE`) or `—` if unset.
+Where `{priority_badge}` is the item's priority value (e.g. `P1`, `SPIKE`) or `—` if unset.
 
 After all buckets: if total open backlog > 10, append:
 `({total} total — run a backlog triage if it's getting unwieldy)`

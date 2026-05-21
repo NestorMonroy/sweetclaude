@@ -455,6 +455,10 @@ def query_summary(project_dir):
 
     milestone_count = conn.execute("SELECT COUNT(*) as c FROM items WHERE type='milestone'").fetchone()['c']
 
+    milestone_by_status = {}
+    for row in conn.execute("SELECT status, COUNT(*) as c FROM items WHERE type='milestone' GROUP BY status"):
+        milestone_by_status[row['status']] = row['c']
+
     linked_total = conn.execute(
         "SELECT COUNT(*) as c FROM items WHERE type NOT IN ('epic', 'milestone') AND epic IS NOT NULL AND epic != ''"
     ).fetchone()['c']
@@ -485,7 +489,7 @@ def query_summary(project_dir):
         "by_type": type_counts,
         "by_status": status_counts,
         "epics": {"total": type_counts.get('epic', 0), "by_status": epic_by_status},
-        "milestones": {"total": milestone_count},
+        "milestones": {"total": milestone_count, "by_status": milestone_by_status},
         "linked": {"total": linked_total, "open": linked_open, "done": linked_done},
         "unlinked": {"total": unlinked_total, "open": unlinked_open, "by_priority": unlinked_by_priority},
     }

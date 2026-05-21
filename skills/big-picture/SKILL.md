@@ -1,7 +1,7 @@
 ---
 spdx-license: AGPL-3.0-or-later
 user-invocable: true
-description: "Show the full project at a glance — roadmap pipeline with releases, epics, and stories. Trigger on: 'big picture', 'whole project status', 'full status', 'what's the full state', 'project overview', 'where is everything', 'show me everything'."
+description: "Show the full project at a glance — roadmap pipeline with milestones, epics, and issues. Trigger on: 'big picture', 'whole project status', 'full status', 'what's the full state', 'project overview', 'where is everything', 'show me everything'."
 ---
 
 !`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:big-picture" 2>/dev/null || true`
@@ -22,8 +22,8 @@ Before rendering, run the v4 lint rules from `sweetclaude:_health` Step 3 inline
 
 ```
 ## v4 Storage Warnings
-- counter-drift:story (stored=3, max_id_seen=5)
-- done-status-mismatch:STORY-002-foo.md has status=done but is not in done/
+- counter-drift:issue (stored=3, max_id_seen=5)
+- done-status-mismatch:ISSUE-002-foo.md has status=done but is not in done/
 ```
 
 Proceed to Step 1 regardless of findings — this is informational, not blocking.
@@ -34,12 +34,27 @@ Use `phase_schema_version` from pre-loaded session state above:
 - If absent or `1`: warn — "Your config is on schema v1. Run `/sweetclaude:update` to upgrade." Stop.
 - If `2`: proceed.
 
+## Step 1b: Migration guard
+
+Check whether the product directory has been migrated:
+
+```bash
+if [[ -d .sweetclaude/product/ ]]; then
+  echo "PRODUCT_DIR_OK"
+else
+  echo "PRODUCT_DIR_MISSING"
+fi
+```
+
+- If output is `PRODUCT_DIR_MISSING`: output the following and stop:
+  > The `.sweetclaude/product/` directory does not exist. This project has not been migrated to the current taxonomy. Run `/sweetclaude:migrate` to migrate your product files, then try again.
+
 ## Step 2: Detect roadmap mode
 
 Check whether the roadmap system exists:
 
 ```bash
-ls docs/product/roadmap/epics/EP-*.md 2>/dev/null | head -1
+ls .sweetclaude/product/roadmap/epics/EP-*.md 2>/dev/null | head -1
 ```
 
 - If output is non-empty → **Roadmap mode** (Step 3a)
@@ -51,13 +66,13 @@ Rebuild the cache, then run all three queries:
 
 ```bash
 python3 scripts/cache.py --project-dir . --rebuild 2>/dev/null
-python3 scripts/cache.py --project-dir . --query releases-compact 2>/dev/null
+python3 scripts/cache.py --project-dir . --query milestones-compact 2>/dev/null
 python3 scripts/cache.py --project-dir . --query summary 2>/dev/null
 python3 scripts/cache.py --project-dir . --query backlog --unlinked-only 2>/dev/null
 ```
 
-- `releases-compact` — compact hierarchy (id, title, status, criteria_done/total, story list) for the tree display; use this instead of `releases` to avoid output truncation on large projects
-- `summary` — pre-computed totals for the bottom summary line (**use these numbers, do not count from the releases JSON**)
+- `milestones-compact` — compact hierarchy (id, title, status, criteria_done/total, issue list) for the tree display; use this instead of `releases` to avoid output truncation on large projects
+- `summary` — pre-computed totals for the bottom summary line (**use these numbers, do not count from the milestones JSON**)
 - `backlog --unlinked-only` — open items with no epic, for the unlinked section (top 5 only)
 
 Skip to Step 4a.
@@ -94,26 +109,26 @@ Output in this format. Use clean markdown — no ANSI codes, no horizontal divid
 
 ### Roadmap
 
-For each release (ordered by ID):
+For each milestone (ordered by ID):
 
 ```
-REL-{NNN}  {title}  [{status}]
+MS-{NNN}  {title}  [{status}]
 ```
 
-For each epic within that release (ordered by ID):
+For each epic within that milestone (ordered by ID):
 
 ```
 ├── EP-{NNN}  {title}  [{status}]
 │   Objective: {objective (truncate to 80 chars)}
 │   Criteria: {done}/{total} complete
-│   ├── {STORY-NNN}  {title (truncate to 50 chars)}  [{status}]
-│   ├── {STORY-NNN}  {title}  [{status}]
-│   └── {STORY-NNN}  {title}  [{status}]
+│   ├── {ISSUE-NNN}  {title (truncate to 50 chars)}  [{status}]
+│   ├── {ISSUE-NNN}  {title}  [{status}]
+│   └── {ISSUE-NNN}  {title}  [{status}]
 ```
 
-Use `✓` for done stories and done epics. Use `├──` / `└──` connectors.
+Use `✓` for done issues and done epics. Use `├──` / `└──` connectors.
 
-After all releases, if there are backlog items not linked to any epic, show:
+After all milestones, if there are backlog items not linked to any epic, show:
 
 ```
 ### Unlinked Backlog
@@ -127,7 +142,7 @@ Only show the count and the top 5 items by priority. Do not list the full backlo
 
 After the roadmap:
 
-`{total releases} releases · {active epics} active · {total stories across all epics} stories`
+`{total milestones} milestones · {active epics} active · {total issues across all epics} issues`
 
 ---
 
