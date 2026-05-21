@@ -666,3 +666,27 @@ def resume_loop(workflow_id, decision, project_dir=".", deference_level="collabo
     state["status"] = "active"
     _save_state(workflow_id, state, project_dir, output_dir)
     return run_loop(workflow_id, project_dir=project_dir, deference_level=deference_level)
+
+
+if __name__ == "__main__":
+    import json
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("command", choices=["run", "resume"])
+    parser.add_argument("--workflow-id", required=True)
+    parser.add_argument("--project-dir", default=".")
+    parser.add_argument("--deference-level", default="collaborative")
+    parser.add_argument("--decision-json", default=None)
+    args = parser.parse_args()
+
+    if args.command == "run":
+        result = run_loop(args.workflow_id, project_dir=args.project_dir,
+                          deference_level=args.deference_level)
+    elif args.command == "resume":
+        decision = json.loads(args.decision_json) if args.decision_json else {}
+        result = resume_loop(args.workflow_id, decision, project_dir=args.project_dir,
+                             deference_level=args.deference_level)
+
+    if result is not None:
+        print(json.dumps(result))
