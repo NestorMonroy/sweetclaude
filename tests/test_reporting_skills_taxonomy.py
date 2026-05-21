@@ -434,6 +434,20 @@ class TestStatusCorrectTerminalStatuses:
             "the canonical done status is 'done'"
         )
 
+    def test_no_cancelled_as_done_status(self):
+        content = read_skill("status")
+        assert "'cancelled'" not in content, (
+            "status SKILL.md must not use 'cancelled' as a terminal/done status — "
+            "canonical terminal statuses are: done, declined, abandoned, superseded"
+        )
+
+    def test_no_canceled_as_done_status(self):
+        content = read_skill("status")
+        assert "'canceled'" not in content, (
+            "status SKILL.md must not use 'canceled' as a terminal/done status — "
+            "canonical terminal statuses are: done, declined, abandoned, superseded"
+        )
+
 
 # ---------------------------------------------------------------------------
 # big-picture: migration guard
