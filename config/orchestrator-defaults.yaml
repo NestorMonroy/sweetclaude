@@ -1,0 +1,9 @@
+iteration_limits:
+  default_max: 3
+paths:
+  output_dir: ".sweetclaude/workflows"
+subagent_types:
+  allowlist:
+    - code
+    - research
+    - housekeeping
