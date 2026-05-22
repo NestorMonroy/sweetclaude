@@ -36,7 +36,11 @@ If the guard fires: print the message and stop. Do not proceed.
 import pathlib, yaml, re, datetime, shutil
 
 BACKLOG_BASE = pathlib.Path('.sweetclaude/product/backlog')
+ROADMAP_ISSUES = pathlib.Path('.sweetclaude/product/roadmap/issues')
 SKIP_FILES = {'INDEX.md', 'MIGRATION-MAP.md', 'SCHEMA.md'}
+
+STATUSES = {'new', 'ready', 'active', 'in-review', 'blocked', 'on-hold', 'deferred', 'done', 'declined', 'abandoned', 'superseded'}
+TERMINAL_STATUSES = {'done', 'declined', 'abandoned', 'superseded'}
 
 def read_story_file(path):
     raw = pathlib.Path(path).read_bytes().decode('utf-8').replace('\r\n', '\n')
@@ -50,12 +54,13 @@ def write_story_file(path, fm, body):
     pathlib.Path(path).write_text(content, encoding='utf-8')
 
 def find_story_by_id(story_id):
-    for p in BACKLOG_BASE.rglob('*.md'):
-        if p.name in SKIP_FILES:
-            continue
-        stem = p.stem
-        if stem == story_id or stem.startswith(story_id + '-'):
-            return p
+    for base in [BACKLOG_BASE, ROADMAP_ISSUES]:
+        for p in base.rglob('*.md'):
+            if p.name in SKIP_FILES:
+                continue
+            stem = p.stem
+            if stem == story_id or stem.startswith(story_id + '-'):
+                return p
     return None
 
 def make_slug(title):
@@ -72,10 +77,10 @@ def rebuild_cache():
     subprocess.run(['python3', 'scripts/cache.py', '--project-dir', '.', '--rebuild'], capture_output=True)
 
 def all_story_files():
-    return [
-        p for p in BACKLOG_BASE.rglob('*.md')
-        if p.name not in SKIP_FILES
-    ]
+    files = []
+    for base in [BACKLOG_BASE, ROADMAP_ISSUES]:
+        files.extend(p for p in base.rglob('*.md') if p.name not in SKIP_FILES)
+    return files
 ```
 
 # Project Issues
@@ -116,8 +121,10 @@ Parse the first word of `$ARGUMENTS` to determine the operation.
 | `view <ID>` | → **View** single issue |
 | `new` | → **Create** new issue interactively |
 | `update <ID>` | → **Update** existing issue |
-| `close <ID>` | → **Close** issue (status → done, move to done/) |
-| `reopen <ID>` | → **Reopen** issue (status → new) |
+| `close <ID>` | → **Close** issue (terminal status, move to done/) |
+| `decline <ID>` | → **Decline** issue (status → declined, move to archived/) |
+| `triage <ID>` | → **Triage** issue (backlog → roadmap/issues, status → ready) |
+| `reopen <ID>` | → **Reopen** issue (status → new, move back to origin) |
 
 ---
 
@@ -128,7 +135,7 @@ files = all_story_files()
 stories = []
 for p in files:
     fm, _ = read_story_file(p)
-    if fm.get('status') not in ('done', 'abandoned'):
+    if fm.get('status') not in TERMINAL_STATUSES:
         stories.append(fm)
 
 # Sort: priority order, then by id
@@ -154,7 +161,7 @@ After the table: `{N} issues  ({done} done, {active} active, {new} new)`
 Show items with no sprint assignment and status not in done/abandoned:
 
 ```python
-backlog = [fm for fm in stories if not fm.get('sprint') and fm.get('status') not in ('done', 'abandoned', 'deferred')]
+backlog = [fm for fm in stories if not fm.get('sprint') and fm.get('status') not in TERMINAL_STATUSES and fm.get('status') != 'deferred']
 ```
 
 Present same table format as List, sorted by priority. Header: `Backlog — {N} unscheduled issues`
@@ -260,16 +267,30 @@ Show the current values. Ask: "What would you like to change?" Accept natural la
 
 Map the user's intent to fields:
 - "move to sprint SP-003" → `sprint: SP-003`, `status: active`
-- "set priority to soon" → `priority: soon`
+- "set priority to P1" → `priority: P1`
 - "assign to epic EP-001" → `epic: EP-001`
 - "remove from sprint" → `sprint: null`
+- "mark blocked" → `status: blocked`
+- "put on hold" → `status: on-hold`
+- "defer" → `status: deferred`, ask for optional `deferred_reason`
+- "start review" → `status: in-review`
 - "add acceptance criteria" → append to body Acceptance Criteria section
+
+**Status validation:**
+- All status values must be one of the 11 canonical statuses defined in `STATUSES`.
+- Cannot transition FROM a terminal status (done/declined/abandoned/superseded) without using `reopen` first.
+- Setting `superseded` requires `superseded_by` to be set.
+- Setting `deferred` accepts optional `deferred_reason`.
 
 Then:
 
 ```python
 fm['updated'] = datetime.date.today().isoformat()
-# apply changed fields
+if fm.get('status') == 'superseded' and not fm.get('superseded_by'):
+    # ask: "What issue replaces this one?"
+    fm['superseded_by'] = '<replacement_id>'
+if fm.get('status') == 'deferred' and '<reason_provided>':
+    fm['deferred_reason'] = '<reason>'
 write_story_file(path, fm, body)
 ```
 
@@ -279,31 +300,98 @@ Confirm: `Updated {ID} — {list of changed fields}`
 
 ## Close
 
-Set status to done, move file to the `done/` subdirectory, and set `closed_date`.
+Set a terminal status and move to `roadmap/issues/done/`. Only applies to triaged issues (in `roadmap/issues/`). Default status is `done`; also accepts `abandoned` or `superseded`.
+
+If the issue is in `backlog/`, reject: "This issue hasn't been triaged. Use `decline` to reject it, or `triage` it first."
+
+If `superseded`, ask: "What issue replaces this one?" Set `superseded_by: ISSUE-NNN` in frontmatter.
+
+If `terminal_status` is `done` and current status is not `in-review` or `active`, warn: "This issue hasn't reached review. Close anyway?" Proceed only on confirmation.
 
 ```python
 path = find_story_by_id('<ID>')
+if not (ROADMAP_ISSUES in path.parents or path.parent == ROADMAP_ISSUES):
+    print("This issue hasn't been triaged. Use `decline` to reject it, or `triage` it first.")
+    return
 fm, body = read_story_file(path)
 today = datetime.date.today().isoformat()
-fm['status'] = 'done'
+terminal_status = '<status>'  # done, abandoned, or superseded
+fm['status'] = terminal_status
 fm['closed_date'] = today
 fm['updated'] = today
+if terminal_status == 'superseded':
+    fm['superseded_by'] = '<replacement_id>'
 
-done_dir = BACKLOG_BASE / 'done'
+done_dir = ROADMAP_ISSUES / 'done'
 done_dir.mkdir(parents=True, exist_ok=True)
 new_path = done_dir / path.name
-write_story_file(path, fm, body)  # write first
-shutil.move(str(path), str(new_path))  # then move
+write_story_file(path, fm, body)
+shutil.move(str(path), str(new_path))
 ```
 
-Confirm: `Closed {ID} — {title}`
+Confirm: `Closed {ID} — {title} [{terminal_status}]`
 
 If the issue was the last open issue in an epic, surface:
 `All issues in {EP-NNN} are now done. Run project-epics to close the epic.`
 
 ---
 
+## Decline
+
+Evaluate and reject an issue. Only applies to issues in `backlog/` — triaged issues should be closed with `abandoned` or `superseded` instead.
+
+```python
+path = find_story_by_id('<ID>')
+if ROADMAP_ISSUES in path.parents or path.parent == ROADMAP_ISSUES:
+    print("This issue has been triaged. Use `close` with status abandoned or superseded instead.")
+    return
+fm, body = read_story_file(path)
+today = datetime.date.today().isoformat()
+fm['status'] = 'declined'
+fm['closed_date'] = today
+fm['updated'] = today
+
+archived_dir = BACKLOG_BASE / 'archived'
+archived_dir.mkdir(parents=True, exist_ok=True)
+new_path = archived_dir / path.name
+write_story_file(path, fm, body)
+shutil.move(str(path), str(new_path))
+```
+
+Confirm: `Declined {ID} — {title}`
+
+---
+
+## Triage
+
+Move an issue from backlog to roadmap/issues, marking it ready for development.
+
+```python
+path = find_story_by_id('<ID>')
+if ROADMAP_ISSUES in path.parents or path.parent == ROADMAP_ISSUES:
+    print("Already triaged.")
+    return
+if 'archived' in str(path):
+    print("This issue was declined. Reopen it first.")
+    return
+fm, body = read_story_file(path)
+today = datetime.date.today().isoformat()
+fm['status'] = 'ready'
+fm['updated'] = today
+
+ROADMAP_ISSUES.mkdir(parents=True, exist_ok=True)
+new_path = ROADMAP_ISSUES / path.name
+write_story_file(path, fm, body)
+shutil.move(str(path), str(new_path))
+```
+
+Confirm: `Triaged {ID} — {title} → roadmap/issues/`
+
+---
+
 ## Reopen
+
+Reopen a closed issue. Returns it to the directory it came from: `roadmap/issues/done/` → `roadmap/issues/`, `backlog/archived/` → `backlog/`.
 
 ```python
 path = find_story_by_id('<ID>')
@@ -312,23 +400,33 @@ today = datetime.date.today().isoformat()
 fm['status'] = 'new'
 fm['sprint'] = None
 fm['closed_date'] = None
+fm['superseded_by'] = None
+fm['deferred_reason'] = None
 fm['updated'] = today
 
-active_dir = BACKLOG_BASE
-new_path = active_dir / path.name
+if str(ROADMAP_ISSUES / 'done') in str(path.parent):
+    new_path = ROADMAP_ISSUES / path.name
+elif '/archived/' in str(path):
+    new_path = BACKLOG_BASE / path.name
+else:
+    new_path = None
+
 write_story_file(path, fm, body)
-if '/done/' in str(path):
+if new_path and new_path != path:
     shutil.move(str(path), str(new_path))
 ```
 
-Confirm: `Reopened {ID} — returned to backlog`
+Confirm: `Reopened {ID} — returned to {destination}`
 
 ---
 
 ## Rules
 
-- Never delete an issue — use `close` (status=done, moved to done/) or set status=abandoned for items that won't be done.
-- Closing an issue moves the file from `<ID>-<slug>.md` to `done/<ID>-<slug>.md`. The file is never deleted.
+- Never delete an issue. Use `close` (terminal status), `decline` (rejected at triage), or set status=abandoned.
+- Issues live in two trees: `backlog/` (untriaged) and `roadmap/issues/` (committed). `triage` moves between them.
+- Three lifecycle moves per spec: triage (backlog → roadmap/issues), complete (roadmap/issues → roadmap/issues/done), discard (backlog → backlog/archived).
+- `close` only works on triaged issues (in roadmap/issues). Use `decline` for backlog issues.
+- 11 valid statuses: new, ready, active, in-review, blocked, on-hold, deferred, done, declined, abandoned, superseded.
+- Terminal statuses (done, declined, abandoned, superseded) require `reopen` to reverse.
 - Sprint assignment always goes through `update`, not direct write, so sprint history in the body is maintained.
 - If `$ARGUMENTS` contains an ID that doesn't look like an issue ID (`ISSUE-NNN`), say: "That doesn't look like an issue ID. IDs take the form ISSUE-NNN."
-- All reads and writes go to `.sweetclaude/product/backlog/<ID>-<slug>.md` files.
