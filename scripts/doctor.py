@@ -279,7 +279,7 @@ def check_hook_health(state: ProjectState) -> list[Finding]:
                     category="hook_health",
                     severity="error",
                     summary=f"Hook script {hf.name} has a syntax error",
-                    detail=f"bash -n failed: {result.stderr.decode()[:200]}",
+                    detail=f"bash -n failed: {result.stderr.decode(errors='replace')[:200]}",
                     file_paths=[str(hf)],
                     fix_type="prompted",
                     fix_recipe={"action": "prompt", "type": "hook_restore",
@@ -291,7 +291,7 @@ def check_hook_health(state: ProjectState) -> list[Finding]:
     rules_dir = Path.home() / ".claude" / "rules" / "sweetclaude"
     expected_rules = ["interaction-model.md", "phase-gates.md", "tdd-levels.md"]
     for rf in expected_rules:
-        if rf not in state.rules_files:
+        if f"sweetclaude/{rf}" not in state.rules_files:
             findings.append(Finding(
                 id=f"hook-health:missing-rule:{rf}",
                 category="hook_health",
@@ -514,7 +514,7 @@ def check_migration_currency(state: ProjectState) -> list[Finding]:
                         fix_recipe={"action": "prompt", "type": "migration",
                                     "script": "runner.py", "args": []},
                     ))
-        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
+        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError, AttributeError):
             pass
 
     backlog_dir = state.product_base / "backlog"
@@ -863,7 +863,7 @@ def check_onboarding_state(state: ProjectState) -> list[Finding]:
     findings: list[Finding] = []
     skills_path = state.project_dir / ".sweetclaude" / "state" / "skills.yaml"
 
-    if state.skills_yaml is None:
+    if not state.skills_yaml:
         if skills_path.parent.is_dir():
             findings.append(Finding(
                 id="onboarding-state:missing:skills.yaml",
@@ -914,7 +914,7 @@ def check_env_wiring(state: ProjectState) -> list[Finding]:
         ("settings_global", state.settings_global),
         ("settings_local", state.settings_local),
     ]:
-        if sdata:
+        if sdata is not None:
             plans_setting = sdata.get("plansDirectory")
             if plans_setting is None:
                 settings_path = (
@@ -973,8 +973,16 @@ def _read_yaml(path: Path) -> dict | None:
     if not path.exists():
         return None
     try:
-        return yaml.safe_load(path.read_text()) or {}
-    except (yaml.YAMLError, OSError):
+        text = path.read_text()
+        return yaml.safe_load(text) or {}
+    except yaml.YAMLError:
+        try:
+            if not path.read_text().replace("---", "").strip():
+                return {}
+        except OSError:
+            pass
+        return None
+    except OSError:
         return None
 
 
@@ -1045,7 +1053,7 @@ def build_project_state(project_dir: Path) -> ProjectState:
             if f.suffix == ".md":
                 content = _read_text(f)
                 if content is not None:
-                    rules_files[f.name] = content
+                    rules_files[f"sweetclaude/{f.name}"] = content
 
     backlog_dir = product_base / "backlog"
     roadmap_dir = product_base / "roadmap"
