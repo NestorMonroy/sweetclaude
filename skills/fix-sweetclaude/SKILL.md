@@ -304,7 +304,7 @@ Use `base_path` from session-state (`paths.product_base`) or fall back to `.swee
 | Skill | Artifact path |
 |---|---|
 | `product-milestones` | `{base_path}/milestones/MS-*.md` |
-| `product-parking-lot` or `product-backlog` | `{base_path}/backlog/stories/*.md` |
+| `product-parking-lot` or `product-backlog` | `{base_path}/backlog/ISSUE-*.md` or `{base_path}/backlog/stories/*.md` |
 | `product-sprint-plan` | `{base_path}/sprints/` (any files) |
 | `user-personas` | `.sweetclaude/state/personas.yaml` |
 | `product-user-stories` | `{base_path}/stories/US-*.md` (any files) |

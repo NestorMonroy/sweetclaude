@@ -138,7 +138,7 @@ For each GitHub issue:
    }
    body_text = '<gh_issue_body truncated to 500 chars>'
    body = f"\n## Description\n\n{body_text}\n"
-   dest = BACKLOG_BASE / 'stories' / f"{new_id}-{slug}.md"
+   dest = BACKLOG_BASE / f"{new_id}-{slug}.md"
    write_story_file(dest, fm, body)
    ```
 

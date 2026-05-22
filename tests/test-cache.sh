@@ -17,34 +17,33 @@ pass() { echo "  PASS: $1"; PASSED=$((PASSED + 1)); }
 TMPROOT=$(mktemp -d)
 trap "rm -rf $TMPROOT" EXIT
 
-# --- Fixture: project with stories, epics, releases ---
+# --- Fixture: project with stories, epics, milestones (old STORY/BUG prefixes) ---
 FX="$TMPROOT/project"
-mkdir -p "$FX/docs/product/backlog/stories/done"
-mkdir -p "$FX/docs/product/backlog/bugs"
-mkdir -p "$FX/docs/product/backlog/chores"
-mkdir -p "$FX/docs/product/roadmap/epics"
-mkdir -p "$FX/docs/product/roadmap/releases"
+mkdir -p "$FX/.sweetclaude/product/backlog/stories/done"
+mkdir -p "$FX/.sweetclaude/product/backlog/bugs"
+mkdir -p "$FX/.sweetclaude/product/backlog/chores"
+mkdir -p "$FX/.sweetclaude/product/roadmap/epics"
+mkdir -p "$FX/.sweetclaude/product/roadmap/milestones"
 mkdir -p "$FX/.sweetclaude/cache"
 
-cat > "$FX/docs/product/roadmap/releases/REL-001-v41.md" << 'EOF'
+cat > "$FX/.sweetclaude/product/roadmap/milestones/MS-001-v41.md" << 'EOF'
 ---
-id: REL-001
-type: release
+id: MS-001
+type: milestone
 title: "v4.1"
 status: active
-version: "4.1"
 created: 2026-05-15
 updated: 2026-05-15
 ---
 EOF
 
-cat > "$FX/docs/product/roadmap/epics/EP-001-workflow-engine.md" << 'EOF'
+cat > "$FX/.sweetclaude/product/roadmap/epics/EP-001-workflow-engine.md" << 'EOF'
 ---
 id: EP-001
 type: epic
 title: "Workflow Engine"
 status: active
-release: REL-001
+milestone: MS-001
 objective: "Workflow state tracking for all execution types."
 completion_criteria:
   - "Taxonomy finalized"
@@ -56,13 +55,13 @@ updated: 2026-05-15
 ---
 EOF
 
-cat > "$FX/docs/product/roadmap/epics/EP-002-release-primitive.md" << 'EOF'
+cat > "$FX/.sweetclaude/product/roadmap/epics/EP-002-release-primitive.md" << 'EOF'
 ---
 id: EP-002
 type: epic
 title: "Release Primitive"
 status: new
-release: REL-001
+milestone: MS-001
 objective: "Structured release management."
 completion_criteria:
   - "Schema defined"
@@ -74,7 +73,7 @@ updated: 2026-05-15
 ---
 EOF
 
-cat > "$FX/docs/product/backlog/stories/STORY-020-upfront-assessment.md" << 'EOF'
+cat > "$FX/.sweetclaude/product/backlog/stories/STORY-020-upfront-assessment.md" << 'EOF'
 ---
 id: STORY-020
 type: story
@@ -90,7 +89,7 @@ updated: 2026-05-15
 ---
 EOF
 
-cat > "$FX/docs/product/backlog/stories/STORY-018-phase-status-table.md" << 'EOF'
+cat > "$FX/.sweetclaude/product/backlog/stories/STORY-018-phase-status-table.md" << 'EOF'
 ---
 id: STORY-018
 type: story
@@ -106,7 +105,7 @@ updated: 2026-05-15
 ---
 EOF
 
-cat > "$FX/docs/product/backlog/stories/STORY-015-model-enforcement.md" << 'EOF'
+cat > "$FX/.sweetclaude/product/backlog/stories/STORY-015-model-enforcement.md" << 'EOF'
 ---
 id: STORY-015
 type: story
@@ -122,7 +121,7 @@ updated: 2026-05-15
 ---
 EOF
 
-cat > "$FX/docs/product/backlog/stories/done/STORY-010-horizon-taxonomy.md" << 'EOF'
+cat > "$FX/.sweetclaude/product/backlog/stories/done/STORY-010-horizon-taxonomy.md" << 'EOF'
 ---
 id: STORY-010
 type: story
@@ -139,7 +138,7 @@ closed_date: 2026-05-15
 ---
 EOF
 
-cat > "$FX/docs/product/backlog/stories/STORY-011-roadmap-system.md" << 'EOF'
+cat > "$FX/.sweetclaude/product/backlog/stories/STORY-011-roadmap-system.md" << 'EOF'
 ---
 id: STORY-011
 type: story
@@ -155,7 +154,7 @@ updated: 2026-05-15
 ---
 EOF
 
-cat > "$FX/docs/product/backlog/bugs/BUG-005-cache-test-bug.md" << 'EOF'
+cat > "$FX/.sweetclaude/product/backlog/bugs/BUG-005-cache-test-bug.md" << 'EOF'
 ---
 id: BUG-005
 type: bug
@@ -215,7 +214,7 @@ fi
 # ---------------------------------------------------------------------------
 echo "[5] cache.py --query epic-stories excludes done stories by default"
 # Mark STORY-020 as done in file and rebuild
-sed -i.bak 's/status: new/status: done/' "$FX/docs/product/backlog/stories/STORY-020-upfront-assessment.md"
+sed -i.bak 's/status: new/status: done/' "$FX/.sweetclaude/product/backlog/stories/STORY-020-upfront-assessment.md"
 python3 "$CACHE_PY" --project-dir "$FX" --rebuild >/dev/null 2>&1
 OUTPUT=$(python3 "$CACHE_PY" --project-dir "$FX" --query epic-stories --epic EP-001 2>&1)
 COUNT=$(echo "$OUTPUT" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null)
@@ -225,7 +224,7 @@ else
   fail "expected 2 stories, got $COUNT"
 fi
 # Restore
-mv "$FX/docs/product/backlog/stories/STORY-020-upfront-assessment.md.bak" "$FX/docs/product/backlog/stories/STORY-020-upfront-assessment.md"
+mv "$FX/.sweetclaude/product/backlog/stories/STORY-020-upfront-assessment.md.bak" "$FX/.sweetclaude/product/backlog/stories/STORY-020-upfront-assessment.md"
 python3 "$CACHE_PY" --project-dir "$FX" --rebuild >/dev/null 2>&1
 
 # ---------------------------------------------------------------------------
@@ -268,19 +267,19 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-echo "[10] cache.py --query releases returns hierarchy"
+echo "[10] cache.py --query releases returns milestone hierarchy"
 OUTPUT=$(python3 "$CACHE_PY" --project-dir "$FX" --query releases 2>&1)
-REL_ID=$(echo "$OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['id'])" 2>/dev/null)
+MS_ID=$(echo "$OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['id'])" 2>/dev/null)
 EPIC_COUNT=$(echo "$OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d[0]['epics']))" 2>/dev/null)
-if [ "$REL_ID" = "REL-001" ] && [ "$EPIC_COUNT" = "2" ]; then
-  pass "REL-001 has 2 epics"
+if [ "$MS_ID" = "MS-001" ] && [ "$EPIC_COUNT" = "2" ]; then
+  pass "MS-001 has 2 epics"
 else
-  fail "expected REL-001 with 2 epics, got rel=$REL_ID epics=$EPIC_COUNT"
+  fail "expected MS-001 with 2 epics, got ms=$MS_ID epics=$EPIC_COUNT"
 fi
 
 # ---------------------------------------------------------------------------
 echo "[11] cache.py --query epic-stories --epic EP-001 --include-done includes done stories"
-sed -i.bak 's/status: new/status: done/' "$FX/docs/product/backlog/stories/STORY-020-upfront-assessment.md"
+sed -i.bak 's/status: new/status: done/' "$FX/.sweetclaude/product/backlog/stories/STORY-020-upfront-assessment.md"
 python3 "$CACHE_PY" --project-dir "$FX" --rebuild >/dev/null 2>&1
 OUTPUT=$(python3 "$CACHE_PY" --project-dir "$FX" --query epic-stories --epic EP-001 --include-done 2>&1)
 COUNT=$(echo "$OUTPUT" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null)
@@ -289,7 +288,7 @@ if [ "$COUNT" = "3" ]; then
 else
   fail "expected 3 stories with include-done, got $COUNT"
 fi
-mv "$FX/docs/product/backlog/stories/STORY-020-upfront-assessment.md.bak" "$FX/docs/product/backlog/stories/STORY-020-upfront-assessment.md"
+mv "$FX/.sweetclaude/product/backlog/stories/STORY-020-upfront-assessment.md.bak" "$FX/.sweetclaude/product/backlog/stories/STORY-020-upfront-assessment.md"
 python3 "$CACHE_PY" --project-dir "$FX" --rebuild >/dev/null 2>&1
 
 # ---------------------------------------------------------------------------
@@ -305,9 +304,9 @@ fi
 # ---------------------------------------------------------------------------
 echo "[13] cache.py handles missing roadmap directory gracefully"
 FX2="$TMPROOT/project-no-roadmap"
-mkdir -p "$FX2/docs/product/backlog/stories"
+mkdir -p "$FX2/.sweetclaude/product/backlog/stories"
 mkdir -p "$FX2/.sweetclaude/cache"
-cat > "$FX2/docs/product/backlog/stories/STORY-001-test.md" << 'STEOF'
+cat > "$FX2/.sweetclaude/product/backlog/stories/STORY-001-test.md" << 'STEOF'
 ---
 id: STORY-001
 type: story
@@ -335,9 +334,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-echo "[15] cache.py --query releases-compact returns compact hierarchy under 10KB"
+echo "[15] cache.py --query releases-compact returns compact milestone hierarchy under 10KB"
 OUTPUT=$(python3 "$CACHE_PY" --project-dir "$FX" --query releases-compact 2>&1)
-REL_ID=$(echo "$OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['id'])" 2>/dev/null)
+MS_ID=$(echo "$OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['id'])" 2>/dev/null)
 EPIC_COUNT=$(echo "$OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d[0]['epics']))" 2>/dev/null)
 STORY_COUNT=$(echo "$OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d[0]['epics'][0]['stories']))" 2>/dev/null)
 HAS_CRITERIA=$(echo "$OUTPUT" | python3 -c "import sys,json; ep=json.load(sys.stdin)[0]['epics'][0]; print('criteria_done' in ep and 'criteria_total' in ep)" 2>/dev/null)
@@ -350,11 +349,149 @@ allowed = {'id','title','status','criteria_done','criteria_total','stories'}
 extra = set(ep.keys()) - allowed
 print('none' if not extra else ','.join(sorted(extra)))
 " 2>/dev/null)
-if [ "$REL_ID" = "REL-001" ] && [ "$EPIC_COUNT" = "2" ] && [ "$STORY_COUNT" -gt 0 ] && \
+if [ "$MS_ID" = "MS-001" ] && [ "$EPIC_COUNT" = "2" ] && [ "$STORY_COUNT" -gt 0 ] && \
    [ "$HAS_CRITERIA" = "True" ] && [ "$BYTE_SIZE" -lt 10240 ] && [ "$NO_EXTRA_FIELDS" = "none" ]; then
   pass "releases-compact: correct structure, criteria fields present, no extra fields, under 10KB (${BYTE_SIZE}B)"
 else
-  fail "releases-compact failed: rel=$REL_ID epics=$EPIC_COUNT stories=$STORY_COUNT criteria=$HAS_CRITERIA size=${BYTE_SIZE}B extra=$NO_EXTRA_FIELDS"
+  fail "releases-compact failed: ms=$MS_ID epics=$EPIC_COUNT stories=$STORY_COUNT criteria=$HAS_CRITERIA size=${BYTE_SIZE}B extra=$NO_EXTRA_FIELDS"
+fi
+
+# ---------------------------------------------------------------------------
+# --- Fixture: project with ISSUE-NNN taxonomy (current format) ---
+FX3="$TMPROOT/project-issue-taxonomy"
+mkdir -p "$FX3/.sweetclaude/product/backlog/done"
+mkdir -p "$FX3/.sweetclaude/product/roadmap/epics"
+mkdir -p "$FX3/.sweetclaude/product/roadmap/milestones"
+mkdir -p "$FX3/.sweetclaude/cache"
+
+cat > "$FX3/.sweetclaude/product/roadmap/milestones/MS-001-first-release.md" << 'EOF'
+---
+id: MS-001
+type: milestone
+title: "First Release"
+status: active
+created: 2026-05-21
+updated: 2026-05-21
+---
+EOF
+
+cat > "$FX3/.sweetclaude/product/roadmap/epics/EP-001-core-feature.md" << 'EOF'
+---
+id: EP-001
+type: epic
+title: "Core Feature"
+status: active
+milestone: MS-001
+objective: "Deliver the core feature set."
+completion_criteria:
+  - "Backend complete"
+  - "Frontend complete"
+depends_on: []
+created: 2026-05-21
+updated: 2026-05-21
+---
+EOF
+
+cat > "$FX3/.sweetclaude/product/backlog/ISSUE-001-implement-api.md" << 'EOF'
+---
+id: ISSUE-001
+type: story
+title: "Implement API"
+status: new
+priority: now
+effort: m
+epic: EP-001
+epic_sequence: 1
+tags: [backend]
+created: 2026-05-21
+updated: 2026-05-21
+---
+EOF
+
+cat > "$FX3/.sweetclaude/product/backlog/ISSUE-002-fix-login-bug.md" << 'EOF'
+---
+id: ISSUE-002
+type: bug
+title: "Fix login bug"
+status: new
+priority: now
+effort: s
+epic: EP-001
+epic_sequence: 2
+tags: [auth]
+created: 2026-05-21
+updated: 2026-05-21
+---
+EOF
+
+cat > "$FX3/.sweetclaude/product/backlog/ISSUE-003-update-docs.md" << 'EOF'
+---
+id: ISSUE-003
+type: chore
+title: "Update documentation"
+status: new
+priority: soon
+effort: s
+epic: null
+epic_sequence: null
+tags: [docs]
+created: 2026-05-21
+updated: 2026-05-21
+---
+EOF
+
+cat > "$FX3/.sweetclaude/product/backlog/done/ISSUE-004-setup-ci.md" << 'EOF'
+---
+id: ISSUE-004
+type: chore
+title: "Set up CI pipeline"
+status: done
+priority: now
+effort: m
+epic: EP-001
+tags: [infra]
+created: 2026-05-20
+updated: 2026-05-21
+closed_date: 2026-05-21
+---
+EOF
+
+echo "[16] cache.py --rebuild works with ISSUE-NNN taxonomy"
+OUTPUT=$(python3 "$CACHE_PY" --project-dir "$FX3" --rebuild 2>&1)
+if [ -f "$FX3/.sweetclaude/cache/roadmap.db" ]; then
+  pass "ISSUE-NNN: database created"
+else
+  fail "ISSUE-NNN: database not found after rebuild"
+fi
+
+# ---------------------------------------------------------------------------
+echo "[17] cache.py --query backlog returns ISSUE-NNN items"
+OUTPUT=$(python3 "$CACHE_PY" --project-dir "$FX3" --query backlog 2>&1)
+COUNT=$(echo "$OUTPUT" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null)
+HAS_ISSUE=$(echo "$OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(any(i['id']=='ISSUE-001' for i in d))" 2>/dev/null)
+NO_DONE=$(echo "$OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(all(i['id']!='ISSUE-004' for i in d))" 2>/dev/null)
+if [ "$COUNT" = "3" ] && [ "$HAS_ISSUE" = "True" ] && [ "$NO_DONE" = "True" ]; then
+  pass "ISSUE-NNN: backlog has 3 open items, excludes done"
+else
+  fail "ISSUE-NNN: expected 3 open items, got count=$COUNT has_issue=$HAS_ISSUE no_done=$NO_DONE"
+fi
+
+# ---------------------------------------------------------------------------
+echo "[18] cache.py --query next-id --prefix ISSUE returns ISSUE-005"
+OUTPUT=$(python3 "$CACHE_PY" --project-dir "$FX3" --query next-id --prefix ISSUE 2>&1)
+if echo "$OUTPUT" | grep -q '"next_id": "ISSUE-005"'; then
+  pass "ISSUE-NNN: next ID is ISSUE-005"
+else
+  fail "ISSUE-NNN: expected ISSUE-005, got: $OUTPUT"
+fi
+
+# ---------------------------------------------------------------------------
+echo "[19] cache.py --query active-epic returns EP-001 with ISSUE-NNN taxonomy"
+OUTPUT=$(python3 "$CACHE_PY" --project-dir "$FX3" --query active-epic 2>&1)
+if echo "$OUTPUT" | grep -q '"id": "EP-001"'; then
+  pass "ISSUE-NNN: active epic is EP-001"
+else
+  fail "ISSUE-NNN: expected EP-001, got: $OUTPUT"
 fi
 
 # ---------------------------------------------------------------------------

@@ -39,6 +39,26 @@ If cache.py is not found or fails, scan `.sweetclaude/product/backlog/` directly
 
 Do not call `gh`. Do not read backlog file contents for routing — the cache output is enough. **Skip any item whose ID appears in recent commits when evaluating Priority 4.** If state is `STATE_NOT_FOUND`, note it but continue.
 
+## Step 1b: Migration guard
+
+If the backlog query returned zero items, check for unmigrated files:
+
+```bash
+product_base=$(python3 -c "
+import yaml, sys
+d = yaml.safe_load(open('.sweetclaude/state/session-state.yaml')) or {}
+print(d.get('paths', {}).get('product_base', '.sweetclaude/product'))
+" 2>/dev/null || echo ".sweetclaude/product")
+
+find "$product_base/backlog" -maxdepth 2 -name 'BL-*.md' -o -name 'STORY-*.md' -o -name 'BUG-*.md' -o -name 'DEBT-*.md' -o -name 'CHORE-*.md' 2>/dev/null | head -5
+```
+
+If old-format files are found, output:
+
+> Your project has backlog items in the old format (BL-NNN / STORY-NNN / BUG-NNN). The current taxonomy uses ISSUE-NNN, so these items are invisible to current skills. Run `/sweetclaude:migrate` to convert them. Migration creates a backup first and is reversible.
+
+Then stop. Do not proceed to Step 3.
+
 ## Step 2: Apply improvement register
 
 If `improvement_register_count` in pre-loaded state is > 0, silently apply learnings from previous sessions to this session's behavior before acting. Do not announce this.

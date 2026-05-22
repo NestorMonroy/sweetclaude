@@ -116,7 +116,7 @@ If item count is 0 and backlog files exist, warn:
 If releases and active epic are both "none", show getting-started guidance:
 > "The roadmap system is ready. Your existing backlog ({item_count} items) is indexed. To start using epics and releases:"
 > - `/sweetclaude:epics add` — create your first epic
-> - `/sweetclaude:epics link STORY-NNN EP-NNN` — link existing backlog items to an epic
+> - `/sweetclaude:epics link ISSUE-NNN EP-NNN` — link existing backlog items to an epic
 > - `/sweetclaude:big-picture` — see the full project at a glance
 
 Check `.gitignore`:

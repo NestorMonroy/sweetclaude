@@ -4,7 +4,7 @@
 # Builds .sweetclaude/state/session-state.yaml from constituent state files.
 # Called by: session-preflight.sh (sync at startup), state-regenerator.sh (background after writes)
 #
-# ── paths.product_base contract (DEBT-002) ────────────────────────────────
+# ── paths.product_base contract ────────────────────────────────────────────
 # Authoritative source: .sweetclaude/artifact-privacy.yaml → categories.product.base_path
 # Derived snapshot:     .sweetclaude/state/session-state.yaml → paths.product_base
 #
@@ -283,7 +283,7 @@ for f in sorted(glob.glob(os.path.join(product_base_abs, 'issues', 'I-*.md'))):
     except Exception: pass
 
 _HORIZON_ORDER = {'next': 1, 'sooner': 2, 'soon': 3, 'later': 4, 'someday': 5}
-for f in sorted(glob.glob(os.path.join(product_base_abs, 'backlog', 'BL-*.md'))):
+for f in sorted(glob.glob(os.path.join(product_base_abs, 'backlog', 'ISSUE-*.md'))):
     try:
         c = open(f).read()
         s = field(c, 'Status').lower()

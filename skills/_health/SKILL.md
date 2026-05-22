@@ -158,7 +158,7 @@ else:
 
 Surface any findings to the caller. If invoked from `big-picture` or `project-backlog-triage`, print findings before the skill's normal output.
 
-## Step 3a: product_base source-of-truth drift check (DEBT-002)
+## Step 3a: product_base source-of-truth drift check
 
 `paths.product_base` is recorded in two places: `.sweetclaude/artifact-privacy.yaml` (authoritative) and `.sweetclaude/state/session-state.yaml` (derived snapshot). They MUST match. If they diverge, a skill made a decision based on stale session-state — surface it.
 
