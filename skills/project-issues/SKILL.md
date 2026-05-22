@@ -300,12 +300,19 @@ Confirm: `Updated {ID} — {list of changed fields}`
 
 ## Close
 
-Set a terminal status and move to the appropriate done directory. Default status is `done`; also accepts `abandoned` or `superseded`.
+Set a terminal status and move to `roadmap/issues/done/`. Only applies to triaged issues (in `roadmap/issues/`). Default status is `done`; also accepts `abandoned` or `superseded`.
+
+If the issue is in `backlog/`, reject: "This issue hasn't been triaged. Use `decline` to reject it, or `triage` it first."
 
 If `superseded`, ask: "What issue replaces this one?" Set `superseded_by: ISSUE-NNN` in frontmatter.
 
+If `terminal_status` is `done` and current status is not `in-review` or `active`, warn: "This issue hasn't reached review. Close anyway?" Proceed only on confirmation.
+
 ```python
 path = find_story_by_id('<ID>')
+if not (ROADMAP_ISSUES in path.parents or path.parent == ROADMAP_ISSUES):
+    print("This issue hasn't been triaged. Use `decline` to reject it, or `triage` it first.")
+    return
 fm, body = read_story_file(path)
 today = datetime.date.today().isoformat()
 terminal_status = '<status>'  # done, abandoned, or superseded
@@ -315,11 +322,7 @@ fm['updated'] = today
 if terminal_status == 'superseded':
     fm['superseded_by'] = '<replacement_id>'
 
-# Move to correct done directory based on current location
-if ROADMAP_ISSUES in path.parents or path.parent == ROADMAP_ISSUES:
-    done_dir = ROADMAP_ISSUES / 'done'
-else:
-    done_dir = BACKLOG_BASE / 'done'
+done_dir = ROADMAP_ISSUES / 'done'
 done_dir.mkdir(parents=True, exist_ok=True)
 new_path = done_dir / path.name
 write_story_file(path, fm, body)
@@ -388,7 +391,7 @@ Confirm: `Triaged {ID} — {title} → roadmap/issues/`
 
 ## Reopen
 
-Reopen a closed issue. Returns it to the directory it came from: `roadmap/issues/done/` → `roadmap/issues/`, `backlog/done/` or `backlog/archived/` → `backlog/`.
+Reopen a closed issue. Returns it to the directory it came from: `roadmap/issues/done/` → `roadmap/issues/`, `backlog/archived/` → `backlog/`.
 
 ```python
 path = find_story_by_id('<ID>')
@@ -403,7 +406,7 @@ fm['updated'] = today
 
 if str(ROADMAP_ISSUES / 'done') in str(path.parent):
     new_path = ROADMAP_ISSUES / path.name
-elif '/archived/' in str(path) or '/done/' in str(path):
+elif '/archived/' in str(path):
     new_path = BACKLOG_BASE / path.name
 else:
     new_path = None
@@ -421,7 +424,8 @@ Confirm: `Reopened {ID} — returned to {destination}`
 
 - Never delete an issue. Use `close` (terminal status), `decline` (rejected at triage), or set status=abandoned.
 - Issues live in two trees: `backlog/` (untriaged) and `roadmap/issues/` (committed). `triage` moves between them.
-- Three lifecycle moves: triage (backlog → roadmap/issues), complete (roadmap/issues → roadmap/issues/done), discard (backlog → backlog/archived).
+- Three lifecycle moves per spec: triage (backlog → roadmap/issues), complete (roadmap/issues → roadmap/issues/done), discard (backlog → backlog/archived).
+- `close` only works on triaged issues (in roadmap/issues). Use `decline` for backlog issues.
 - 11 valid statuses: new, ready, active, in-review, blocked, on-hold, deferred, done, declined, abandoned, superseded.
 - Terminal statuses (done, declined, abandoned, superseded) require `reopen` to reverse.
 - Sprint assignment always goes through `update`, not direct write, so sprint history in the body is maintained.
