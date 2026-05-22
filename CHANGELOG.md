@@ -4,7 +4,7 @@ All notable changes to SweetClaude are documented here.
 
 ---
 
-## [Unreleased] — targeting 4.0.10-beta
+## [Unreleased] — targeting 4.1.0-beta
 
 ### New features
 
@@ -15,6 +15,18 @@ All notable changes to SweetClaude are documented here.
 - `docs/user-guide/hook-development.md` — new user-guide page with Recovery, Emergency Recovery (Break Glass), and What to Read Next sections.
 
 ### Changed
+
+**Artifact taxonomy rationalization (EP-001)**
+- All work item prefixes unified to `ISSUE-NNN`. The per-type prefixes (`STORY-NNN`, `BUG-NNN`, `DEBT-NNN`, `CHORE-NNN`) and the legacy `BL-NNN` scheme are retired. Item type is now a frontmatter field, not an ID prefix.
+- Flat `backlog/` directory replaces typed subdirectories (`stories/`, `bugs/`, `debt/`, `chores/`).
+- Two-directory lifecycle: `backlog/` (untriaged) and `roadmap/issues/` (committed to an epic). Three moves: triage, complete, discard.
+- 11 statuses: new, ready, active, in-review, blocked, on-hold, deferred, done, declined, abandoned, superseded.
+- `sweetclaude:update` detects old-format files and offers migration. `/sweetclaude:migrate` handles the conversion with backup, preview, and verify steps.
+- If you are already on v4 with `ISSUE-NNN` files, this change is transparent — no action needed.
+
+**Version bumping is now explicit (ISSUE-069)**
+- Removed `auto-version-bump` hook. Version bumps are now manual via `scripts/bump-version.sh`.
+- Updated CONTRIBUTING.md and GOVERNANCE.md to reflect the explicit bump workflow.
 
 - `README.md` — "Housekeeping" table heading renamed to "Maintenance & Troubleshooting"; new `hook-repair` row added.
 - `docs/user-guide/skills-reference.md` — System table grew from 14 to 15 skills; total count bumped from 103 to 104.
@@ -42,7 +54,7 @@ All notable changes to SweetClaude are documented here.
 - `sweetclaude:experimental-feature-setup` removed; use `sweetclaude:feature-setup` instead.
 - `auto-test-runner.sh` TEST_PATTERNS array now matches `test-guardian.sh` exactly, including a separate `*.feature` suffix check (was using substring match, which incorrectly matched `.feature-flags/` directories).
 
-### Deferred to 4.0.10
+### Deferred to 4.1.0
 
 STORY-305 (session-start symlink detection), STORY-306 (hook development workflow documentation). STORY-304 (Bash-based hook repair recovery) was completed post-release — see [Unreleased] above.
 

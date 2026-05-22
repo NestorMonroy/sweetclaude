@@ -1,75 +1,66 @@
-# SweetClaude v4 Migration Guide
+# SweetClaude Migration Guide
 
-**Version:** 4.0.0
-**Date:** 2026-05-10
+**Version:** 4.1.0-beta
+**Date:** 2026-05-21
 
 ---
 
-## Welcome to v4
+## Overview
 
-SweetClaude v4 is a significant step forward in how your product backlog is organized and stored. The short version: your work items now live alongside your code, in your project's `docs/` directory.
+SweetClaude uses a unified taxonomy for all work items: `ISSUE-NNN` files stored in `.sweetclaude/product/backlog/`. If your project has files in an older format (`BL-NNN`, `STORY-NNN`, `BUG-NNN`, `DEBT-NNN`, `CHORE-NNN`) or in older directory structures (`docs/product/backlog/`, typed subdirectories like `stories/`, `bugs/`), you need to migrate.
 
-### What's new and why it matters
+### What the current format looks like
 
-**Backlog lives in your project directory, not the framework directory.** In v3, stories lived under `.sweetclaude/product/backlog/` alongside framework state. In v4, the backlog moves to `docs/product/backlog/` — a first-class project directory that you own and control. If you want it tracked in git, track it. If you want it gitignored, gitignore it. SweetClaude no longer makes that decision for you.
-
-**IDs tell you what something is.** The old `BL-NNN` prefix told you nothing. v4 uses per-type IDs: `STORY-NNN`, `BUG-NNN`, `DEBT-NNN`, `CHORE-NNN`. At a glance, you know what you're looking at — in file names, commit messages, and skill output.
-
-**Closed work is archived, not deleted.** Done and abandoned items move to a `done/` subdirectory. They're out of the way but still there when you need them. No data is ever lost on close.
-
-**A single INDEX.md is the source of truth.** `docs/product/backlog/INDEX.md` holds the counter state and a live table of all active work. Every skill reads from and writes to this file atomically — no more hunting across directories to figure out what's in the backlog.
-
-**Health checks catch problems before they cause damage.** v4 includes built-in lint rules that detect counter drift, misplaced files, and stale v3 artifacts. `/sweetclaude:fix-sweetclaude` can repair most findings automatically.
+- All work items are `ISSUE-NNN-<slug>.md` in `.sweetclaude/product/backlog/`
+- Item type (story, bug, debt, chore, spike) is a frontmatter field, not an ID prefix
+- Done items move to `.sweetclaude/product/backlog/done/`
+- Triaged items move to `.sweetclaude/product/roadmap/issues/`
+- The SQLite cache (`scripts/cache.py`) is the source of truth for aggregate queries
 
 ### Migration is safe and reversible
 
-Before touching a single file, `/sweetclaude:migrate` creates a full timestamped backup of your `.sweetclaude/` directory. If anything goes wrong, one command restores you to exactly where you started. The original `BL-NNN.md` files are never deleted during migration — they stay in place until you explicitly choose to remove them.
+Before touching a single file, `/sweetclaude:migrate` creates a full timestamped backup. If anything goes wrong, one command restores you to exactly where you started. Original files are never deleted during migration — they stay in place until you explicitly choose to remove them.
 
 ---
 
-## What's changing in v4
+## When migration is needed
 
-- Stories move from `.sweetclaude/product/backlog/BL-NNN.md` to `docs/product/backlog/<type>s/<TYPE>-NNN-<slug>.md`.
-- IDs are now per-type: `STORY-NNN`, `BUG-NNN`, `DEBT-NNN`, `CHORE-NNN`. The legacy `BL-NNN` prefix is retired.
-- Active work lives under `<type>s/`; closed work moves to `<type>s/done/`.
-- A new `INDEX.md` at `docs/product/backlog/INDEX.md` is the source of truth for counters and the visible table of unscheduled work.
+`/sweetclaude:update` automatically detects old-format files and offers migration. You can also run `/sweetclaude:migrate` directly. Skills that read backlog files will detect unmigrated data and prompt you.
 
----
-
-## What you need to do
-
-Run `/sweetclaude:migrate` from any v3 project the first time you open it after updating to v4. The bootstrap hard stop will block any v4 skill until migration runs.
+If you skip migration, skills that use the cache (like `/sweetclaude:go`) will not see your old items. Skills with migration guards (like `/sweetclaude:project-issues`) will detect old files and ask you to migrate first.
 
 ---
 
 ## What migration does
 
-- Creates a timestamped safety backup at `.sweetclaude/state/backups/pre-v4-<date>-<sha>.tar.gz`.
-- Scans every `BL-NNN.md` file, validates it, and aborts before any write if validation fails. If validation fails, offers to run `/sweetclaude:migrate-diagnose`.
-- Asks whether to migrate completed (done / cancelled / abandoned) stories.
-- Shows a preview of every planned write before any file is created.
-- Copies each story to its new location with its new ID; the original `BL-NNN.md` is left in place.
-- Builds `INDEX.md` (counters + active tables) and `MIGRATION-MAP.md` (v3 ID → v4 ID lookup).
-- Verifies every written file (frontmatter parses, fields match, body preserved) before declaring success.
-- On any failure, restores `.sweetclaude/` from the backup and removes anything written under `docs/product/backlog/`.
-- On success, offers to delete the original `.sweetclaude/product/backlog/` (the backup remains).
+- Creates a timestamped safety backup at `.sweetclaude/state/backups/`
+- Scans all old-format files, validates them, and aborts before any write if validation fails
+- Shows a preview of every planned rename/move before any file is created
+- Converts each item to `ISSUE-NNN-<slug>.md` with updated frontmatter
+- Moves files to `.sweetclaude/product/backlog/` (flat structure)
+- Verifies every written file before declaring success
+- On any failure, restores from backup
+- On success, offers to delete original files (the backup remains)
 
 ---
 
 ## If something goes wrong
 
-- During migration, on any failure: the skill offers three options — `Work through it with me` (runs `/sweetclaude:migrate-diagnose`), `Reset framework state` (clears `.sweetclaude/` only; leaves `/docs/` untouched), `Wait` (exits with the hard stop still in effect).
-- Manual rollback at any time: `rm -rf .sweetclaude && tar -xzf .sweetclaude/state/backups/pre-v4-<date>-<sha>.tar.gz` (substitute the actual archive filename from the listing).
+- During migration, on any failure: the skill offers diagnosis via `/sweetclaude:migrate-diagnose`, a state reset, or wait
+- Manual rollback at any time via the backup archive in `.sweetclaude/state/backups/`
 
 ---
 
 ## FAQ
 
 **Do I have to migrate?**
-Yes. v4 cannot run against v3 storage; the bootstrap hard stop blocks every v4 skill in a v3 project.
+Not immediately. You can skip migration when prompted. But most skills will either not see your old items or will refuse to run until migration is complete. Migration is the recommended path.
 
 **What happens to my git history?**
-Migration does not rewrite history. New files are created at new paths; the original `BL-NNN.md` files remain until you accept the post-migration delete offer. Whether the new `docs/product/` files are tracked depends on your project's `.gitignore`.
+Migration does not rewrite history. New files are created; originals remain until you accept the delete offer.
+
+**Can I migrate one project and defer others?**
+Yes. The framework update is global, but migration is per-project. Each project can migrate on its own schedule.
 
 **Can I roll back?**
-Yes, via the backup archive. The exact command is in the "If something goes wrong" section above.
+Yes, via the backup archive created before migration.

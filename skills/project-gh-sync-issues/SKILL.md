@@ -65,7 +65,7 @@ def all_backlog_issue_files():
     return result
 
 def find_story_by_gh_number(gh_number):
-    for p in all_backlog_story_files():
+    for p in all_backlog_issue_files():
         fm, body = read_story_file(p)
         if fm.get('github_issue_number') == gh_number:
             return p, fm, body
@@ -127,7 +127,7 @@ Enumerate all story files with `status: done` or `status: abandoned` that have a
 
 ```python
 done_stories = []
-for p in all_backlog_story_files():
+for p in all_backlog_issue_files():
     fm, body = read_story_file(p)
     if fm.get('status') in ('done', 'abandoned') and fm.get('github_issue_number'):
         done_stories.append((p, fm))
