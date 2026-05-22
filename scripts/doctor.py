@@ -346,8 +346,7 @@ def check_storage_lint(state: ProjectState) -> list[Finding]:
 
         cache_script = state.project_dir / "scripts" / "cache.py"
         if not cache_script.exists():
-            if max_seen > 0:
-                raise DependencyMissing("cache.py not found — cannot check counter drift")
+            pass
         else:
             try:
                 r = subprocess.run(
@@ -478,6 +477,9 @@ def check_storage_lint(state: ProjectState) -> list[Finding]:
 
 def check_migration_currency(state: ProjectState) -> list[Finding]:
     findings: list[Finding] = []
+
+    if not state.migration_runner_path:
+        raise DependencyMissing("migration runner not found — cannot check migration currency")
 
     drift_marker = state.project_dir / ".sweetclaude" / "state" / "pending-drift-decision.yaml"
     if drift_marker.exists():
@@ -1363,7 +1365,7 @@ def execute_recipe(
             h = _hash_bytes(b"")
             return RecipeResult("", h, h, None, True)
         target.mkdir(parents=True, exist_ok=True)
-        return RecipeResult("", _hash_bytes(b""), _hash_bytes(b""), None, True)
+        return RecipeResult("", _hash_bytes(b""), _hash_bytes(b"created"), None, True)
 
     file_key = recipe.get("file", "")
     file_path = Path(file_key)

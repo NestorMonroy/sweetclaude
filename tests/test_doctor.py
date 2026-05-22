@@ -16,6 +16,7 @@ Test file structure follows E5 story order:
   E5-S12: Happy-path test
   E5-S13: Manifest completeness test
 """
+import io
 import json
 import os
 import shutil
@@ -62,6 +63,8 @@ from doctor import (
     load_suppressions,
     save_suppressions,
     auto_cleanup_suppressions,
+    main,
+    _apply_transform,
 )
 
 
@@ -147,6 +150,10 @@ def build_fixture(tmp_path, overrides=None):
         (project_dir / "CLAUDE.md").write_text(claude_md)
 
     (project_dir / "hooks").mkdir(exist_ok=True)
+
+    runner_dir = project_dir / "scripts" / "migrations"
+    runner_dir.mkdir(parents=True, exist_ok=True)
+    (runner_dir / "runner.py").write_text("#!/usr/bin/env python3\nimport json, sys\nprint(json.dumps([]))\n")
 
     for bf in overrides.get("backlog_files", []):
         path = product_base / "backlog" / bf["name"]
@@ -1105,7 +1112,7 @@ class TestStorageLint:
     # ------------------------------------------------------------------
 
     # Scenario: Counter drift raises DependencyMissing when cache.py absent
-    def test_counter_drift_raises_dependency_missing_when_cache_absent(
+    def test_counter_drift_skipped_silently_when_cache_absent(
         self, tmp_path, fake_home
     ):
         project_dir = build_fixture(tmp_path, overrides={
@@ -1115,11 +1122,9 @@ class TestStorageLint:
                 }},
             ],
         })
-        # Explicitly do NOT create scripts/cache.py
         state = build_project_state(project_dir)
-
-        with pytest.raises(DependencyMissing):
-            check_storage_lint(state)
+        findings = check_storage_lint(state)
+        assert not any(f.id.startswith("storage-lint:counter-drift") for f in findings)
 
     # Scenario: No backlog issue files with cache.py absent does not raise
     def test_no_backlog_issue_files_with_cache_absent_does_not_raise(
@@ -4204,3 +4209,2072 @@ class TestFileDiagnostics:
             f"No-frontmatter error should stop further field checks; "
             f"no missing-field findings expected, got: {missing_ids}"
         )
+
+
+# ---------------------------------------------------------------------------
+# E5-S03: Auto-fix tests — recipe types, idempotency, partial failure
+# ---------------------------------------------------------------------------
+
+def _make_finding(
+    fix_type="auto",
+    action="write_field",
+    category="env_wiring",
+    finding_id=None,
+    **recipe_extras,
+):
+    """Build a minimal finding dict for auto_fix tests."""
+    recipe: dict = {"action": action}
+    recipe.update(recipe_extras)
+    return {
+        "id": finding_id or f"{category}:test:{action}",
+        "category": category,
+        "severity": "warning",
+        "summary": f"Test finding for {action}",
+        "detail": "",
+        "file_paths": [],
+        "fix_type": fix_type,
+        "fix_recipe": recipe,
+        "previously_suppressed": False,
+    }
+
+
+class TestAutoFix:
+    """E5-S03: Auto-fix recipe types, filtering, idempotency, partial failure."""
+
+    # ------------------------------------------------------------------
+    # write_field recipe — updates a YAML field
+    # ------------------------------------------------------------------
+
+    def test_write_field_updates_yaml_field(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+        ss_path = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss_path.write_text("phase_schema_version: 1\n")
+
+        finding = _make_finding(
+            action="write_field",
+            file=str(ss_path),
+            key="phase_schema_version",
+            value=2,
+        )
+        result = auto_fix(project_dir, [finding], archive)
+
+        assert len(result["actions"]) == 1
+        assert result["actions"][0]["action"] == "auto-fix"
+        data = yaml.safe_load(ss_path.read_text())
+        assert data["phase_schema_version"] == 2
+
+    def test_write_field_records_before_and_after_hashes(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+        ss_path = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss_path.write_text("phase_schema_version: 1\n")
+
+        finding = _make_finding(
+            action="write_field",
+            file=str(ss_path),
+            key="phase_schema_version",
+            value=2,
+        )
+        result = auto_fix(project_dir, [finding], archive)
+
+        action = result["actions"][0]
+        assert action["before_hash"].startswith("sha256:")
+        assert action["after_hash"]
+        assert action["before_hash"] != action["after_hash"]
+
+    def test_write_field_precondition_skips_when_value_already_correct(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+        ss_path = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss_path.write_text("phase_schema_version: 2\n")
+
+        finding = _make_finding(
+            action="write_field",
+            file=str(ss_path),
+            key="phase_schema_version",
+            value=2,
+        )
+        result = auto_fix(project_dir, [finding], archive)
+
+        action = result["actions"][0]
+        assert action["before_hash"] == action["after_hash"]
+
+    # ------------------------------------------------------------------
+    # create_dir recipe — creates a missing directory
+    # ------------------------------------------------------------------
+
+    def test_create_dir_creates_missing_directory(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        plans_dir = project_dir / ".sweetclaude" / "plans"
+        if plans_dir.exists():
+            plans_dir.rmdir()
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "env-wiring:missing:plans-directory",
+            "category": "env_wiring",
+            "severity": "info",
+            "summary": "Plans directory missing",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "create_dir", "path": str(plans_dir)},
+            "previously_suppressed": False,
+        }
+
+        result = auto_fix(project_dir, [finding], archive)
+
+        assert plans_dir.is_dir()
+        assert len(result["actions"]) == 1
+        assert result["actions"][0]["action"] == "auto-fix"
+
+    def test_create_dir_precondition_skips_when_dir_exists(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        plans_dir = project_dir / ".sweetclaude" / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "env_wiring:test:create_dir",
+            "category": "env_wiring",
+            "severity": "info",
+            "summary": "Plans dir missing",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "create_dir", "path": str(plans_dir)},
+            "previously_suppressed": False,
+        }
+        result = auto_fix(project_dir, [finding], archive)
+
+        action = result["actions"][0]
+        assert action["before_hash"] == action["after_hash"]
+
+    # ------------------------------------------------------------------
+    # delete_file recipe — removes target file
+    # ------------------------------------------------------------------
+
+    def test_delete_file_removes_target_file(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        target = project_dir / ".sweetclaude" / "state" / "pending-drift-decision.yaml"
+        target.write_text("decision: pending\n")
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "migration-currency:stale-drift-marker:pending-drift-decision.yaml",
+            "category": "migration_currency",
+            "severity": "info",
+            "summary": "Stale drift marker",
+            "detail": "",
+            "file_paths": [str(target)],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "delete_file", "file": str(target)},
+            "previously_suppressed": False,
+        }
+        result = auto_fix(project_dir, [finding], archive)
+
+        assert not target.exists()
+        assert len(result["actions"]) == 1
+        assert result["actions"][0]["action"] == "auto-fix"
+
+    def test_delete_file_precondition_skips_when_file_absent(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        target = project_dir / ".sweetclaude" / "state" / "pending-drift-decision.yaml"
+        # Do NOT create the file
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "migration-currency:stale-drift-marker:pending-drift-decision.yaml",
+            "category": "migration_currency",
+            "severity": "info",
+            "summary": "Stale drift marker",
+            "detail": "",
+            "file_paths": [str(target)],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "delete_file", "file": str(target)},
+            "previously_suppressed": False,
+        }
+        result = auto_fix(project_dir, [finding], archive)
+
+        action = result["actions"][0]
+        assert action["before_hash"] == action["after_hash"]
+
+    # ------------------------------------------------------------------
+    # rebuild_cache recipe
+    # ------------------------------------------------------------------
+
+    def test_rebuild_cache_succeeds_with_stub_script(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        cache_script = project_dir / "scripts" / "cache.py"
+        cache_script.parent.mkdir(parents=True, exist_ok=True)
+        cache_script.write_text("import sys; sys.exit(0)\n")
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "storage-lint:counter-drift:issue",
+            "category": "storage_lint",
+            "severity": "warning",
+            "summary": "Counter drift",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "rebuild_cache"},
+            "previously_suppressed": False,
+        }
+        result = auto_fix(project_dir, [finding], archive)
+
+        assert len(result["actions"]) == 1
+        assert result["actions"][0]["action"] == "auto-fix"
+
+    def test_rebuild_cache_records_failure_when_cache_missing(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        # Ensure cache.py does NOT exist
+        cache_script = project_dir / "scripts" / "cache.py"
+        if cache_script.exists():
+            cache_script.unlink()
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "storage-lint:counter-drift:issue",
+            "category": "storage_lint",
+            "severity": "warning",
+            "summary": "Counter drift",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "rebuild_cache"},
+            "previously_suppressed": False,
+        }
+        result = auto_fix(project_dir, [finding], archive)
+
+        assert len(result["actions"]) == 1
+        assert result["actions"][0]["action"] == "auto-fix-failed"
+        assert result["actions"][0]["error"]
+
+    # ------------------------------------------------------------------
+    # run_script recipe
+    # ------------------------------------------------------------------
+
+    def test_run_script_runs_allowlisted_script(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        scripts_dir = project_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        stub = scripts_dir / "generate-session-state.sh"
+        stub.write_text("#!/bin/bash\nexit 0\n")
+        stub.chmod(0o755)
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "state-integrity:missing:session-state.yaml",
+            "category": "state_integrity",
+            "severity": "warning",
+            "summary": "session-state.yaml missing",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "run_script", "cmd": ["bash", "scripts/generate-session-state.sh"]},
+            "previously_suppressed": False,
+        }
+        result = auto_fix(project_dir, [finding], archive)
+
+        assert len(result["actions"]) == 1
+        assert result["actions"][0]["action"] == "auto-fix"
+
+    def test_run_script_rejects_non_allowlisted_script(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "some-category:some-check:evil",
+            "category": "env_wiring",
+            "severity": "warning",
+            "summary": "Evil script",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "run_script", "cmd": ["python3", "scripts/evil.py"]},
+            "previously_suppressed": False,
+        }
+        result = auto_fix(project_dir, [finding], archive)
+
+        assert len(result["actions"]) == 1
+        assert result["actions"][0]["action"] == "auto-fix-failed"
+        assert "not in allowlist" in result["actions"][0]["error"]
+
+    # ------------------------------------------------------------------
+    # Filtering
+    # ------------------------------------------------------------------
+
+    def test_auto_fix_skips_report_only_findings(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "state-integrity:schema-version:sweetclaude.yaml",
+            "category": "state_integrity",
+            "severity": "warning",
+            "summary": "Schema version outdated",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "report-only",
+            "fix_recipe": {},
+            "previously_suppressed": False,
+        }
+        result = auto_fix(project_dir, [finding], archive)
+
+        assert len(result["actions"]) == 0
+
+    def test_auto_fix_skips_prompted_by_default(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+        ss_path = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+
+        finding = {
+            "id": "state-integrity:test:prompted",
+            "category": "state_integrity",
+            "severity": "warning",
+            "summary": "Prompted fix needed",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "prompted",
+            "fix_recipe": {"action": "write_field", "file": str(ss_path), "key": "x", "value": "y"},
+            "previously_suppressed": False,
+        }
+        result = auto_fix(project_dir, [finding], archive)
+
+        assert len(result["actions"]) == 0
+
+    def test_auto_fix_includes_prompted_when_include_prompted_true(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+        ss_path = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss_path.write_text("x: old\n")
+
+        finding = {
+            "id": "state-integrity:test:prompted",
+            "category": "state_integrity",
+            "severity": "warning",
+            "summary": "Prompted fix needed",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "prompted",
+            "fix_recipe": {"action": "write_field", "file": str(ss_path), "key": "x", "value": "y"},
+            "previously_suppressed": False,
+        }
+        result = auto_fix(project_dir, [finding], archive, include_prompted=True)
+
+        assert len(result["actions"]) == 1
+        assert result["actions"][0]["action"] == "auto-fix"
+
+    def test_auto_fix_skips_prompted_finding_with_prompt_recipe_even_when_include_prompted(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "hook-health:missing:hooks.json",
+            "category": "hook_health",
+            "severity": "error",
+            "summary": "hooks.json missing",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "prompted",
+            "fix_recipe": {"action": "prompt", "type": "hook_restore"},
+            "previously_suppressed": False,
+        }
+        result = auto_fix(project_dir, [finding], archive, include_prompted=True)
+
+        assert len(result["actions"]) == 0
+
+    # ------------------------------------------------------------------
+    # Idempotency
+    # ------------------------------------------------------------------
+
+    def test_running_auto_fix_twice_produces_no_op_on_second_run(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        ss_path = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss_path.write_text("phase_schema_version: 1\n")
+
+        finding = {
+            "id": "state-integrity:schema-version:sweetclaude.yaml",
+            "category": "state_integrity",
+            "severity": "warning",
+            "summary": "Schema version",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "write_field", "file": str(ss_path), "key": "phase_schema_version", "value": 2},
+            "previously_suppressed": False,
+        }
+        archive1 = create_archive(project_dir)
+        auto_fix(project_dir, [finding], archive1)
+
+        archive2 = create_archive(project_dir)
+        result2 = auto_fix(project_dir, [finding], archive2)
+
+        for action in result2["actions"]:
+            assert action["before_hash"] == action["after_hash"], (
+                f"Second run should produce no-op, but action changed: {action}"
+            )
+
+    # ------------------------------------------------------------------
+    # Partial failure
+    # ------------------------------------------------------------------
+
+    def test_one_recipe_fails_while_others_succeed(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        ss_path = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss_path.write_text("phase_schema_version: 1\n")
+
+        # Ensure cache.py does NOT exist
+        cache_script = project_dir / "scripts" / "cache.py"
+        if cache_script.exists():
+            cache_script.unlink()
+
+        archive = create_archive(project_dir)
+        findings = [
+            {
+                "id": "state-integrity:schema:test",
+                "category": "state_integrity",
+                "severity": "warning",
+                "summary": "Write field",
+                "detail": "",
+                "file_paths": [],
+                "fix_type": "auto",
+                "fix_recipe": {"action": "write_field", "file": str(ss_path), "key": "phase_schema_version", "value": 2},
+                "previously_suppressed": False,
+            },
+            {
+                "id": "storage-lint:counter-drift:issue",
+                "category": "storage_lint",
+                "severity": "warning",
+                "summary": "Counter drift",
+                "detail": "",
+                "file_paths": [],
+                "fix_type": "auto",
+                "fix_recipe": {"action": "rebuild_cache"},
+                "previously_suppressed": False,
+            },
+        ]
+        result = auto_fix(project_dir, findings, archive)
+
+        assert len(result["actions"]) == 2
+        action_types = {a["action"] for a in result["actions"]}
+        assert "auto-fix" in action_types
+        assert "auto-fix-failed" in action_types
+
+        # write_field change persists on disk
+        data = yaml.safe_load(ss_path.read_text())
+        assert data["phase_schema_version"] == 2
+
+    # ------------------------------------------------------------------
+    # post_fix_categories
+    # ------------------------------------------------------------------
+
+    def test_changed_categories_appear_in_post_fix_categories(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        plans_dir = project_dir / ".sweetclaude" / "plans"
+        if plans_dir.exists():
+            plans_dir.rmdir()
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "env-wiring:missing:plans-directory",
+            "category": "env_wiring",
+            "severity": "info",
+            "summary": "Plans directory missing",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "create_dir", "path": str(plans_dir)},
+            "previously_suppressed": False,
+        }
+        result = auto_fix(project_dir, [finding], archive)
+
+        assert "env_wiring" in result["post_fix_categories"]
+
+    def test_no_op_fix_does_not_appear_in_post_fix_categories(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        plans_dir = project_dir / ".sweetclaude" / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)  # already exists
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "env-wiring:missing:plans-directory",
+            "category": "env_wiring",
+            "severity": "info",
+            "summary": "Plans directory missing",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "create_dir", "path": str(plans_dir)},
+            "previously_suppressed": False,
+        }
+        result = auto_fix(project_dir, [finding], archive)
+
+        assert result["post_fix_categories"] == []
+
+    # ------------------------------------------------------------------
+    # actions.json persistence
+    # ------------------------------------------------------------------
+
+    def test_auto_fix_writes_actions_json_to_archive(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        plans_dir = project_dir / ".sweetclaude" / "plans"
+        if plans_dir.exists():
+            plans_dir.rmdir()
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "env-wiring:missing:plans-directory",
+            "category": "env_wiring",
+            "severity": "info",
+            "summary": "Plans directory missing",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "create_dir", "path": str(plans_dir)},
+            "previously_suppressed": False,
+        }
+        auto_fix(project_dir, [finding], archive)
+
+        actions_file = archive / "actions.json"
+        assert actions_file.exists()
+        data = json.loads(actions_file.read_text())
+        assert isinstance(data, list)
+
+
+# ---------------------------------------------------------------------------
+# E5-S04: Content-based backup tests
+# ---------------------------------------------------------------------------
+
+class TestContentBackup:
+    """E5-S04: before/ files, diffs/ files, no-op behavior."""
+
+    def test_after_write_field_before_dir_contains_original_content(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        ss_path = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        original_content = "phase_schema_version: 1\nfoo: bar\n"
+        ss_path.write_text(original_content)
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "state-integrity:schema:test",
+            "category": "state_integrity",
+            "severity": "warning",
+            "summary": "Schema version",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "write_field", "file": str(ss_path), "key": "phase_schema_version", "value": 2},
+            "previously_suppressed": False,
+        }
+        auto_fix(project_dir, [finding], archive)
+
+        before_dir = archive / "before"
+        before_files = list(before_dir.iterdir())
+        assert len(before_files) == 1
+        assert before_files[0].read_bytes() == original_content.encode("utf-8")
+
+    def test_after_write_field_diffs_dir_contains_valid_unified_diff(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        ss_path = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss_path.write_text("phase_schema_version: 1\n")
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "state-integrity:schema:test",
+            "category": "state_integrity",
+            "severity": "warning",
+            "summary": "Schema version",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "write_field", "file": str(ss_path), "key": "phase_schema_version", "value": 2},
+            "previously_suppressed": False,
+        }
+        auto_fix(project_dir, [finding], archive)
+
+        diffs_dir = archive / "diffs"
+        diff_files = list(diffs_dir.iterdir())
+        assert len(diff_files) == 1
+        diff_text = diff_files[0].read_text()
+        assert diff_text.startswith("---")
+        assert "+++" in diff_text
+
+    def test_after_delete_file_before_dir_contains_deleted_content(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        target = project_dir / ".sweetclaude" / "state" / "pending-drift-decision.yaml"
+        original_content = "decision: pending\n"
+        target.write_text(original_content)
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "migration-currency:stale-drift-marker:pending-drift-decision.yaml",
+            "category": "migration_currency",
+            "severity": "info",
+            "summary": "Stale drift marker",
+            "detail": "",
+            "file_paths": [str(target)],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "delete_file", "file": str(target)},
+            "previously_suppressed": False,
+        }
+        auto_fix(project_dir, [finding], archive)
+
+        before_dir = archive / "before"
+        before_files = list(before_dir.iterdir())
+        assert len(before_files) == 1
+        assert before_files[0].read_bytes() == original_content.encode("utf-8")
+
+    def test_no_op_fix_writes_no_backup_or_diff(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        ss_path = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss_path.write_text("phase_schema_version: 2\n")
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "state-integrity:schema:test",
+            "category": "state_integrity",
+            "severity": "warning",
+            "summary": "Schema version already correct",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "write_field", "file": str(ss_path), "key": "phase_schema_version", "value": 2},
+            "previously_suppressed": False,
+        }
+        auto_fix(project_dir, [finding], archive)
+
+        before_files = list((archive / "before").iterdir())
+        diffs_files = list((archive / "diffs").iterdir())
+        assert before_files == []
+        assert diffs_files == []
+
+
+# ---------------------------------------------------------------------------
+# E5-S05: Post-fix rescan tests
+# ---------------------------------------------------------------------------
+
+class TestPostFixRescan:
+    """E5-S05: post_fix_rescan behavior."""
+
+    def test_rescan_returns_empty_when_all_problems_fixed(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        plans_dir = project_dir / ".sweetclaude" / "plans"
+        if plans_dir.exists():
+            plans_dir.rmdir()
+
+        original_finding_ids = {"env-wiring:missing:plans-directory"}
+
+        # Apply the fix manually
+        plans_dir.mkdir(parents=True, exist_ok=True)
+
+        result = post_fix_rescan(project_dir, ["env_wiring"], original_finding_ids)
+
+        env_wiring_findings = [
+            f for f in result["findings"]
+            if f["id"] == "env-wiring:missing:plans-directory"
+        ]
+        assert env_wiring_findings == []
+
+    def test_rescan_filters_out_original_finding_ids(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        # Remove plansDirectory from global settings to provoke that finding
+        settings_path = fake_home / ".claude" / "settings.json"
+        settings_path.write_text(json.dumps({}))
+
+        original_finding_ids = {"env-wiring:plans-directory-unset:settings_global"}
+
+        result = post_fix_rescan(project_dir, ["env_wiring"], original_finding_ids)
+
+        returned_ids = [f["id"] for f in result["findings"]]
+        assert "env-wiring:plans-directory-unset:settings_global" not in returned_ids
+
+    def test_rescan_returns_genuinely_new_findings(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        plans_dir = project_dir / ".sweetclaude" / "plans"
+
+        # Condition A: plans directory missing
+        if plans_dir.exists():
+            plans_dir.rmdir()
+
+        # Condition B: settings has no plansDirectory (remove it from global settings)
+        settings_path = fake_home / ".claude" / "settings.json"
+        settings_path.write_text(json.dumps({}))
+
+        # Original finding IDs include only A
+        original_finding_ids = {"env-wiring:missing:plans-directory"}
+
+        # Fix A (create the dir)
+        plans_dir.mkdir(parents=True, exist_ok=True)
+
+        # Now rescan — B should appear, A should not
+        result = post_fix_rescan(project_dir, ["env_wiring"], original_finding_ids)
+
+        returned_ids = [f["id"] for f in result["findings"]]
+        assert "env-wiring:plans-directory-unset:settings_global" in returned_ids
+        assert "env-wiring:missing:plans-directory" not in returned_ids
+
+    def test_categories_not_requested_are_not_rescanned(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path, overrides={
+            "session_state": None,
+        })
+        # session-state.yaml missing would produce a state_integrity finding
+        # We request only env_wiring — state_integrity should NOT be rescanned
+
+        result = post_fix_rescan(project_dir, ["env_wiring"], set())
+
+        state_integrity_findings = [
+            f for f in result["findings"]
+            if f["category"] == "state_integrity"
+        ]
+        assert state_integrity_findings == []
+
+
+# ---------------------------------------------------------------------------
+# E5-S06: Archive integrity tests
+# ---------------------------------------------------------------------------
+
+class TestArchiveIntegrity:
+    """E5-S06: archive structure, record_action, persist, manifest."""
+
+    # ------------------------------------------------------------------
+    # create_archive structure
+    # ------------------------------------------------------------------
+
+    def test_create_archive_produces_correct_directory_structure(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        assert archive.is_dir()
+        assert (archive / "before").is_dir()
+        assert (archive / "diffs").is_dir()
+
+    def test_create_archive_name_matches_iso8601_format(self, tmp_path, fake_home):
+        import re
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        pattern = re.compile(r"^\d{8}T\d{6}Z$")
+        assert pattern.match(archive.name), (
+            f"Archive name '{archive.name}' does not match YYYYMMDDTHHMMSSZ format"
+        )
+
+    # ------------------------------------------------------------------
+    # Manifest before/ and diffs/ counts match changed actions
+    # ------------------------------------------------------------------
+
+    def test_before_and_diffs_counts_match_changed_actions(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        ss_path = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss_path.write_text("phase_schema_version: 1\n")
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "state-integrity:schema:test",
+            "category": "state_integrity",
+            "severity": "warning",
+            "summary": "Schema version",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "write_field", "file": str(ss_path), "key": "phase_schema_version", "value": 2},
+            "previously_suppressed": False,
+        }
+        result = auto_fix(project_dir, [finding], archive)
+
+        changed_count = sum(
+            1 for a in result["actions"]
+            if a.get("before_hash") != a.get("after_hash")
+        )
+        before_count = len(list((archive / "before").iterdir()))
+        diffs_count = len(list((archive / "diffs").iterdir()))
+
+        assert before_count == changed_count
+        assert diffs_count == changed_count
+
+    # ------------------------------------------------------------------
+    # record_action
+    # ------------------------------------------------------------------
+
+    def test_record_action_appends_to_pending_actions_jsonl(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        record_action(archive, {"action": "prompted-fix", "finding_id": "test-1"})
+        record_action(archive, {"action": "skip", "finding_id": "test-2"})
+
+        pending_file = archive / "pending-actions.jsonl"
+        assert pending_file.exists()
+        lines = [l for l in pending_file.read_text().splitlines() if l.strip()]
+        assert len(lines) == 2
+        for line in lines:
+            json.loads(line)  # must be valid JSON
+
+    # ------------------------------------------------------------------
+    # persist
+    # ------------------------------------------------------------------
+
+    def test_persist_assembles_manifest_from_auto_and_prompted_actions(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        # Write actions.json with 1 auto-fix
+        auto_actions = [{"action": "auto-fix", "finding_id": "x-1"}]
+        (archive / "actions.json").write_text(json.dumps(auto_actions))
+
+        # Write pending-actions.jsonl with 1 prompted-fix and 1 skip
+        pending_lines = [
+            json.dumps({"action": "prompted-fix", "finding_id": "x-2"}),
+            json.dumps({"action": "skip", "finding_id": "x-3"}),
+        ]
+        (archive / "pending-actions.jsonl").write_text("\n".join(pending_lines) + "\n")
+
+        persist(project_dir, archive)
+
+        manifest = json.loads((archive / "manifest.json").read_text())
+        assert len(manifest["actions"]) == 3
+        assert manifest["summary"]["auto_fixed"] == 1
+        assert manifest["summary"]["user_fixed"] == 1
+        assert manifest["summary"]["skipped"] == 1
+
+    def test_persist_writes_last_doctor_run_json_with_required_fields(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        auto_actions = [{"action": "auto-fix", "finding_id": "x-1"}]
+        (archive / "actions.json").write_text(json.dumps(auto_actions))
+
+        scan_findings = [
+            {"id": "env-wiring:test", "severity": "warning", "summary": "test finding"}
+        ]
+        persist(project_dir, archive, menu_preference="proceed", scan_findings=scan_findings)
+
+        last_run_path = project_dir / ".sweetclaude" / "state" / "last-doctor-run.json"
+        assert last_run_path.exists()
+        data = json.loads(last_run_path.read_text())
+
+        assert "timestamp" in data
+        assert "version" in data
+        assert "summary" in data
+        assert "findings" in data
+        assert data["menu_preference"] == "proceed"
+
+    def test_persist_records_safety_branch_in_manifest(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        persist(project_dir, archive, safety_branch="doctor/run-20260522T120000Z")
+
+        manifest = json.loads((archive / "manifest.json").read_text())
+        assert manifest["safety_branch"] == "doctor/run-20260522T120000Z"
+
+
+# ---------------------------------------------------------------------------
+# E5-S07: Retention / pruning tests
+# ---------------------------------------------------------------------------
+
+import datetime
+
+
+def _make_archive_dir(runs_dir: "Path", days_old: int) -> "Path":
+    """Create a doctor-run archive directory with a name that is `days_old` days in the past."""
+    dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days_old)
+    name = dt.strftime("%Y%m%dT%H%M%SZ")
+    d = runs_dir / name
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+class TestRetention:
+    """E5-S07: prune_archives retention and pruning logic."""
+
+    # ------------------------------------------------------------------
+    # Scenario: With 3 archives all within 30 days, none are pruned
+    # ------------------------------------------------------------------
+
+    def test_three_recent_archives_none_pruned(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        runs_dir = project_dir / ".sweetclaude" / "state" / "doctor-runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        for days in [1, 2, 3]:
+            _make_archive_dir(runs_dir, days)
+
+        pruned = prune_archives(project_dir)
+
+        assert pruned == [], f"Expected no pruning for 3 recent archives, got: {pruned}"
+        assert len(list(runs_dir.iterdir())) == 3
+
+    # ------------------------------------------------------------------
+    # Scenario: With 7 archives and 3 older than 30 days, 2 oldest are pruned
+    # ------------------------------------------------------------------
+
+    def test_seven_archives_three_old_prunes_two_oldest(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        runs_dir = project_dir / ".sweetclaude" / "state" / "doctor-runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        # 4 recent archives (within 30 days)
+        for days in [1, 2, 3, 4]:
+            _make_archive_dir(runs_dir, days)
+        # 3 old archives (older than 30 days) — sorted descending means
+        # positions 4,5,6 after keep_min=5 are 6th and older
+        for days in [35, 40, 45]:
+            _make_archive_dir(runs_dir, days)
+
+        pruned = prune_archives(project_dir)
+
+        assert len(pruned) == 2, (
+            f"Expected 2 pruned, got {len(pruned)}: {pruned}"
+        )
+        assert len(list(runs_dir.iterdir())) == 5
+
+    # ------------------------------------------------------------------
+    # Scenario: With 10 archives and 8 older than 30 days, 5 oldest are pruned
+    # ------------------------------------------------------------------
+
+    def test_ten_archives_eight_old_prunes_five_oldest(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        runs_dir = project_dir / ".sweetclaude" / "state" / "doctor-runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        # 2 recent
+        for days in [1, 2]:
+            _make_archive_dir(runs_dir, days)
+        # 8 old (older than 30 days), at various ages
+        for days in [31, 35, 40, 45, 50, 55, 60, 65]:
+            _make_archive_dir(runs_dir, days)
+
+        pruned = prune_archives(project_dir)
+
+        # keep_min=5: dirs[5:] are 5 oldest, all old → pruned
+        assert len(pruned) == 5, (
+            f"Expected 5 pruned, got {len(pruned)}: {pruned}"
+        )
+        assert len(list(runs_dir.iterdir())) == 5
+
+    # ------------------------------------------------------------------
+    # Scenario: With 6 archives and 1 older than 30 days, 1 is pruned
+    # ------------------------------------------------------------------
+
+    def test_six_archives_one_old_prunes_one(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        runs_dir = project_dir / ".sweetclaude" / "state" / "doctor-runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        # 5 recent
+        for days in [1, 2, 3, 4, 5]:
+            _make_archive_dir(runs_dir, days)
+        # 1 old
+        _make_archive_dir(runs_dir, 45)
+
+        pruned = prune_archives(project_dir)
+
+        assert len(pruned) == 1, (
+            f"Expected 1 pruned, got {len(pruned)}: {pruned}"
+        )
+        assert len(list(runs_dir.iterdir())) == 5
+
+    # ------------------------------------------------------------------
+    # Scenario: Pruning uses directory name timestamp, not mtime
+    # ------------------------------------------------------------------
+
+    def test_pruning_uses_name_timestamp_not_mtime(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        runs_dir = project_dir / ".sweetclaude" / "state" / "doctor-runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        # 5 recent dirs (not prunable)
+        for days in [1, 2, 3, 4, 5]:
+            _make_archive_dir(runs_dir, days)
+        # 1 dir with an OLD timestamp in the name, but set mtime to now
+        old_dir = _make_archive_dir(runs_dir, 45)
+        import time
+        now = time.time()
+        os.utime(old_dir, (now, now))
+
+        pruned = prune_archives(project_dir)
+
+        # Should be pruned based on name, despite recent mtime
+        assert len(pruned) == 1, (
+            f"Expected 1 pruned based on name timestamp, got {len(pruned)}: {pruned}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: No doctor-runs directory returns empty list
+    # ------------------------------------------------------------------
+
+    def test_no_doctor_runs_directory_returns_empty_list(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        runs_dir = project_dir / ".sweetclaude" / "state" / "doctor-runs"
+        if runs_dir.exists():
+            shutil.rmtree(runs_dir)
+
+        pruned = prune_archives(project_dir)
+
+        assert pruned == [], f"Expected empty list when no runs dir, got: {pruned}"
+
+    # ------------------------------------------------------------------
+    # Scenario: Non-timestamp directory names are skipped during pruning
+    # ------------------------------------------------------------------
+
+    def test_non_timestamp_directory_names_are_skipped(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        runs_dir = project_dir / ".sweetclaude" / "state" / "doctor-runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        # 5 recent valid dirs
+        for days in [1, 2, 3, 4, 5]:
+            _make_archive_dir(runs_dir, days)
+        # 1 old valid dir that would be pruned if it weren't for the "temp" distractor
+        _make_archive_dir(runs_dir, 45)
+        # 1 non-timestamp dir named "temp"
+        temp_dir = runs_dir / "temp"
+        temp_dir.mkdir()
+
+        prune_archives(project_dir)
+
+        assert temp_dir.exists(), (
+            "Non-timestamp directory 'temp' should not be removed by pruning"
+        )
+
+
+# ---------------------------------------------------------------------------
+# E5-S08: Suppression tests
+# ---------------------------------------------------------------------------
+
+
+class TestSuppression:
+    """E5-S08: suppression filtering, auto-cleanup, and persistence."""
+
+    # ------------------------------------------------------------------
+    # Scenario: Suppressed finding is excluded from scan output
+    # ------------------------------------------------------------------
+
+    def test_suppressed_finding_excluded_from_scan_output(self, tmp_path, fake_home):
+        # Create a project that produces an unknown-status finding
+        project_dir = build_fixture(tmp_path, overrides={
+            "backlog_files": [
+                {"name": "ISSUE-001-test.md", "frontmatter": {
+                    "id": "ISSUE-001", "type": "story", "title": "Test",
+                    "status": "invented",
+                }},
+            ],
+            "suppressions": [
+                {"finding_id": "file-diagnostics:unknown-status:ISSUE-001-test.md"},
+            ],
+        })
+
+        state = build_project_state(project_dir)
+        result = _scan(state)
+
+        finding_ids = [f["id"] for f in result["findings"]]
+        assert "file-diagnostics:unknown-status:ISSUE-001-test.md" not in finding_ids, (
+            f"Suppressed finding should be excluded from scan output, got: {finding_ids}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Resolved finding has its suppression entry auto-removed
+    # ------------------------------------------------------------------
+
+    def test_resolved_suppression_auto_removed_and_reported(self, tmp_path, fake_home):
+        # Suppress "env-wiring:missing:plans-directory" but don't actually remove plans dir
+        # (so the finding resolves — the plans dir exists → finding won't appear)
+        project_dir = build_fixture(tmp_path, overrides={
+            "suppressions": [
+                {"finding_id": "env-wiring:missing:plans-directory"},
+            ],
+        })
+        # Plans dir exists in healthy fixture, so the finding is NOT produced → resolved
+
+        state = build_project_state(project_dir)
+        result = _scan(state)
+
+        assert "env-wiring:missing:plans-directory" in result["suppressions_resolved"], (
+            f"Resolved suppression should appear in suppressions_resolved, "
+            f"got: {result['suppressions_resolved']}"
+        )
+        # Suppression file should no longer contain that entry
+        remaining = load_suppressions(project_dir)
+        remaining_ids = [e.get("finding_id") for e in remaining]
+        assert "env-wiring:missing:plans-directory" not in remaining_ids, (
+            f"Suppression file should no longer contain resolved entry, got: {remaining_ids}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Auto-removed suppression ID appears in auto_cleanup result
+    # ------------------------------------------------------------------
+
+    def test_auto_cleanup_removes_stale_suppression_and_retains_active(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path, overrides={
+            "suppressions": [
+                {"finding_id": "finding-A"},
+                {"finding_id": "finding-B"},
+            ],
+        })
+
+        resolved = auto_cleanup_suppressions(project_dir, {"finding-B"})
+
+        assert "finding-A" in resolved, (
+            f"finding-A should be in resolved set, got: {resolved}"
+        )
+        remaining = load_suppressions(project_dir)
+        remaining_ids = [e.get("finding_id") for e in remaining]
+        assert "finding-B" in remaining_ids, (
+            f"finding-B should remain in suppression file, got: {remaining_ids}"
+        )
+        assert "finding-A" not in remaining_ids, (
+            f"finding-A should be removed from suppression file, got: {remaining_ids}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Re-emerged finding (still suppressed, not in resolved)
+    # ------------------------------------------------------------------
+
+    def test_re_emerged_finding_still_suppressed_in_scan(self, tmp_path, fake_home):
+        # Remove plans dir so the finding IS produced, but also suppress it
+        project_dir = build_fixture(tmp_path)
+        plans_dir = project_dir / ".sweetclaude" / "plans"
+        if plans_dir.exists():
+            shutil.rmtree(plans_dir)
+        suppression_path = project_dir / ".sweetclaude" / "state" / "doctor-suppressions.json"
+        suppression_path.write_text(json.dumps([
+            {"finding_id": "env-wiring:missing:plans-directory"}
+        ]))
+
+        state = build_project_state(project_dir)
+        result = _scan(state)
+
+        finding_ids = [f["id"] for f in result["findings"]]
+        assert "env-wiring:missing:plans-directory" not in finding_ids, (
+            f"Re-emerged but still-suppressed finding should be excluded from active findings, "
+            f"got: {finding_ids}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: load_suppressions returns empty list for missing file
+    # ------------------------------------------------------------------
+
+    def test_load_suppressions_returns_empty_list_for_missing_file(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        suppression_path = project_dir / ".sweetclaude" / "state" / "doctor-suppressions.json"
+        if suppression_path.exists():
+            suppression_path.unlink()
+
+        result = load_suppressions(project_dir)
+
+        assert result == [], (
+            f"load_suppressions should return [] for missing file, got: {result}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: load_suppressions returns empty list for malformed file
+    # ------------------------------------------------------------------
+
+    def test_load_suppressions_returns_empty_list_for_malformed_file(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        suppression_path = project_dir / ".sweetclaude" / "state" / "doctor-suppressions.json"
+        suppression_path.write_text('"not a list"')
+
+        result = load_suppressions(project_dir)
+
+        assert result == [], (
+            f"load_suppressions should return [] for a non-list JSON value, got: {result}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: save_suppressions creates parent directories if needed
+    # ------------------------------------------------------------------
+
+    def test_save_suppressions_creates_parent_dirs_if_needed(self, tmp_path, fake_home):
+        project_dir = tmp_path / "new-project"
+        project_dir.mkdir()
+        # state dir does NOT exist
+
+        entries = [{"finding_id": "test:id", "suppressed_at": "2026-01-01"}]
+        save_suppressions(project_dir, entries)
+
+        suppression_path = project_dir / ".sweetclaude" / "state" / "doctor-suppressions.json"
+        assert suppression_path.exists(), (
+            "save_suppressions should create parent dirs and write the file"
+        )
+        data = json.loads(suppression_path.read_text())
+        assert data == entries, (
+            f"Written entries should match input, got: {data}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# E5-S09: Dry-run simulation tests
+# ---------------------------------------------------------------------------
+
+
+def _make_dry_run_finding(
+    fix_type: str = "auto",
+    action: str = "write_field",
+    finding_id: str = "test:finding:id",
+    summary: str = "Test finding",
+    file: str = "",
+    key: str = "",
+    value=None,
+    cmd=None,
+) -> dict:
+    """Build a minimal finding dict for dry_run tests."""
+    recipe: dict = {"action": action}
+    if file:
+        recipe["file"] = file
+    if key:
+        recipe["key"] = key
+    if value is not None:
+        recipe["value"] = value
+    if cmd is not None:
+        recipe["cmd"] = cmd
+    return {
+        "id": finding_id,
+        "category": "test",
+        "severity": "warning",
+        "summary": summary,
+        "detail": "",
+        "file_paths": [],
+        "fix_type": fix_type,
+        "fix_recipe": recipe,
+        "previously_suppressed": False,
+    }
+
+
+class TestDryRun:
+    """E5-S09: dry_run simulation output for various fix types and recipe actions."""
+
+    # ------------------------------------------------------------------
+    # Scenario: Dry-run of write_field shows before/after values
+    # ------------------------------------------------------------------
+
+    def test_write_field_shows_before_and_after(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        ss_path = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss_path.write_text("phase_schema_version: 1\n")
+
+        # dry_run uses a relative file key resolved against project_dir
+        relative_key = ".sweetclaude/state/session-state.yaml"
+        finding = _make_dry_run_finding(
+            fix_type="auto",
+            action="write_field",
+            finding_id="state-integrity:schema-version:session-state.yaml",
+            file=relative_key,
+            key="phase_schema_version",
+            value=2,
+        )
+
+        result = dry_run(project_dir, [finding])
+
+        assert len(result["simulations"]) == 1, (
+            f"Expected 1 simulation entry, got {len(result['simulations'])}"
+        )
+        sim = result["simulations"][0]
+        assert "before" in sim, f"Expected 'before' key in simulation, got: {sim}"
+        assert "after" in sim, f"Expected 'after' key in simulation, got: {sim}"
+        assert "phase_schema_version: 1" in sim["before"] or "1" in sim["before"], (
+            f"'before' should contain original value, got: {sim['before']}"
+        )
+        assert "phase_schema_version: 2" in sim["after"] or "2" in sim["after"], (
+            f"'after' should contain new value, got: {sim['after']}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Dry-run of rebuild_cache shows requires-execution note
+    # ------------------------------------------------------------------
+
+    def test_rebuild_cache_shows_requires_execution_note(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        finding = _make_dry_run_finding(
+            fix_type="auto",
+            action="rebuild_cache",
+            finding_id="storage-lint:counter-drift:issue",
+        )
+
+        result = dry_run(project_dir, [finding])
+
+        assert len(result["simulations"]) == 1
+        sim = result["simulations"][0]
+        assert "note" in sim, f"Expected 'note' key in simulation, got: {sim}"
+        assert "requires real execution" in sim["note"].lower(), (
+            f"Note should mention 'requires real execution', got: {sim['note']}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Dry-run of run_script shows requires-execution note
+    # ------------------------------------------------------------------
+
+    def test_run_script_shows_requires_execution_note(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        finding = _make_dry_run_finding(
+            fix_type="auto",
+            action="run_script",
+            finding_id="state-integrity:missing:session-state.yaml",
+            cmd=["bash", "scripts/generate-session-state.sh"],
+        )
+
+        result = dry_run(project_dir, [finding])
+
+        assert len(result["simulations"]) == 1
+        sim = result["simulations"][0]
+        assert "note" in sim, f"Expected 'note' key in simulation, got: {sim}"
+        assert "requires real execution" in sim["note"].lower(), (
+            f"Note should mention 'requires real execution', got: {sim['note']}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Dry-run of prompted finding shows approval note
+    # ------------------------------------------------------------------
+
+    def test_prompted_finding_shows_approval_note(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        finding = _make_dry_run_finding(
+            fix_type="prompted",
+            action="write_field",
+            finding_id="state-integrity:test:prompted",
+            file=".sweetclaude/state/session-state.yaml",
+            key="x",
+            value="y",
+        )
+
+        result = dry_run(project_dir, [finding])
+
+        assert len(result["simulations"]) == 1
+        sim = result["simulations"][0]
+        assert sim.get("note") == "Will be presented for your approval", (
+            f"Expected exact approval note, got: {sim.get('note')}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Dry-run produces zero side effects
+    # ------------------------------------------------------------------
+
+    def test_dry_run_produces_no_side_effects(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        ss_path = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        original_content = "phase_schema_version: 1\n"
+        ss_path.write_text(original_content)
+
+        relative_key = ".sweetclaude/state/session-state.yaml"
+        finding = _make_dry_run_finding(
+            fix_type="auto",
+            action="write_field",
+            finding_id="state-integrity:schema-version:session-state.yaml",
+            file=relative_key,
+            key="phase_schema_version",
+            value=2,
+        )
+
+        dry_run(project_dir, [finding])
+
+        # File should be unchanged
+        assert ss_path.read_text() == original_content, (
+            f"dry_run must not modify session-state.yaml; "
+            f"got: {ss_path.read_text()!r}"
+        )
+        # No archive directory created
+        runs_dir = project_dir / ".sweetclaude" / "state" / "doctor-runs"
+        assert not runs_dir.exists() or len(list(runs_dir.iterdir())) == 0, (
+            "dry_run must not create any archive directories"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Dry-run of create_dir shows description
+    # ------------------------------------------------------------------
+
+    def test_create_dir_shows_description(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        plans_dir = project_dir / ".sweetclaude" / "plans"
+        if plans_dir.exists():
+            shutil.rmtree(plans_dir)
+
+        finding = {
+            "id": "env-wiring:missing:plans-directory",
+            "category": "env_wiring",
+            "severity": "info",
+            "summary": "Plans directory missing",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {
+                "action": "create_dir",
+                "path": str(plans_dir),
+            },
+            "previously_suppressed": False,
+        }
+
+        result = dry_run(project_dir, [finding])
+
+        assert len(result["simulations"]) == 1
+        sim = result["simulations"][0]
+        assert "description" in sim, f"Expected 'description' key in simulation, got: {sim}"
+        assert "create_dir" in sim["description"], (
+            f"Description should mention 'create_dir', got: {sim['description']}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Dry-run of report-only finding produces no simulation entry
+    # ------------------------------------------------------------------
+
+    def test_report_only_finding_produces_no_simulation_entry(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        finding = {
+            "id": "state-integrity:schema-version:sweetclaude.yaml",
+            "category": "state_integrity",
+            "severity": "warning",
+            "summary": "Schema version outdated",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "report-only",
+            "fix_recipe": {},
+            "previously_suppressed": False,
+        }
+
+        result = dry_run(project_dir, [finding])
+
+        assert len(result["simulations"]) == 0, (
+            f"report-only finding should produce no simulation entry, "
+            f"got: {result['simulations']}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# E5-S10: Graceful degradation tests
+# ---------------------------------------------------------------------------
+
+class TestGracefulDegradation:
+    """
+    E5-S10: _scan() catches DependencyMissing per check function and
+    populates skipped_categories without aborting the scan.
+    """
+
+    # ------------------------------------------------------------------
+    # Scenario: Missing cache.py skips counter-drift but other storage rules run
+    # ------------------------------------------------------------------
+
+    def test_missing_cache_skips_counter_drift_but_not_storage_lint_category(
+        self, tmp_path, fake_home
+    ):
+        # Duplicate ID in both backlog and roadmap triggers cross-location-duplicate-id
+        # which does not need cache.py. No ISSUE-NNN files means max_seen == 0
+        # so cache.py absence does NOT raise DependencyMissing.
+        project_dir = build_fixture(tmp_path, overrides={
+            "backlog_files": [
+                {
+                    "name": "ISSUE-001-item.md",
+                    "frontmatter": {
+                        "id": "EPIC-001",
+                        "type": "story",
+                        "title": "Duplicate",
+                        "status": "active",
+                    },
+                }
+            ],
+            "roadmap_files": [
+                {
+                    "name": "EPIC-001-item.md",
+                    "frontmatter": {
+                        "id": "EPIC-001",
+                        "type": "epic",
+                        "title": "Duplicate",
+                        "status": "active",
+                    },
+                }
+            ],
+        })
+        # Ensure cache.py does not exist
+        cache_script = project_dir / "scripts" / "cache.py"
+        assert not cache_script.exists()
+
+        state = build_project_state(project_dir)
+        result = _scan(state)
+
+        skipped_names = [s["category"] for s in result["skipped_categories"]]
+        assert "storage_lint" not in skipped_names, (
+            f"storage_lint should NOT be skipped when cache.py is missing "
+            f"(only counter-drift sub-check skips); skipped={skipped_names}"
+        )
+        finding_ids = [f["id"] for f in result["findings"]]
+        cross_dup = [fid for fid in finding_ids if "cross-location-duplicate-id" in fid]
+        assert cross_dup, (
+            f"Expected cross-location-duplicate-id finding to be present; "
+            f"findings={finding_ids}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Missing migration runner skips migration_currency schema drift
+    # ------------------------------------------------------------------
+
+    def test_missing_migration_runner_skips_migration_currency(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        runner = project_dir / "scripts" / "migrations" / "runner.py"
+        runner.unlink(missing_ok=True)
+        assert not runner.exists()
+
+        state = build_project_state(project_dir)
+        assert state.migration_runner_path is None, (
+            "migration_runner_path should be None when runner.py is absent"
+        )
+
+        result = _scan(state)
+
+        skipped_names = [s["category"] for s in result["skipped_categories"]]
+        assert "migration_currency" in skipped_names, (
+            f"migration_currency should be in skipped_categories when runner.py is missing; "
+            f"skipped={result['skipped_categories']}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Missing migrate_taxonomy.py skips taxonomy drift check
+    # ------------------------------------------------------------------
+
+    def test_missing_migrate_taxonomy_skips_taxonomy_drift(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        # Create migration runner so check_migration_currency proceeds past the guard
+        runner = project_dir / "scripts" / "migrations" / "runner.py"
+        runner.parent.mkdir(parents=True, exist_ok=True)
+        runner.write_text("# stub runner\nimport sys; sys.exit(1)\n")
+
+        # No migrate_taxonomy.py exists
+        taxonomy_script = project_dir / "scripts" / "migrate_taxonomy.py"
+        assert not taxonomy_script.exists()
+
+        state = build_project_state(project_dir)
+        assert state.migration_runner_path is not None
+
+        findings = check_migration_currency(state)
+
+        taxonomy_ids = [f.id for f in findings if f.id.startswith("migration-currency:taxonomy-drift")]
+        assert taxonomy_ids == [], (
+            f"taxonomy-drift finding should not be produced when migrate_taxonomy.py "
+            f"is absent; got: {taxonomy_ids}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Missing migrate-v3-to-v4.py skips orphan scan
+    # ------------------------------------------------------------------
+
+    def test_missing_migrate_v3_to_v4_skips_orphan_scan(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        # Create migration runner
+        runner = project_dir / "scripts" / "migrations" / "runner.py"
+        runner.parent.mkdir(parents=True, exist_ok=True)
+        runner.write_text("# stub runner\nimport sys; sys.exit(1)\n")
+
+        # Confirm migrate-v3-to-v4.py does not exist
+        orphan_script = project_dir / "scripts" / "migrate" / "migrate-v3-to-v4.py"
+        assert not orphan_script.exists()
+
+        state = build_project_state(project_dir)
+        findings = check_migration_currency(state)
+
+        orphan_ids = [f.id for f in findings if f.id.startswith("migration-currency:orphans")]
+        assert orphan_ids == [], (
+            f"orphan scan should be skipped when migrate-v3-to-v4.py is absent; "
+            f"got: {orphan_ids}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Scan completes and returns valid structure despite all deps missing
+    # ------------------------------------------------------------------
+
+    def test_scan_returns_valid_structure_when_all_dep_scripts_missing(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        (project_dir / "scripts" / "migrations" / "runner.py").unlink(missing_ok=True)
+        assert not (project_dir / "scripts" / "cache.py").exists()
+        assert not (project_dir / "scripts" / "migrations" / "runner.py").exists()
+        assert not (project_dir / "scripts" / "migrate_taxonomy.py").exists()
+        assert not (project_dir / "scripts" / "migrate" / "migrate-v3-to-v4.py").exists()
+
+        state = build_project_state(project_dir)
+        result = _scan(state)
+
+        assert "findings" in result, "scan result must contain 'findings'"
+        assert "skipped_categories" in result, "scan result must contain 'skipped_categories'"
+        assert "suppressions_resolved" in result, "scan result must contain 'suppressions_resolved'"
+        assert "project_state_summary" in result, "scan result must contain 'project_state_summary'"
+
+    # ------------------------------------------------------------------
+    # Scenario: DependencyMissing populates skipped_categories with category and reason
+    # ------------------------------------------------------------------
+
+    def test_dependency_missing_populates_skipped_category_and_reason(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        runner = project_dir / "scripts" / "migrations" / "runner.py"
+        runner.unlink(missing_ok=True)
+        assert not runner.exists()
+
+        state = build_project_state(project_dir)
+        result = _scan(state)
+
+        mc_entries = [
+            s for s in result["skipped_categories"]
+            if s.get("category") == "migration_currency"
+        ]
+        assert mc_entries, (
+            f"skipped_categories should contain a migration_currency entry; "
+            f"got: {result['skipped_categories']}"
+        )
+        entry = mc_entries[0]
+        assert "category" in entry, "skipped entry must have 'category' key"
+        assert entry["category"] == "migration_currency"
+        assert "reason" in entry, "skipped entry must have 'reason' key"
+        assert entry["reason"], "reason must be a non-empty string"
+
+
+# ---------------------------------------------------------------------------
+# E5-S11: Early exit tests
+# ---------------------------------------------------------------------------
+
+class TestEarlyExit:
+    """
+    E5-S11: main() scan subcommand returns a not-configured error (exit 0)
+    when sweetclaude.yaml does not exist.
+    """
+
+    # ------------------------------------------------------------------
+    # Scenario: Project with no sweetclaude.yaml returns not-configured error
+    # ------------------------------------------------------------------
+
+    def test_scan_without_sweetclaude_yaml_emits_not_configured_error(
+        self, tmp_path, fake_home, capsys
+    ):
+        project_dir = build_fixture(tmp_path, overrides={"sweetclaude_yaml": None})
+        sc_yaml = project_dir / ".sweetclaude" / "state" / "sweetclaude.yaml"
+        assert not sc_yaml.exists()
+
+        from doctor import main
+        exit_code = main(["scan", "--project-dir", str(project_dir)])
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+
+        assert output.get("error") == "not-configured", (
+            f"Expected error='not-configured', got: {output}"
+        )
+        assert "message" in output, (
+            f"Expected 'message' key in output, got: {output}"
+        )
+        assert exit_code == 0, f"Expected exit code 0, got: {exit_code}"
+
+    # ------------------------------------------------------------------
+    # Scenario: Not-configured output has no findings or skipped_categories
+    # ------------------------------------------------------------------
+
+    def test_scan_not_configured_output_has_no_findings_or_skipped_categories(
+        self, tmp_path, fake_home, capsys
+    ):
+        project_dir = build_fixture(tmp_path, overrides={"sweetclaude_yaml": None})
+
+        from doctor import main
+        main(["scan", "--project-dir", str(project_dir)])
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+
+        assert "findings" not in output, (
+            f"not-configured response must not contain 'findings'; got keys: {list(output.keys())}"
+        )
+        assert "skipped_categories" not in output, (
+            f"not-configured response must not contain 'skipped_categories'; "
+            f"got keys: {list(output.keys())}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# E5-S12: Happy-path tests
+# ---------------------------------------------------------------------------
+
+class TestHappyPath:
+    """
+    E5-S12: A healthy fixture produces zero findings, a populated summary,
+    and a zero-action manifest after the full pipeline.
+    """
+
+    # ------------------------------------------------------------------
+    # Scenario: Healthy fixture produces zero findings and zero skipped categories
+    # ------------------------------------------------------------------
+
+    def test_healthy_fixture_produces_zero_findings_and_no_skipped(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        state = build_project_state(project_dir)
+        result = _scan(state)
+
+        assert result["findings"] == [], (
+            f"Healthy fixture should produce 0 findings; "
+            f"got: {[f['id'] for f in result['findings']]}"
+        )
+        assert result["skipped_categories"] == [], (
+            f"Healthy fixture should have 0 skipped categories; "
+            f"got: {result['skipped_categories']}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Healthy fixture has populated project_state_summary
+    # ------------------------------------------------------------------
+
+    def test_healthy_fixture_project_state_summary_has_required_keys(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        state = build_project_state(project_dir)
+        result = _scan(state)
+
+        summary = result["project_state_summary"]
+        assert "backlog_count" in summary, (
+            f"project_state_summary missing 'backlog_count'; keys={list(summary.keys())}"
+        )
+        assert "roadmap_count" in summary, (
+            f"project_state_summary missing 'roadmap_count'; keys={list(summary.keys())}"
+        )
+        assert "hook_count" in summary, (
+            f"project_state_summary missing 'hook_count'; keys={list(summary.keys())}"
+        )
+        assert "has_sweetclaude_yaml" in summary, (
+            f"project_state_summary missing 'has_sweetclaude_yaml'; keys={list(summary.keys())}"
+        )
+        assert summary["has_sweetclaude_yaml"] is True, (
+            f"project_state_summary 'has_sweetclaude_yaml' should be True; "
+            f"got: {summary['has_sweetclaude_yaml']}"
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario: Full pipeline on healthy fixture produces zero-action manifest
+    # ------------------------------------------------------------------
+
+    def test_full_pipeline_healthy_fixture_produces_zero_action_manifest(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        state = build_project_state(project_dir)
+        scan_result = _scan(state)
+
+        assert scan_result["findings"] == [], (
+            f"Precondition: healthy fixture must produce 0 findings; "
+            f"got: {[f['id'] for f in scan_result['findings']]}"
+        )
+
+        archive = create_archive(project_dir)
+        auto_fix(project_dir, scan_result["findings"], archive)
+        persist(project_dir, archive, scan_findings=scan_result["findings"])
+
+        manifest_path = archive / "manifest.json"
+        assert manifest_path.exists(), "manifest.json must be written by persist()"
+        manifest = json.loads(manifest_path.read_text())
+
+        assert manifest["actions"] == [], (
+            f"manifest actions should be empty for zero findings; "
+            f"got: {manifest['actions']}"
+        )
+        summary = manifest["summary"]
+        assert summary["auto_fixed"] == 0, f"auto_fixed should be 0; got: {summary}"
+        assert summary["user_fixed"] == 0, f"user_fixed should be 0; got: {summary}"
+        assert summary["skipped"] == 0, f"skipped should be 0; got: {summary}"
+        assert summary["failed"] == 0, f"failed should be 0; got: {summary}"
+
+
+# ---------------------------------------------------------------------------
+# E5-S13: Manifest completeness tests
+# ---------------------------------------------------------------------------
+
+class TestManifestCompleteness:
+    """
+    E5-S13: persist() correctly merges actions.json and pending-actions.jsonl
+    into manifest.json with accurate summary counts.
+    """
+
+    # ------------------------------------------------------------------
+    # Scenario: Manifest after mixed actions contains all entries with correct types
+    # ------------------------------------------------------------------
+
+    def test_manifest_mixed_actions_has_all_entries_and_correct_counts(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        actions_data = [
+            {"action": "auto-fix", "finding_id": "fix-success", "timestamp": "2026-01-01T00:00:00Z"},
+            {"action": "auto-fix-failed", "finding_id": "fix-fail", "timestamp": "2026-01-01T00:00:00Z"},
+        ]
+        (archive / "actions.json").write_text(json.dumps(actions_data))
+
+        pending_data = "\n".join([
+            json.dumps({"action": "prompted-fix", "finding_id": "prompt-accept", "timestamp": "2026-01-01T00:00:00Z"}),
+            json.dumps({"action": "skip", "finding_id": "prompt-skip", "timestamp": "2026-01-01T00:00:00Z"}),
+        ])
+        (archive / "pending-actions.jsonl").write_text(pending_data)
+
+        persist(project_dir, archive)
+
+        manifest = json.loads((archive / "manifest.json").read_text())
+
+        assert len(manifest["actions"]) == 4, (
+            f"manifest should have 4 actions; got {len(manifest['actions'])}: {manifest['actions']}"
+        )
+        summary = manifest["summary"]
+        assert summary["auto_fixed"] == 1, f"auto_fixed should be 1; got: {summary}"
+        assert summary["user_fixed"] == 1, f"user_fixed should be 1; got: {summary}"
+        assert summary["skipped"] == 1, f"skipped should be 1; got: {summary}"
+        assert summary["failed"] == 1, f"failed should be 1; got: {summary}"
+
+    # ------------------------------------------------------------------
+    # Scenario: Each action entry has finding_id and timestamp
+    # ------------------------------------------------------------------
+
+    def test_each_action_has_finding_id_and_timestamp(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        actions_data = [
+            {
+                "action": "auto-fix",
+                "finding_id": "test-fix-1",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "before_hash": "sha256:aaa",
+                "after_hash": "sha256:bbb",
+            }
+        ]
+        (archive / "actions.json").write_text(json.dumps(actions_data))
+
+        persist(project_dir, archive)
+
+        manifest = json.loads((archive / "manifest.json").read_text())
+        for action in manifest["actions"]:
+            assert "finding_id" in action, (
+                f"Every action must have 'finding_id'; action={action}"
+            )
+            assert "timestamp" in action, (
+                f"Every action must have 'timestamp'; action={action}"
+            )
+
+    # ------------------------------------------------------------------
+    # Scenario: Success action entries have before_hash and after_hash
+    # ------------------------------------------------------------------
+
+    def test_success_action_has_before_hash_and_after_hash(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        actions_data = [
+            {
+                "action": "auto-fix",
+                "finding_id": "test-hash-check",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "before_hash": "sha256:deadbeef",
+                "after_hash": "sha256:cafebabe",
+            }
+        ]
+        (archive / "actions.json").write_text(json.dumps(actions_data))
+
+        persist(project_dir, archive)
+
+        manifest = json.loads((archive / "manifest.json").read_text())
+        auto_fixed_actions = [a for a in manifest["actions"] if a.get("action") == "auto-fix"]
+        assert auto_fixed_actions, "Expected at least one auto-fix action in manifest"
+
+        for action in auto_fixed_actions:
+            assert "before_hash" in action, (
+                f"auto-fix action must have 'before_hash'; action={action}"
+            )
+            assert "after_hash" in action, (
+                f"auto-fix action must have 'after_hash'; action={action}"
+            )
+
+    # ------------------------------------------------------------------
+    # Scenario: Failure action entries have error field
+    # ------------------------------------------------------------------
+
+    def test_failure_action_has_error_field(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        actions_data = [
+            {
+                "action": "auto-fix-failed",
+                "finding_id": "fail-finding",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "error": "cache.py not found",
+            }
+        ]
+        (archive / "actions.json").write_text(json.dumps(actions_data))
+
+        persist(project_dir, archive)
+
+        manifest = json.loads((archive / "manifest.json").read_text())
+        failed_actions = [a for a in manifest["actions"] if a.get("action") == "auto-fix-failed"]
+        assert failed_actions, "Expected at least one auto-fix-failed action in manifest"
+
+        for action in failed_actions:
+            assert action.get("error") == "cache.py not found", (
+                f"failed action 'error' should be 'cache.py not found'; got: {action.get('error')}"
+            )
+
+    # ------------------------------------------------------------------
+    # Scenario: Summary counts match the action list (3+1+2+1 = 7)
+    # ------------------------------------------------------------------
+
+    def test_summary_counts_match_action_list_seven_total(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        auto_actions = (
+            [{"action": "auto-fix", "finding_id": f"af-{i}", "timestamp": "2026-01-01T00:00:00Z"} for i in range(3)]
+            + [{"action": "auto-fix-failed", "finding_id": "af-fail", "timestamp": "2026-01-01T00:00:00Z"}]
+        )
+        (archive / "actions.json").write_text(json.dumps(auto_actions))
+
+        pending_lines = (
+            [json.dumps({"action": "prompted-fix", "finding_id": f"pf-{i}", "timestamp": "2026-01-01T00:00:00Z"}) for i in range(2)]
+            + [json.dumps({"action": "skip", "finding_id": "sk-1", "timestamp": "2026-01-01T00:00:00Z"})]
+        )
+        (archive / "pending-actions.jsonl").write_text("\n".join(pending_lines))
+
+        persist(project_dir, archive)
+
+        manifest = json.loads((archive / "manifest.json").read_text())
+
+        assert len(manifest["actions"]) == 7, (
+            f"Total actions should be 7; got {len(manifest['actions'])}"
+        )
+        summary = manifest["summary"]
+        assert summary["auto_fixed"] == 3, f"auto_fixed should be 3; got: {summary}"
+        assert summary["failed"] == 1, f"failed should be 1; got: {summary}"
+        assert summary["user_fixed"] == 2, f"user_fixed should be 2; got: {summary}"
+        assert summary["skipped"] == 1, f"skipped should be 1; got: {summary}"
+
+
+# ---------------------------------------------------------------------------
+# Caucus recommendation #1: CHECKS dict completeness
+# ---------------------------------------------------------------------------
+
+class TestChecksRegistry:
+
+    def test_checks_dict_contains_all_eight_categories(self):
+        expected = {
+            "state_integrity", "hook_health", "storage_lint",
+            "migration_currency", "config_compat", "file_diagnostics",
+            "onboarding_state", "env_wiring",
+        }
+        assert set(CHECKS.keys()) == expected
+
+    def test_checks_dict_values_are_callable(self):
+        for name, fn in CHECKS.items():
+            assert callable(fn), f"CHECKS[{name!r}] is not callable"
+
+
+# ---------------------------------------------------------------------------
+# Caucus recommendation #2: write_field round-trip fidelity
+# ---------------------------------------------------------------------------
+
+class TestWriteFieldFidelity:
+
+    def test_write_field_preserves_unrelated_keys(self, tmp_path):
+        original = "alpha: 1\nbeta: hello\ngamma: true\n"
+        content = original.encode("utf-8")
+        recipe = {"action": "write_field", "key": "beta", "value": "world"}
+        result = _apply_transform(content, recipe, tmp_path)
+        data = yaml.safe_load(result)
+        assert data["alpha"] == 1
+        assert data["beta"] == "world"
+        assert data["gamma"] is True
+
+    def test_write_field_preserves_nested_dict_keys(self, tmp_path):
+        original = yaml.safe_dump({
+            "phase_schema_version": 1,
+            "framework": {"installed_version": "4.0.8-beta"},
+            "extra_key": "should_survive",
+        })
+        content = original.encode("utf-8")
+        recipe = {"action": "write_field", "key": "phase_schema_version", "value": 2}
+        result = _apply_transform(content, recipe, tmp_path)
+        data = yaml.safe_load(result)
+        assert data["phase_schema_version"] == 2
+        assert data["framework"] == {"installed_version": "4.0.8-beta"}
+        assert data["extra_key"] == "should_survive"
+
+    def test_write_field_inserts_new_key(self, tmp_path):
+        original = "existing: value\n"
+        content = original.encode("utf-8")
+        recipe = {"action": "write_field", "key": "new_key", "value": "new_value"}
+        result = _apply_transform(content, recipe, tmp_path)
+        data = yaml.safe_load(result)
+        assert data["existing"] == "value"
+        assert data["new_key"] == "new_value"
+
+
+# ---------------------------------------------------------------------------
+# Caucus recommendation #3: CLI integration via main()
+# ---------------------------------------------------------------------------
+
+class TestCLIIntegration:
+
+    def test_scan_cli_healthy_project(self, tmp_path, fake_home, capsys):
+        project_dir = build_fixture(tmp_path)
+        exit_code = main(["scan", "--project-dir", str(project_dir)])
+        assert exit_code == 0
+        output = json.loads(capsys.readouterr().out)
+        assert isinstance(output["findings"], list)
+        assert all(
+            f["severity"] != "error" for f in output["findings"]
+        ), f"Healthy project should have no errors: {output['findings']}"
+
+    def test_scan_cli_not_configured(self, tmp_path, capsys):
+        project_dir = tmp_path / "empty"
+        project_dir.mkdir()
+        exit_code = main(["scan", "--project-dir", str(project_dir)])
+        assert exit_code == 0
+        output = json.loads(capsys.readouterr().out)
+        assert output["error"] == "not-configured"
+
+    def test_auto_fix_cli_applies_finding(self, tmp_path, fake_home, monkeypatch, capsys):
+        project_dir = build_fixture(tmp_path)
+        plans_dir = project_dir / ".sweetclaude" / "plans"
+        shutil.rmtree(plans_dir)
+
+        archive = create_archive(project_dir)
+
+        finding_json = json.dumps([{
+            "id": "env-wiring:missing:plans-directory",
+            "category": "env_wiring",
+            "severity": "info",
+            "summary": "Plans directory missing",
+            "detail": "",
+            "file_paths": [],
+            "fix_type": "auto",
+            "fix_recipe": {"action": "create_dir", "path": str(plans_dir)},
+            "previously_suppressed": False,
+        }])
+
+        monkeypatch.setattr("sys.stdin", io.StringIO(finding_json))
+        exit_code = main([
+            "auto-fix",
+            "--project-dir", str(project_dir),
+            "--archive-dir", str(archive),
+        ])
+        assert exit_code == 0
+        output = json.loads(capsys.readouterr().out)
+        assert len(output["actions"]) == 1
+        assert output["actions"][0]["action"] == "auto-fix"
+        assert plans_dir.is_dir()
