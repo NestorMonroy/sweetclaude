@@ -6,6 +6,10 @@ All notable changes to SweetClaude are documented here.
 
 ## [Unreleased] — targeting 4.1.0-beta
 
+---
+
+## [4.1.0-beta] — 2026-05-22
+
 ### New features
 
 **Bash-based hook repair recovery (EP-010, STORY-304)**
