@@ -65,6 +65,7 @@ from doctor import (
     auto_cleanup_suppressions,
     main,
     _apply_transform,
+    _atomic_write,
 )
 
 
@@ -6278,3 +6279,164 @@ class TestCLIIntegration:
         assert len(output["actions"]) == 1
         assert output["actions"][0]["action"] == "auto-fix"
         assert plans_dir.is_dir()
+
+
+# ---------------------------------------------------------------------------
+# ISSUE-180: _atomic_write error recovery path
+# ---------------------------------------------------------------------------
+
+class TestAtomicWriteErrorRecovery:
+
+    def test_original_file_unchanged_on_replace_failure(self, tmp_path, monkeypatch):
+        target = tmp_path / "target.yaml"
+        target.write_bytes(b"original content")
+
+        def failing_replace(src, dst):
+            raise OSError("simulated disk failure")
+
+        monkeypatch.setattr("os.replace", failing_replace)
+
+        with pytest.raises(OSError, match="simulated disk failure"):
+            _atomic_write(target, b"new content")
+
+        assert target.read_bytes() == b"original content"
+
+    def test_temp_file_cleaned_up_on_replace_failure(self, tmp_path, monkeypatch):
+        target = tmp_path / "target.yaml"
+        target.write_bytes(b"original")
+
+        def failing_replace(src, dst):
+            raise OSError("simulated failure")
+
+        monkeypatch.setattr("os.replace", failing_replace)
+
+        with pytest.raises(OSError):
+            _atomic_write(target, b"new content")
+
+        tmp_files = list(tmp_path.glob("*.tmp"))
+        assert tmp_files == [], f"Temp file should be cleaned up; found: {tmp_files}"
+
+    def test_exception_propagates_from_atomic_write(self, tmp_path, monkeypatch):
+        target = tmp_path / "target.yaml"
+
+        def failing_replace(src, dst):
+            raise OSError("specific error message")
+
+        monkeypatch.setattr("os.replace", failing_replace)
+
+        with pytest.raises(OSError, match="specific error message"):
+            _atomic_write(target, b"content")
+
+
+# ---------------------------------------------------------------------------
+# ISSUE-181: malformed hooks data guard in check_config_compat
+# ---------------------------------------------------------------------------
+
+class TestMalformedHooksGuard:
+
+    def test_hooks_value_as_string_does_not_crash(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        home = Path.home()
+        settings = home / ".claude" / "settings.json"
+        settings.write_text(json.dumps({
+            "plansDirectory": ".sweetclaude/plans",
+            "hooks": {"PostToolUse": "not-a-list"},
+        }))
+        state = build_project_state(project_dir)
+        findings = check_config_compat(state)
+        f2_ids = [f.id for f in findings if f.id.startswith("config-compat:F2")]
+        f3_ids = [f.id for f in findings if f.id.startswith("config-compat:F3")]
+        assert f2_ids == []
+        assert f3_ids == []
+
+    def test_hooks_entry_missing_hooks_key_does_not_crash(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        home = Path.home()
+        settings = home / ".claude" / "settings.json"
+        settings.write_text(json.dumps({
+            "plansDirectory": ".sweetclaude/plans",
+            "hooks": {"PostToolUse": [{"matcher": "test"}]},
+        }))
+        state = build_project_state(project_dir)
+        findings = check_config_compat(state)
+        f2_ids = [f.id for f in findings if f.id.startswith("config-compat:F2")]
+        f3_ids = [f.id for f in findings if f.id.startswith("config-compat:F3")]
+        assert f2_ids == []
+        assert f3_ids == []
+
+    def test_hooks_as_dict_instead_of_list_does_not_crash(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        home = Path.home()
+        settings = home / ".claude" / "settings.json"
+        settings.write_text(json.dumps({
+            "plansDirectory": ".sweetclaude/plans",
+            "hooks": {"PostToolUse": {"command": "echo bad"}},
+        }))
+        state = build_project_state(project_dir)
+        findings = check_config_compat(state)
+        f2_ids = [f.id for f in findings if f.id.startswith("config-compat:F2")]
+        f3_ids = [f.id for f in findings if f.id.startswith("config-compat:F3")]
+        assert f2_ids == []
+        assert f3_ids == []
+
+
+# ---------------------------------------------------------------------------
+# ISSUE-178: --category flag for focused scanning
+# ---------------------------------------------------------------------------
+
+class TestCategoryFilter:
+
+    def test_single_category_runs_only_that_check(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        state = build_project_state(project_dir)
+        result = _scan(state, categories=["env_wiring"])
+        for f in result["findings"]:
+            assert f["category"] == "env_wiring"
+
+    def test_multiple_categories_via_comma(self, tmp_path, fake_home, capsys):
+        project_dir = build_fixture(tmp_path)
+        exit_code = main([
+            "scan", "--project-dir", str(project_dir),
+            "--category", "env_wiring,state_integrity",
+        ])
+        assert exit_code == 0
+        output = json.loads(capsys.readouterr().out)
+        assert set(output["scanned_categories"]) == {"env_wiring", "state_integrity"}
+
+    def test_invalid_category_produces_error(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        state = build_project_state(project_dir)
+        with pytest.raises(ValueError, match="Unknown categories"):
+            _scan(state, categories=["nonexistent"])
+
+    def test_omitting_category_runs_all(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        state = build_project_state(project_dir)
+        result = _scan(state, categories=None)
+        assert "scanned_categories" not in result
+
+    def test_category_scoped_scan_does_not_cleanup_suppressions(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        supp_path = project_dir / ".sweetclaude" / "state" / "doctor-suppressions.json"
+        supp_path.write_text(json.dumps([
+            {"finding_id": "state-integrity:fake:test"}
+        ]))
+        state = build_project_state(project_dir)
+        result = _scan(state, categories=["env_wiring"])
+        assert result["suppressions_resolved"] == []
+        remaining = json.loads(supp_path.read_text())
+        assert len(remaining) == 1
+
+    def test_scanned_categories_in_output_when_filtered(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        state = build_project_state(project_dir)
+        result = _scan(state, categories=["hook_health"])
+        assert result["scanned_categories"] == ["hook_health"]
+
+    def test_cli_category_flag_invalid_returns_error(self, tmp_path, fake_home, capsys):
+        project_dir = build_fixture(tmp_path)
+        exit_code = main([
+            "scan", "--project-dir", str(project_dir),
+            "--category", "bogus",
+        ])
+        assert exit_code == 1
