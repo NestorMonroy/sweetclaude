@@ -150,7 +150,7 @@ Check that artifacts are where SweetClaude expects them:
 | `.sweetclaude/state/` | phase.yaml, project.yaml, skills.yaml, decision-log, assumption-register, improvement-register, scope-changes |
 | `docs/` or `{technical_base}/` | product-brief, prd, architecture, tech-spec, data-model, api-design, workflows (if they exist anywhere in the project) |
 | `{product_base}/stories/` | user stories and .feature files (if they exist) |
-| `{product_base}/backlog/` | Item files by type (stories/, bugs/, debt/, chores/) |
+| `{product_base}/backlog/` | Issue files (ISSUE-NNN-*.md), done/ subdirectory |
 | `{product_base}/milestones/` | milestone detail files (if product-milestones has been used) |
 | `{product_base}/sprints/` | sprint files (if product-sprint-plan has been used) |
 | `{strategy_base}/` | concept, pain-thesis, ICP, competitive, etc. |

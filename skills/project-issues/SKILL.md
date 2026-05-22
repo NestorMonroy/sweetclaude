@@ -140,8 +140,8 @@ Present as a compact table. Sort: done/abandoned last, then by priority, then by
 
 ```
 ID          Type    Status      Pri   Eff  Title
-ISSUE-001   story   new         P2    m    Add OAuth login
-ISSUE-002   bug     active      P0    s    Crash on empty input
+ISSUE-001   enhancement   new         P2    m    Add OAuth login
+ISSUE-002   bug-fix       active      P0    s    Crash on empty input
 ...
 ```
 
@@ -177,7 +177,7 @@ Present as:
 
 ```
 ISSUE-001 — Add OAuth login
-Type:      story          Status:   new
+Type:      enhancement    Status:   new
 Priority:  P2             Effort:   m
 Epic:      (none)         Sprint:   (none)
 Origin:    manual
@@ -202,9 +202,17 @@ If the issue has been in 2+ sprints without completing, add a warning:
 Ask one question at a time. Do not present a form.
 
 1. **Title** — "What's the issue? One line."
-2. **Type** — "story / bug / debt / chore / enhancement / spike?" (default: story)
-3. **Description** — For stories: "As a [who], they want [what] so that [why]?" For bugs: "Steps to reproduce?" For debt: "What's the structural problem?" For chores: "What needs to be done?"
-4. **Acceptance criteria** (story/bug only) — "What conditions make this done? List them one per line, or say none."
+2. **Type** — Present the workflow type categories via AskUserQuestion:
+   - **New:** `net-new-feature`, `external-integration`, `onboarding-flow-design`
+   - **Enhancement:** `enhancement`
+   - **Fix:** `bug-fix`, `security-patch`, `hotfix`, `performance-optimization`, `rollback-revert`
+   - **Chore:** `tech-debt`, `dependency-upgrade`, `infrastructure-change`, `compliance-requirement`
+   - **Migration:** `technology-migration`, `data-migration`, `api-deprecation`
+   - **Planning:** `release-planning`, `security-planning`, `course-correction`
+   - **Research:** `spike`
+   (default: `enhancement`)
+3. **Description** — For net-new-feature: "As a [who], they want [what] so that [why]?" For bug-fix/hotfix: "Steps to reproduce?" For tech-debt: "What's the structural problem?" For other types: "What needs to be done?"
+4. **Acceptance criteria** (net-new-feature/bug-fix/enhancement only) — "What conditions make this done? List them one per line, or say none."
 5. **Priority** — "P0 / P1 / P2 / P3?" (default: P2)
 6. **Effort** — "s / m / l / xl?" (default: m)
 7. **Epic** — "Does this belong to an epic?" List available epics first, or say none.
@@ -213,7 +221,7 @@ Once all answers collected:
 
 ```python
 today = datetime.date.today().isoformat()
-typ = '<type>'  # story, bug, debt, chore, enhancement, spike
+typ = '<type>'  # workflow type key from config/workflow-templates.yaml
 new_id = assign_new_id()
 slug = make_slug('<title>')
 fm = {
