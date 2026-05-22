@@ -38,52 +38,41 @@ The orchestrator will act on these values in Steps 6 and 7 of its decision tree.
 
 ## Step 3: v4 storage lint rules (delegated to doctor.py)
 
-Run `doctor.py scan` and filter findings to the `storage_lint` category. This avoids duplicating lint rules — they exist only in `scripts/doctor.py`.
+Run `doctor.py scan` with the `--category` flag to run only `storage_lint` checks:
 
 ```bash
-python3 scripts/doctor.py scan --project-dir . 2>/dev/null
+python3 scripts/doctor.py scan --project-dir . --category storage_lint 2>/dev/null
 ```
 
-Parse the JSON output. If it contains `"error": "not-configured"`, skip lint (not a SweetClaude project). Otherwise, filter `findings` to entries where `category == "storage_lint"`.
+Parse the JSON output. If it contains `"error": "not-configured"`, skip lint (not a SweetClaude project). Otherwise, read `findings` from the result.
 
-If any storage_lint findings exist, render them in the existing _health format:
+If any findings exist, render them in the existing _health format:
 
 ```
 ## v4 Lint Findings
 - {finding.id}: {finding.detail}
 ```
 
-If no storage_lint findings: `## v4 Lint: OK`
+If no findings: `## v4 Lint: OK`
 
 Surface any findings to the caller. If invoked from `big-picture` or `project-backlog-triage`, print findings before the skill's normal output.
 
-## Step 3a: product_base source-of-truth drift check
+## Step 3a: product_base source-of-truth drift check (delegated to doctor.py)
 
-`paths.product_base` is recorded in two places: `.sweetclaude/artifact-privacy.yaml` (authoritative) and `.sweetclaude/state/session-state.yaml` (derived snapshot). They MUST match. If they diverge, a skill made a decision based on stale session-state — surface it.
+Run `doctor.py scan` with the `--category` flag to run only `state_integrity` checks:
 
-```python
-import pathlib, yaml
-
-privacy_path = pathlib.Path('.sweetclaude/artifact-privacy.yaml')
-session_path = pathlib.Path('.sweetclaude/state/session-state.yaml')
-mismatch = None
-
-if privacy_path.exists() and session_path.exists():
-    try:
-        privacy = yaml.safe_load(privacy_path.read_text()) or {}
-        session = yaml.safe_load(session_path.read_text()) or {}
-        authoritative = (privacy.get('categories') or {}).get('product', {}).get('base_path')
-        snapshot = (session.get('paths') or {}).get('product_base')
-        if authoritative and snapshot and authoritative.rstrip('/') != snapshot.rstrip('/'):
-            mismatch = (authoritative, snapshot)
-    except yaml.YAMLError:
-        pass
-
-if mismatch:
-    print(f"## product_base divergence")
-    print(f"- artifact-privacy.yaml (authoritative): {mismatch[0]}")
-    print(f"- session-state.yaml (snapshot):        {mismatch[1]}")
-    print(f"- Fix: re-run the session-state regen hook (or open a new session).")
+```bash
+python3 scripts/doctor.py scan --project-dir . --category state_integrity 2>/dev/null
 ```
 
-Surface the divergence inline if present. Non-blocking — informational.
+Parse the JSON output. If the command fails (crash, timeout, or `"error"` in JSON), report informational and continue — non-blocking.
+
+Filter findings to those with id prefix `state-integrity:product-base-drift`. If any exist, render:
+
+```
+## product_base divergence
+- {finding.detail}
+- Fix: re-run the session-state regen hook (or open a new session).
+```
+
+If no drift findings: no output (silent pass).

@@ -1140,11 +1140,25 @@ def auto_cleanup_suppressions(
 # Scan
 # ---------------------------------------------------------------------------
 
-def _scan(project_state: ProjectState) -> dict:
+def _scan(
+    project_state: ProjectState,
+    categories: list[str] | None = None,
+) -> dict:
+    if categories:
+        invalid = set(categories) - set(CHECKS.keys())
+        if invalid:
+            raise ValueError(
+                f"Unknown categories: {sorted(invalid)}. "
+                f"Valid: {sorted(CHECKS.keys())}"
+            )
+        checks_to_run = {k: v for k, v in CHECKS.items() if k in categories}
+    else:
+        checks_to_run = CHECKS
+
     skipped: list[dict] = []
     all_findings: list[Finding] = []
 
-    for name, fn in CHECKS.items():
+    for name, fn in checks_to_run.items():
         try:
             all_findings.extend(fn(project_state))
         except DependencyMissing as e:
@@ -1152,9 +1166,13 @@ def _scan(project_state: ProjectState) -> dict:
 
     all_finding_ids = {f.id for f in all_findings}
     suppressed_ids = {s.get("finding_id") for s in project_state.suppressions if s.get("finding_id")}
-    resolved_ids = auto_cleanup_suppressions(
-        project_state.project_dir, all_finding_ids
-    )
+
+    if not categories:
+        resolved_ids = auto_cleanup_suppressions(
+            project_state.project_dir, all_finding_ids
+        )
+    else:
+        resolved_ids: set[str] = set()
 
     for f in all_findings:
         if f.id in resolved_ids:
@@ -1162,12 +1180,15 @@ def _scan(project_state: ProjectState) -> dict:
 
     active = [f for f in all_findings if f.id not in suppressed_ids]
 
-    return {
+    result = {
         "findings": [asdict(f) for f in active],
         "skipped_categories": skipped,
         "suppressions_resolved": sorted(resolved_ids),
         "project_state_summary": build_state_summary(project_state),
     }
+    if categories:
+        result["scanned_categories"] = sorted(checks_to_run.keys())
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1623,7 +1644,8 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--project-dir", required=True, type=Path)
         return p
 
-    _add("scan")
+    p_scan = _add("scan")
+    p_scan.add_argument("--category", default=None)
 
     _add("create-archive")
 
@@ -1657,7 +1679,8 @@ def main(argv: list[str] | None = None) -> int:
                        "message": "SweetClaude not configured for this project"})
                 return 0
             state = build_project_state(project_dir)
-            _emit(_scan(state))
+            cats = [c.strip() for c in args.category.split(",") if c.strip()] if args.category else None
+            _emit(_scan(state, categories=cats))
 
         elif args.cmd == "create-archive":
             archive = create_archive(args.project_dir.resolve())
