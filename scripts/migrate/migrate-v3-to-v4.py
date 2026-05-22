@@ -12,6 +12,7 @@ delegates to.
 
 CLI subcommands:
   resolve-base       --project-dir DIR
+  scan-orphans       --project-dir DIR
   validate           --project-dir DIR
   plan               --project-dir DIR [--include-done]
   execute            --project-dir DIR [--include-done]
@@ -34,8 +35,6 @@ import yaml
 
 V3_VALID_STATUSES = {"backlog", "in_progress", "done", "cancelled", "blocked", "abandoned", "deferred"}
 VALID_TYPES = {"story", "bug", "debt", "chore"}
-TYPE_PREFIX = {"story": "STORY", "bug": "BUG", "debt": "DEBT", "chore": "CHORE"}
-TYPE_DIR = {"story": "stories", "bug": "bugs", "debt": "debt", "chore": "chores"}
 TERMINAL_STATUSES = {"done", "abandoned"}
 
 # Status remapping from v3 to v4 vocabulary.
@@ -80,21 +79,21 @@ _LEGACY_STATUS_MAP = {
 }
 
 _LEGACY_PRIORITY_MAP = {
-    "spike": "soon",
-    "p0": "next",
-    "p1": "sooner",
-    "p2": "soon",
-    "p3": "later",
-    "p4": "someday",
-    "next": "next",
-    "now": "next",
-    "sooner": "sooner",
-    "soon": "soon",
-    "later": "later",
-    "someday": "someday",
-    "high": "sooner",
-    "medium": "soon",
-    "low": "later",
+    "spike": "P2",
+    "p0": "P0",
+    "p1": "P1",
+    "p2": "P2",
+    "p3": "P3",
+    "p4": "P3",
+    "next": "P0",
+    "now": "P0",
+    "sooner": "P1",
+    "soon": "P2",
+    "later": "P3",
+    "someday": "P3",
+    "high": "P1",
+    "medium": "P2",
+    "low": "P3",
 }
 
 
@@ -149,8 +148,8 @@ def _parse_legacy_markdown(text: str, stem: str) -> dict | None:
     status_raw = fields.get("status", "backlog")
     v3_status, closed_date = _normalize_legacy_status(status_raw)
 
-    raw_priority = fields.get("priority", "soon").lower().strip()
-    priority = _LEGACY_PRIORITY_MAP.get(raw_priority, "soon")
+    raw_priority = fields.get("priority", "P2").lower().strip()
+    priority = _LEGACY_PRIORITY_MAP.get(raw_priority, "P2")
 
     fm: dict = {
         "id": bl_id,
@@ -192,6 +191,105 @@ def _read_v3_file(path: pathlib.Path) -> tuple[dict, str] | tuple[None, str]:
         if closed_date and fm.get("closed_date") is None:
             fm["closed_date"] = closed_date
     return fm, parts[2]
+
+
+_WORK_ITEM_PATTERNS = ["BL-*.md", "STORY-*.md", "BUG-*.md", "DEBT-*.md", "CHORE-*.md", "ISSUE-*.md"]
+_TYPED_SUBDIRS = ["stories", "bugs", "debt", "chores"]
+
+
+def _sniff_frontmatter(path: pathlib.Path) -> dict | None:
+    """Return frontmatter dict if file looks like a work item, else None."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    parts = text.split("---", 2)
+    if len(parts) >= 3:
+        try:
+            fm = yaml.safe_load(parts[1])
+            if isinstance(fm, dict) and ("id" in fm or "status" in fm or "title" in fm):
+                return fm
+        except yaml.YAMLError:
+            pass
+    fm = _parse_legacy_markdown(text, path.stem)
+    if fm is not None:
+        return fm
+    return None
+
+
+def scan_orphans(project_dir: pathlib.Path) -> dict:
+    """Scan all known SweetClaude locations for orphaned work item files.
+
+    Returns categorized findings so the skill can present them to the user.
+    """
+    product_base = resolve_product_base(project_dir)
+    backlog_path = product_base / "backlog"
+    primary_bl_files = {str(p) for p in backlog_path.glob("BL-*.md")} if backlog_path.exists() else set()
+
+    findings: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(path: pathlib.Path, category: str, detail: str) -> None:
+        key = str(path.resolve())
+        if key in seen or str(path) in primary_bl_files:
+            return
+        seen.add(key)
+        fm = _sniff_frontmatter(path)
+        findings.append({
+            "file": str(path),
+            "category": category,
+            "detail": detail,
+            "id": (fm or {}).get("id", path.stem),
+            "title": (fm or {}).get("title", ""),
+            "status": (fm or {}).get("status", ""),
+            "has_frontmatter": fm is not None,
+        })
+
+    search_roots = [
+        project_dir / ".sweetclaude" / "product",
+        project_dir / "docs" / "product",
+    ]
+
+    # 1. Old typed subdirectories under backlog/
+    for root in search_roots:
+        for subdir in _TYPED_SUBDIRS:
+            typed_dir = root / "backlog" / subdir
+            if typed_dir.is_dir():
+                for p in typed_dir.rglob("*.md"):
+                    _add(p, "typed-subdir", f"found in retired {subdir}/ subdirectory")
+
+    # 2. Work-item-patterned files anywhere under search roots (not already in primary set)
+    for root in search_roots:
+        if not root.exists():
+            continue
+        for pattern in _WORK_ITEM_PATTERNS:
+            for p in root.rglob(pattern):
+                if "done/" in str(p) or "archived/" in str(p):
+                    _add(p, "archived", "in done/ or archived/ directory")
+                else:
+                    _add(p, "stray-file", f"matches {pattern} outside expected location")
+
+    # 3. BL-*.md in unexpected locations (wrong base path, nested)
+    for root in search_roots:
+        if not root.exists():
+            continue
+        for p in root.rglob("BL-*.md"):
+            if str(p) not in primary_bl_files:
+                _add(p, "bl-wrong-location", "BL file outside primary backlog directory")
+
+    # 4. scratch/ — markdown files that look like work items
+    scratch_dir = project_dir / "scratch"
+    if scratch_dir.is_dir():
+        for p in scratch_dir.rglob("*.md"):
+            fm = _sniff_frontmatter(p)
+            if fm is not None:
+                _add(p, "scratch", "work item found in scratch/")
+
+    return {
+        "product_base": str(product_base),
+        "orphan_count": len(findings),
+        "findings": findings,
+    }
 
 
 def validate(project_dir: pathlib.Path) -> dict:
@@ -244,19 +342,19 @@ def build_plan(project_dir: pathlib.Path, include_done: bool) -> dict:
     backlog_path = product_base / "backlog"
     files = sorted(backlog_path.glob("BL-*.md"), key=lambda p: p.name)
 
-    counters = {"story": 0, "bug": 0, "debt": 0, "chore": 0}
+    dest_base = project_dir / ".sweetclaude" / "product" / "backlog"
+    counter = 0
     plan_items: list[dict] = []
     skipped_done = 0
 
     for path in files:
         fm_or_err = _read_v3_file(path)
         if fm_or_err[0] is None:
-            # Validation should have caught this — but in case caller skipped validate, be defensive.
             continue
         fm, _ = fm_or_err
 
         typ = (fm.get("type") or "story").lower()
-        if typ not in counters:
+        if typ not in VALID_TYPES:
             typ = "story"
 
         v3_status = fm.get("status", "backlog")
@@ -267,12 +365,12 @@ def build_plan(project_dir: pathlib.Path, include_done: bool) -> dict:
             skipped_done += 1
             continue
 
-        counters[typ] += 1
-        new_id = f"{TYPE_PREFIX[typ]}-{counters[typ]:03d}"
+        counter += 1
+        new_id = f"ISSUE-{counter:03d}"
         slug = _make_slug(fm.get("title", ""))
 
-        subdir = f"{TYPE_DIR[typ]}/done" if is_terminal else TYPE_DIR[typ]
-        dest = project_dir / "docs" / "product" / "backlog" / subdir / f"{new_id}-{slug}.md"
+        subdir = "done" if is_terminal else ""
+        dest = dest_base / subdir / f"{new_id}-{slug}.md" if subdir else dest_base / f"{new_id}-{slug}.md"
 
         plan_items.append(
             {
@@ -290,7 +388,7 @@ def build_plan(project_dir: pathlib.Path, include_done: bool) -> dict:
 
     return {
         "product_base": str(product_base),
-        "counters": counters,
+        "counter": counter,
         "skipped_done": skipped_done,
         "plan_items": plan_items,
     }
@@ -304,7 +402,7 @@ def _build_new_frontmatter(fm: dict, new_id: str, typ: str, v4_status: str, toda
         "type": typ,
         "title": fm.get("title", ""),
         "status": v4_status,
-        "priority": fm.get("priority", "soon"),
+        "priority": fm.get("priority", "P2"),
         "effort": fm.get("effort", "m"),
         "epic": fm.get("epic"),
         "milestone": fm.get("milestone"),
@@ -329,12 +427,11 @@ def _build_body(body: str, fm: dict) -> str:
 
 
 def _check_already_migrated(project_dir: pathlib.Path) -> dict | None:
-    """Idempotency guard (BUG-005): refuse to overwrite a populated v4 state.
+    """Idempotency guard: refuse to overwrite a populated v4 state.
 
-    If installed_version is already 4.x AND docs/product/backlog/INDEX.md has
-    non-zero counters, re-running execute would clobber the INDEX with a
-    new empty one (because counters start at 0 each run). That's the
-    half-state recovery hazard. Refuse and direct the user to the right tool.
+    If installed_version is already 4.x AND ISSUE-*.md files exist in
+    .sweetclaude/product/backlog/, re-running execute would create
+    duplicates. Refuse and direct the user to cleanup-v3-files.
     """
     sc_path = project_dir / ".sweetclaude" / "state" / "sweetclaude.yaml"
     if not sc_path.exists():
@@ -346,29 +443,19 @@ def _check_already_migrated(project_dir: pathlib.Path) -> dict | None:
     installed = str((sc.get("framework") or {}).get("installed_version", ""))
     if not installed.startswith("4."):
         return None
-    index_path = project_dir / "docs" / "product" / "backlog" / "INDEX.md"
-    if not index_path.exists():
-        return None
-    raw = index_path.read_text()
-    if "---" not in raw:
-        return None
-    try:
-        fm = yaml.safe_load(raw.split("---", 2)[1]) or {}
-    except yaml.YAMLError:
-        return None
-    counters = fm.get("counters") or {}
-    total = sum(v for v in counters.values() if isinstance(v, int))
-    if total <= 0:
+    backlog_dir = project_dir / ".sweetclaude" / "product" / "backlog"
+    issue_files = list(backlog_dir.glob("ISSUE-*.md")) if backlog_dir.exists() else []
+    if not issue_files:
         return None
     return {
         "error": "already-migrated",
         "installed_version": installed,
-        "index_counter_sum": total,
+        "issue_count": len(issue_files),
         "message": (
-            f"Project is already at installed_version={installed} with a populated "
-            f"INDEX.md ({total} entries). Re-running execute would overwrite the "
-            f"existing INDEX with empty counters. If a previous migration was "
-            f"interrupted and you need to clean up residual v3 BL files, run "
+            f"Project is already at installed_version={installed} with "
+            f"{len(issue_files)} ISSUE-*.md files. Re-running execute would "
+            f"create duplicates. If a previous migration was interrupted and "
+            f"you need to clean up residual v3 BL files, run "
             f"`migrate-v3-to-v4.py cleanup-v3-files` instead."
         ),
     }
@@ -419,15 +506,13 @@ def execute(project_dir: pathlib.Path, include_done: bool) -> dict:
             }
         )
 
-    # Regenerate INDEX.md and MIGRATION-MAP.md
-    _write_index_and_map(project_dir, plan["counters"], migration_map, created_paths, today)
+    _write_migration_map(project_dir, migration_map, today)
 
-    # Rewrite BL-NNN references in milestone files
     rewritten_milestones = _rewrite_milestone_references(project_dir, migration_map)
 
     return {
         "product_base": plan["product_base"],
-        "counters": plan["counters"],
+        "counter": plan["counter"],
         "skipped_done": plan["skipped_done"],
         "created_paths": created_paths,
         "migration_map": migration_map,
@@ -445,7 +530,10 @@ def _rewrite_milestone_references(
     bl_to_v4: dict[str, str] = {e["v3_id"]: e["v4_id"] for e in migration_map}
     bl_pattern = re.compile(r"\b(BL-\d+)\b")
 
-    milestones_dir = project_dir / "docs" / "product" / "milestones"
+    product_base = resolve_product_base(project_dir)
+    milestones_dir = product_base / "roadmap" / "milestones"
+    if not milestones_dir.exists():
+        milestones_dir = project_dir / "docs" / "product" / "milestones"
     if not milestones_dir.exists():
         return []
 
@@ -459,62 +547,13 @@ def _rewrite_milestone_references(
     return rewrote
 
 
-def _make_table(items: list[dict]) -> str:
-    header = "| ID | Title | Status | Priority | Effort | Tags |\n|---|---|---|---|---|---|"
-    if not items:
-        return header
-    lines = [header]
-    for fm in items:
-        tags = ", ".join(fm.get("tags", []) or [])
-        lines.append(
-            f"| {fm['id']} | {fm['title']} | {fm['status']} | "
-            f"{fm.get('priority', '')} | {fm.get('effort', '')} | {tags} |"
-        )
-    return "\n".join(lines)
-
-
-def _write_index_and_map(
+def _write_migration_map(
     project_dir: pathlib.Path,
-    counters: dict[str, int],
     migration_map: list[dict],
-    created_paths: list[str],
     today: str,
 ) -> None:
-    index_path = project_dir / "docs" / "product" / "backlog" / "INDEX.md"
-    rows: dict[str, list[dict]] = {"story": [], "bug": [], "debt": [], "chore": []}
-
-    for dest_str in created_paths:
-        if "/done/" in dest_str:
-            continue
-        dest = pathlib.Path(dest_str)
-        raw = dest.read_text(encoding="utf-8")
-        parts = raw.split("---", 2)
-        if len(parts) < 3:
-            continue
-        fm = yaml.safe_load(parts[1]) or {}
-        typ = fm.get("type", "story")
-        if typ in rows:
-            rows[typ].append(fm)
-
-    index_content = (
-        f"---\n"
-        f"counters:\n"
-        f"  story: {counters['story']}\n"
-        f"  bug: {counters['bug']}\n"
-        f"  debt: {counters['debt']}\n"
-        f"  chore: {counters['chore']}\n"
-        f"updated: {today}\n"
-        f"---\n\n"
-        f"# Backlog INDEX\n\n"
-        f"This file is the source of truth for backlog counter state and the visible table of unscheduled work.\n\n"
-        f"## Stories\n{_make_table(rows['story'])}\n\n"
-        f"## Bugs\n{_make_table(rows['bug'])}\n\n"
-        f"## Debt\n{_make_table(rows['debt'])}\n\n"
-        f"## Chores\n{_make_table(rows['chore'])}\n"
-    )
-    index_path.write_text(index_content, encoding="utf-8")
-
-    map_path = project_dir / "docs" / "product" / "backlog" / "MIGRATION-MAP.md"
+    map_path = project_dir / ".sweetclaude" / "product" / "backlog" / "MIGRATION-MAP.md"
+    map_path.parent.mkdir(parents=True, exist_ok=True)
     map_lines = [
         "# v3 -> v4 ID Migration Map",
         f"**Migrated:** {today}",
@@ -571,7 +610,7 @@ def finalize(project_dir: pathlib.Path) -> dict:
     # 1. sweetclaude.yaml first — the authoritative "what version is this project"
     sc_path = project_dir / ".sweetclaude" / "state" / "sweetclaude.yaml"
     sc = yaml.safe_load(sc_path.read_text()) or {}
-    sc.setdefault("framework", {})["installed_version"] = "4.0.0"
+    sc.setdefault("framework", {})["installed_version"] = "4.1.0"
     sc_path.write_text(yaml.safe_dump(sc, default_flow_style=False, sort_keys=False))
 
     # 2. artifact-privacy.yaml second — the layout switch
@@ -580,28 +619,22 @@ def finalize(project_dir: pathlib.Path) -> dict:
         d = yaml.safe_load(privacy_path.read_text()) or {}
     else:
         d = {}
-    d.setdefault("categories", {}).setdefault("product", {})["base_path"] = "docs/product"
+    d.setdefault("categories", {}).setdefault("product", {})["base_path"] = ".sweetclaude/product"
     privacy_path.write_text(yaml.safe_dump(d, default_flow_style=False, sort_keys=False))
 
     return {
-        "artifact_privacy_base_path": "docs/product",
-        "installed_version": "4.0.0",
+        "artifact_privacy_base_path": ".sweetclaude/product",
+        "installed_version": "4.1.0",
     }
 
 
 def cleanup_v3_files(project_dir: pathlib.Path) -> dict:
-    """Remove v3 BL-*.md files from the (pre-finalize) product_base/backlog directory.
+    """Remove v3 BL-*.md files from all known backlog locations.
 
     Called by the skill only after backup verification passes. Keeping v3 files
     after a completed migration creates a "stuck migration" state in bootstrap
-    (V3_FILES > 0 + installed_version: 4.0.0 triggers the hard-stop loop).
+    (V3_FILES > 0 triggers the hard-stop loop).
     """
-    # After finalize, product_base in artifact-privacy.yaml is `docs/product`.
-    # But the v3 files we want to remove may live at the OLD product_base
-    # (`.sweetclaude/product`) if that was the v3 layout. We need to clean both
-    # potential locations: the OLD .sweetclaude/product/backlog AND the current
-    # docs/product/backlog. The docs/product/backlog now contains v4 output —
-    # so we only target files matching BL-*.md, never STORY-/BUG-/DEBT-/CHORE-.
     removed: list[str] = []
     for candidate in (
         project_dir / ".sweetclaude" / "product" / "backlog",
@@ -633,6 +666,7 @@ def main(argv: list[str] | None = None) -> int:
         return p
 
     _add("resolve-base")
+    _add("scan-orphans")
     _add("validate")
     p_plan = _add("plan")
     p_plan.add_argument("--include-done", action="store_true")
@@ -648,6 +682,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "resolve-base":
         _emit({"product_base": str(resolve_product_base(project_dir))})
+    elif args.cmd == "scan-orphans":
+        _emit(scan_orphans(project_dir))
     elif args.cmd == "validate":
         _emit(validate(project_dir))
     elif args.cmd == "plan":

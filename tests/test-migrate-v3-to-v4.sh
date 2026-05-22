@@ -40,10 +40,9 @@ count_v3_files() {
     find "$project_dir/$product_base/backlog" -maxdepth 1 -name 'BL-*.md' 2>/dev/null | wc -l | tr -d ' '
 }
 
-count_v4_files_in() {
+count_issue_files() {
     local project_dir="$1"
-    local type_dir="$2"
-    find "$project_dir/docs/product/backlog/$type_dir" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' '
+    find "$project_dir/.sweetclaude/product/backlog" -maxdepth 1 -name 'ISSUE-*.md' 2>/dev/null | wc -l | tr -d ' '
 }
 
 # ── test scenario ──────────────────────────────────────────────────────────
@@ -105,32 +104,20 @@ run_scenario() {
         fail "execute: created $created_count files, plan said $plan_count"
     fi
 
-    # 4. Verify INDEX.md and MIGRATION-MAP.md exist
-    if [ -f "$tmp/docs/product/backlog/INDEX.md" ]; then
-        pass "INDEX.md created"
-    else
-        fail "INDEX.md not created"
-    fi
-    if [ -f "$tmp/docs/product/backlog/MIGRATION-MAP.md" ]; then
+    # 4. Verify MIGRATION-MAP.md exists (INDEX.md is no longer generated — SQLite cache replaced it)
+    if [ -f "$tmp/.sweetclaude/product/backlog/MIGRATION-MAP.md" ]; then
         pass "MIGRATION-MAP.md created"
     else
         fail "MIGRATION-MAP.md not created"
     fi
 
-    # 5. Verify counters in INDEX.md
-    local index_counter_sum
-    index_counter_sum=$(python3 -c "
-import yaml
-raw = open('$tmp/docs/product/backlog/INDEX.md').read()
-parts = raw.split('---', 2)
-fm = yaml.safe_load(parts[1]) or {}
-c = fm.get('counters', {})
-print(sum(c.values()))
-")
-    if [ "$index_counter_sum" = "$created_count" ]; then
-        pass "INDEX.md counters sum ($index_counter_sum) matches created files"
+    # 5. Verify all created files are ISSUE-NNN format in flat backlog/
+    local issue_count
+    issue_count=$(count_issue_files "$tmp")
+    if [ "$issue_count" -gt 0 ]; then
+        pass "ISSUE-NNN files in flat backlog/ ($issue_count active)"
     else
-        fail "INDEX.md counters sum $index_counter_sum != created $created_count"
+        fail "no ISSUE-NNN files in .sweetclaude/product/backlog/"
     fi
 
     # 6. Run script-side verify
@@ -158,10 +145,10 @@ import yaml
 d = yaml.safe_load(open('$tmp/.sweetclaude/state/sweetclaude.yaml')) or {}
 print(d.get('framework', {}).get('installed_version', ''))
 ")
-    if [ "$final_version" = "4.0.0" ]; then
-        pass "finalize: installed_version bumped to 4.0.0"
+    if [ "$final_version" = "4.1.0" ]; then
+        pass "finalize: installed_version bumped to 4.1.0"
     else
-        fail "finalize: installed_version = $final_version (expected 4.0.0)"
+        fail "finalize: installed_version = $final_version (expected 4.1.0)"
     fi
     local final_base
     final_base=$(python3 -c "
@@ -169,8 +156,8 @@ import yaml
 d = yaml.safe_load(open('$tmp/.sweetclaude/artifact-privacy.yaml')) or {}
 print(d.get('categories', {}).get('product', {}).get('base_path', ''))
 ")
-    if [ "$final_base" = "docs/product" ]; then
-        pass "finalize: artifact-privacy product base_path = docs/product"
+    if [ "$final_base" = ".sweetclaude/product" ]; then
+        pass "finalize: artifact-privacy product base_path = .sweetclaude/product"
     else
         fail "finalize: artifact-privacy base_path = $final_base"
     fi
@@ -192,14 +179,14 @@ print(d.get('categories', {}).get('product', {}).get('base_path', ''))
         fi
     fi
 
-    # 9. Idempotency-adjacent check: file types distributed correctly
-    local story_count bug_count
-    story_count=$(count_v4_files_in "$tmp" "stories")
-    bug_count=$(count_v4_files_in "$tmp" "bugs")
-    if [ "$((story_count + bug_count))" -gt 0 ]; then
-        pass "files distributed across typed dirs (stories=$story_count, bugs=$bug_count)"
+    # 9. Verify all items use ISSUE prefix (no STORY-/BUG-/DEBT-/CHORE- prefixes)
+    local stale_prefix_count
+    stale_prefix_count=$(find "$tmp/.sweetclaude/product/backlog" -maxdepth 2 -name '*.md' \
+        \( -name 'STORY-*' -o -name 'BUG-*' -o -name 'DEBT-*' -o -name 'CHORE-*' \) 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$stale_prefix_count" = "0" ]; then
+        pass "no stale typed prefixes (STORY-/BUG-/DEBT-/CHORE-) in output"
     else
-        fail "no files landed in any typed dir"
+        fail "$stale_prefix_count files still use old typed prefixes"
     fi
 
     # 10. cleanup-v3-files removes v3 BL files from product_base/backlog
@@ -216,14 +203,12 @@ print(d.get('categories', {}).get('product', {}).get('base_path', ''))
 
     # 11. Post-cleanup: simulate next-session bootstrap V3_FILES check — should be 0
     # (this is the regression prevention for the "keep v3 files = stuck migration loop" bug)
-    local product_base_post_finalize
-    product_base_post_finalize=$(python3 "$SCRIPT" resolve-base --project-dir "$tmp" | python3 -c "import sys, json; print(json.load(sys.stdin)['product_base'])")
-    local v3_in_new_base
-    v3_in_new_base=$(find "$product_base_post_finalize/backlog" -maxdepth 1 -name 'BL-*.md' 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$v3_in_new_base" = "0" ]; then
-        pass "post-cleanup: bootstrap V3_FILES check in $product_base_post_finalize/backlog returns 0 (no stuck-migration loop)"
+    local v3_in_backlog
+    v3_in_backlog=$(find "$tmp/.sweetclaude/product/backlog" -maxdepth 1 -name 'BL-*.md' 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$v3_in_backlog" = "0" ]; then
+        pass "post-cleanup: bootstrap V3_FILES check returns 0 (no stuck-migration loop)"
     else
-        fail "post-cleanup: V3_FILES still > 0 ($v3_in_new_base) — bootstrap hard-stop would loop"
+        fail "post-cleanup: V3_FILES still > 0 ($v3_in_backlog) — bootstrap hard-stop would loop"
     fi
 
     rm -rf "$tmp"
@@ -266,12 +251,12 @@ run_skip_done_scenario() {
         fail "skip-done execute: $created files written (expected 3)"
     fi
 
-    # Verify NO files landed in done/ subdirs
-    done_files=$(find "$tmp/docs/product/backlog" -type d -name done -exec find {} -type f \; 2>/dev/null | wc -l | tr -d ' ')
+    # Verify NO files landed in done/ subdir
+    done_files=$(find "$tmp/.sweetclaude/product/backlog/done" -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
     if [ "$done_files" = "0" ]; then
-        pass "skip-done: 0 files in any done/ subdir (terminal items not migrated)"
+        pass "skip-done: 0 files in done/ subdir (terminal items not migrated)"
     else
-        fail "skip-done: $done_files files in done/ subdirs (expected 0)"
+        fail "skip-done: $done_files files in done/ subdir (expected 0)"
     fi
 
     # The 2 skipped v3 BL files should still be on disk (they weren't migrated)
@@ -316,7 +301,7 @@ run_bug_005_reorder() {
     python3 -c "
 import yaml
 sc = yaml.safe_load(open('$tmp2/.sweetclaude/state/sweetclaude.yaml')) or {}
-sc.setdefault('framework', {})['installed_version'] = '4.0.0'
+sc.setdefault('framework', {})['installed_version'] = '4.1.0'
 open('$tmp2/.sweetclaude/state/sweetclaude.yaml', 'w').write(yaml.safe_dump(sc, default_flow_style=False, sort_keys=False))
 # artifact-privacy.yaml NOT updated — still points at .sweetclaude/product (v3 layout)
 "
@@ -382,19 +367,13 @@ run_bug_005_idempotency() {
         fail "idempotency: second execute exit code $second_run_exit (expected 1)"
     fi
 
-    # Verify INDEX was NOT overwritten — counters should still be > 0
-    local index_total
-    index_total=$(python3 -c "
-import yaml
-raw = open('$tmp/docs/product/backlog/INDEX.md').read()
-parts = raw.split('---', 2)
-fm = yaml.safe_load(parts[1]) or {}
-print(sum(v for v in (fm.get('counters') or {}).values() if isinstance(v, int)))
-")
-    if [ "$index_total" -gt 0 ]; then
-        pass "idempotency: INDEX.md counters preserved after refused re-run (total=$index_total)"
+    # Verify ISSUE files were NOT overwritten — count should still match first run
+    local issue_total
+    issue_total=$(count_issue_files "$tmp")
+    if [ "$issue_total" -gt 0 ]; then
+        pass "idempotency: ISSUE files preserved after refused re-run (count=$issue_total)"
     else
-        fail "idempotency: INDEX.md counters zeroed — refused-run still overwrote (total=$index_total)"
+        fail "idempotency: ISSUE files missing after refused re-run"
     fi
 
     rm -rf "$tmp"
@@ -530,14 +509,14 @@ MDEOF
     # Verify plan correctly resolves types and statuses.
     local plan_out
     plan_out=$(python3 "$SCRIPT" plan --project-dir "$tmp" --include-done 2>&1)
-    local story_count done_count
-    story_count=$(echo "$plan_out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['counters']['story'])" 2>/dev/null)
+    local total_count done_count
+    total_count=$(echo "$plan_out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['counter'])" 2>/dev/null)
     done_count=$(echo "$plan_out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(1 for i in d['plan_items'] if i['is_terminal']))" 2>/dev/null)
 
-    if [ "$story_count" = "4" ]; then
-        pass "legacy-markdown: plan assigns all 4 as stories"
+    if [ "$total_count" = "4" ]; then
+        pass "legacy-markdown: plan migrates all 4 items as ISSUE-NNN"
     else
-        fail "legacy-markdown: expected story_count=4, got '$story_count'"
+        fail "legacy-markdown: expected counter=4, got '$total_count'"
     fi
 
     if [ "$done_count" = "1" ]; then
@@ -617,9 +596,9 @@ MD
     local ms_content
     ms_content=$(cat "$tmp/docs/product/milestones/MS-001-v1.md" 2>/dev/null || echo "MISSING")
 
-    # BL-001 → STORY-001, BL-002 → BUG-001
-    if echo "$ms_content" | grep -q "STORY-001" && echo "$ms_content" | grep -q "BUG-001"; then
-        pass "milestone-rewrite: BL-001→STORY-001 and BL-002→BUG-001 rewritten in milestone"
+    # BL-001 → ISSUE-001, BL-002 → ISSUE-002
+    if echo "$ms_content" | grep -q "ISSUE-001" && echo "$ms_content" | grep -q "ISSUE-002"; then
+        pass "milestone-rewrite: BL-001→ISSUE-001 and BL-002→ISSUE-002 rewritten in milestone"
     else
         fail "milestone-rewrite: milestone still contains old BL IDs or missing v4 IDs"
         echo "  milestone content:"
@@ -630,6 +609,159 @@ MD
         pass "milestone-rewrite: no BL-NNN references remain in milestone"
     else
         fail "milestone-rewrite: BL-NNN references still present after rewrite"
+    fi
+
+    rm -rf "$tmp"
+}
+
+# ── orphan scan scenarios ──────────────────────────────────────────────────
+
+run_orphan_scan_scenario() {
+    echo ""
+    echo "=== Scenario: scan-orphans finds files in typed subdirs, scratch, and stray locations ==="
+    local tmp
+    tmp=$(mktemp -d)
+
+    # Set up minimal sweetclaude state
+    mkdir -p "$tmp/.sweetclaude/state" "$tmp/.sweetclaude/product/backlog"
+    cat > "$tmp/.sweetclaude/state/sweetclaude.yaml" << 'YAML'
+schema_version: 2
+framework:
+  installed_version: "3.18.0"
+YAML
+
+    # Primary BL file (should NOT appear in orphan scan)
+    cat > "$tmp/.sweetclaude/product/backlog/BL-001-primary.md" << 'MD'
+---
+id: BL-001
+title: Primary item
+status: backlog
+---
+body
+MD
+
+    # Orphan 1: file in old typed subdir (stories/)
+    mkdir -p "$tmp/.sweetclaude/product/backlog/stories"
+    cat > "$tmp/.sweetclaude/product/backlog/stories/STORY-001-old-story.md" << 'MD'
+---
+id: STORY-001
+title: Old story from v3
+status: in_progress
+type: story
+---
+body
+MD
+
+    # Orphan 2: file in old typed subdir (bugs/)
+    mkdir -p "$tmp/.sweetclaude/product/backlog/bugs"
+    cat > "$tmp/.sweetclaude/product/backlog/bugs/BUG-001-old-bug.md" << 'MD'
+---
+id: BUG-001
+title: Old bug from v3
+status: backlog
+type: bug
+---
+body
+MD
+
+    # Orphan 3: work item in scratch/
+    mkdir -p "$tmp/scratch"
+    cat > "$tmp/scratch/spike-auth-research.md" << 'MD'
+---
+id: STORY-005
+title: Auth research spike
+status: in_progress
+type: story
+---
+Notes from auth research.
+MD
+
+    # Non-orphan in scratch (no frontmatter with id/status — should be ignored)
+    cat > "$tmp/scratch/random-notes.md" << 'MD'
+# Just some notes
+Not a work item.
+MD
+
+    (cd "$tmp" && git init -q && git add -A && git commit -q -m "fixture" --no-gpg-sign 2>/dev/null) || true
+
+    local scan_out orphan_count
+    scan_out=$(python3 "$SCRIPT" scan-orphans --project-dir "$tmp" 2>&1)
+    orphan_count=$(echo "$scan_out" | python3 -c "import sys, json; print(json.load(sys.stdin).get('orphan_count', 0))")
+
+    if [ "$orphan_count" = "3" ]; then
+        pass "scan-orphans: found 3 orphans (typed-subdir x2, scratch x1)"
+    else
+        fail "scan-orphans: expected 3 orphans, got $orphan_count"
+        echo "$scan_out" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for f in d.get('findings', []):
+    print(f'  {f[\"category\"]}: {f[\"file\"]}')
+"
+    fi
+
+    # Verify primary BL-001 is NOT in findings
+    local primary_in_findings
+    primary_in_findings=$(echo "$scan_out" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(sum(1 for f in d.get('findings', []) if 'BL-001-primary' in f['file']))
+")
+    if [ "$primary_in_findings" = "0" ]; then
+        pass "scan-orphans: primary BL-001 correctly excluded from findings"
+    else
+        fail "scan-orphans: primary BL-001 appeared in findings"
+    fi
+
+    # Verify scratch non-work-item is NOT in findings
+    local notes_in_findings
+    notes_in_findings=$(echo "$scan_out" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(sum(1 for f in d.get('findings', []) if 'random-notes' in f['file']))
+")
+    if [ "$notes_in_findings" = "0" ]; then
+        pass "scan-orphans: scratch/random-notes.md correctly excluded (no work item frontmatter)"
+    else
+        fail "scan-orphans: scratch/random-notes.md incorrectly included"
+    fi
+
+    # Verify categories are correct
+    local typed_count scratch_count
+    typed_count=$(echo "$scan_out" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(sum(1 for f in d.get('findings', []) if f['category'] == 'typed-subdir'))
+")
+    scratch_count=$(echo "$scan_out" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(sum(1 for f in d.get('findings', []) if f['category'] == 'scratch'))
+")
+    if [ "$typed_count" = "2" ] && [ "$scratch_count" = "1" ]; then
+        pass "scan-orphans: correct categories (2 typed-subdir, 1 scratch)"
+    else
+        fail "scan-orphans: wrong categories (typed=$typed_count, scratch=$scratch_count)"
+    fi
+
+    rm -rf "$tmp"
+}
+
+run_orphan_scan_empty_scenario() {
+    echo ""
+    echo "=== Scenario: scan-orphans returns 0 on clean project ==="
+    local tmp
+    tmp=$(prep_fixture "$REPO_ROOT/tests/fixtures/migrate-smoke" "orphan-clean")
+
+    local scan_out orphan_count
+    scan_out=$(python3 "$SCRIPT" scan-orphans --project-dir "$tmp" 2>&1)
+    orphan_count=$(echo "$scan_out" | python3 -c "import sys, json; print(json.load(sys.stdin).get('orphan_count', 0))")
+
+    if [ "$orphan_count" = "0" ]; then
+        pass "scan-orphans: 0 orphans on clean fixture (only primary BL files present)"
+    else
+        fail "scan-orphans: expected 0 orphans on clean fixture, got $orphan_count"
+        echo "$scan_out"
     fi
 
     rm -rf "$tmp"
@@ -647,6 +779,8 @@ run_bug_005_idempotency
 run_frontmatter_not_dict_scenario
 run_legacy_markdown_scenario
 run_milestone_reference_rewrite_scenario
+run_orphan_scan_scenario
+run_orphan_scan_empty_scenario
 
 echo ""
 if [ "$FAILED" -gt 0 ]; then

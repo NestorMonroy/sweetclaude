@@ -500,6 +500,53 @@ Stop. Do NOT continue to Step 7.
 
 ---
 
+## Step 6b1: Orphan file scan
+
+Only run if `.sweetclaude/state/sweetclaude.yaml` exists in the current project directory — skip silently otherwise.
+
+Scan for work item files that may have been lost, abandoned, or orphaned from previous SweetClaude versions — files in typed subdirectories (retired in 4.1.0), scratch/, or other locations the primary migration wouldn't find. Recovering them here means Step 6b2's taxonomy scan picks them up automatically.
+
+```bash
+ORPHAN_COUNT=0
+MIGRATE_SCRIPT=~/.claude/scripts/sweetclaude/migrate/migrate-v3-to-v4.py
+if [ ! -f "$MIGRATE_SCRIPT" ]; then
+  MIGRATE_SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -name 'migrate-v3-to-v4.py' 2>/dev/null | head -1)
+fi
+if [ -f .sweetclaude/state/sweetclaude.yaml ] && [ -n "$MIGRATE_SCRIPT" ] && [ -f "$MIGRATE_SCRIPT" ]; then
+  ORPHAN_OUT=$(python3 "$MIGRATE_SCRIPT" scan-orphans --project-dir . 2>/dev/null)
+  ORPHAN_COUNT=$(echo "$ORPHAN_OUT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('orphan_count', 0))" 2>/dev/null || echo 0)
+fi
+echo "ORPHAN_COUNT=$ORPHAN_COUNT"
+```
+
+If `ORPHAN_COUNT` is 0: continue silently to Step 6b2.
+
+If `ORPHAN_COUNT > 0`: present findings grouped by category:
+
+```
+Found {N} orphaned work item files outside the primary backlog:
+
+Typed subdirectories (retired in 4.1.0):
+  {file} — {id} — {title} [{status}]
+
+Scratch directory:
+  {file} — {id} — {title} [{status}]
+
+Stray files:
+  {file} — {id} — {title} [{status}]
+```
+
+Then present **AskUserQuestion**:
+- **Question:** `{N} orphaned files found during update. What should I do with them?`
+- **Options:**
+  1. `Include in migration` → copy each orphaned file into the primary backlog directory (`.sweetclaude/product/backlog/`) as `BL-{NNN}-{slug}.md` so Step 6b2's taxonomy scan picks them up. Assign sequential BL IDs starting after the highest existing BL number. For files without frontmatter, create minimal frontmatter from filename.
+  2. `Show me each one` → present each file one at a time with **AskUserQuestion**: `Keep (include in migration)`, `Skip (leave where it is)`, `Delete`. Apply the user's choice per file.
+  3. `Skip all` → proceed without recovering orphaned files. They stay where they are.
+
+After the user's choice is applied, continue to Step 6b2.
+
+---
+
 ## Step 6b2: Taxonomy migration detection
 
 Only run if `.sweetclaude/state/sweetclaude.yaml` exists in the current project directory — skip silently otherwise.

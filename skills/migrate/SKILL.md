@@ -1,6 +1,6 @@
 ---
 name: sweetclaude:migrate
-description: Migrate v3 BL-NNN stories to .sweetclaude/product/backlog/ layout. User-invocable as /sweetclaude:migrate. Builds backup, validates, previews, executes, verifies, finalizes.
+description: Migrate v3 BL-NNN items to ISSUE-NNN format in .sweetclaude/product/backlog/. Builds backup, validates, previews, executes, verifies, finalizes.
 ---
 
 !`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:migrate" 2>/dev/null || true`
@@ -73,11 +73,46 @@ If `FAILURE_COUNT > 0`: present **AskUserQuestion**:
 - Options: `Yes`, `No`
 - On either choice: release lock (`rm $LOCK_FILE`) and stop. Do not proceed.
 
+## Step 2b: Orphan scan
+
+Scan for work item files that might be lost, abandoned, or orphaned from previous versions — files the primary migration wouldn't find.
+
+```bash
+ORPHAN_OUT=$(python3 "$SCRIPT" scan-orphans --project-dir .)
+ORPHAN_COUNT=$(echo "$ORPHAN_OUT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('orphan_count', 0))")
+```
+
+If `ORPHAN_COUNT > 0`: present findings grouped by category:
+
+```
+Found {N} orphaned work item files outside the primary backlog:
+
+Typed subdirectories (retired in 4.1.0):
+  {file} — {id} — {title} [{status}]
+
+Scratch directory:
+  {file} — {id} — {title} [{status}]
+
+Stray files:
+  {file} — {id} — {title} [{status}]
+```
+
+Then present **AskUserQuestion**:
+- **Question:** `{N} orphaned files found. What should I do with them?`
+- **Options:**
+  1. `Include in migration` → copy each orphaned file into the primary backlog directory (`$V3_BACKLOG/`) as `BL-{NNN}-{slug}.md` so the plan step picks them up. Assign sequential BL IDs starting after the highest existing BL number. For files without frontmatter, create minimal frontmatter from filename.
+  2. `Show me each one` → present each file one at a time with **AskUserQuestion**: `Keep (include in migration)`, `Skip (leave where it is)`, `Delete`. Apply the user's choice per file.
+  3. `Skip all` → proceed without migrating orphaned files. They stay where they are.
+
+After the user's choice is applied, proceed to Step 3.
+
+If `ORPHAN_COUNT == 0`: proceed silently to Step 3.
+
 ## Step 3: Done item choice
 
 Count files where `status ∈ {done, cancelled, abandoned}` in the validate output. If count > 0, present **AskUserQuestion**:
 
-- **Question:** `Found N completed stories. Migrate them too?`
+- **Question:** `Found N completed items. Migrate them too?`
 - **Options:**
   1. `Migrate all` → set `INCLUDE_DONE=--include-done`
   2. `Skip done items` → set `INCLUDE_DONE=` (empty)
@@ -94,7 +129,7 @@ echo "$PLAN_OUT" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 items = d['plan_items']
-print(f\"Migration preview — {len(items)} stories to migrate\")
+print(f\"Migration preview — {len(items)} items to migrate\")
 print()
 print('| v3 ID | v3 File | v4 ID | Type | Destination |')
 print('|---|---|---|---|---|')
@@ -119,7 +154,7 @@ EXEC_OUT=$(python3 "$SCRIPT" execute --project-dir . $INCLUDE_DONE)
 echo "$EXEC_OUT" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-print(f\"Wrote {len(d['created_paths'])} files. Counters: {d['counters']}.\")
+print(f\"Wrote {len(d['created_paths'])} ISSUE-NNN files.\")
 "
 # Save created_paths for Step 7 verify
 echo "$EXEC_OUT" | python3 -c "
@@ -183,7 +218,7 @@ If the backup verification fails, v3 BL files are NOT removed (so the user can r
 Migration complete.
 
   Created:       {count} files in .sweetclaude/product/backlog/
-  Counters:      story=X bug=Y debt=Z chore=W
+  Total:         {counter} ISSUE-NNN files created
   Skipped done:  {skipped_done if any}
   v3 BL files:   {removed | LEFT IN PLACE — backup invalid, see warning above}
   Backup:        $BACKUP_FILE
