@@ -8,6 +8,22 @@ All notable changes to SweetClaude are documented here.
 
 ---
 
+## [4.1.5-beta] — 2026-05-25
+
+### Fixed
+
+- Added a compact Doctor maintenance-route preflight so `/sweetclaude:doctor`
+  presents recovery, supported migration, compatibility, or manual-review
+  guidance before large full-scan reports can bury the maintenance decision.
+- Improved Doctor's user-facing maintenance router so recoverable projects
+  present `Run safe recovery`, supported flat migration candidates present
+  `Start supported migration`, and accepted legacy taxonomy layouts clearly
+  continue in compatibility mode with no migration recommendation.
+- Added regression coverage for the route-only Doctor command and installed
+  plugin smoke coverage on disposable llm-session-harness and SynCog copies.
+
+---
+
 ## [4.1.4-beta] — 2026-05-25
 
 ### Fixed

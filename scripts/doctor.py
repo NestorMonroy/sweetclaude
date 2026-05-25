@@ -1471,6 +1471,166 @@ def _build_migration_recommendations(
 
 
 # ---------------------------------------------------------------------------
+# Maintenance routing
+# ---------------------------------------------------------------------------
+
+def _migration_preflight(project_dir: Path) -> dict | None:
+    script = _SCRIPTS_DIR / "migrate" / "migrate-v3-to-v4.py"
+    if not script.exists():
+        return None
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), "preflight", "--project-dir", str(project_dir)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return {
+            "status": "error",
+            "migrate_allowed": False,
+            "error": result.stderr.strip() or result.stdout.strip(),
+        }
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {
+            "status": "error",
+            "migrate_allowed": False,
+            "error": "migration preflight returned invalid JSON",
+        }
+    return data if isinstance(data, dict) else None
+
+
+def build_maintenance_route(state: ProjectState) -> dict:
+    """Classify the maintenance UX path Doctor should present.
+
+    Doctor remains the front door. The returned route names internal skills as
+    delegated capabilities, but labels are user-facing actions.
+    """
+    try:
+        from recovery.recover_project import guard_project
+        guard = guard_project(state.project_dir)
+    except Exception as exc:
+        return {
+            "status": "manual-review",
+            "doctor_front_door": True,
+            "message": f"Maintenance guard failed: {exc}",
+            "primary_action": None,
+            "secondary_actions": [],
+            "guard": {"status": "guard-error"},
+        }
+
+    status = guard.get("status")
+    route: dict = {
+        "status": "no-maintenance-action",
+        "doctor_front_door": True,
+        "message": guard.get("message", ""),
+        "primary_action": None,
+        "secondary_actions": [],
+        "guard": guard,
+    }
+
+    if status == "run-recover":
+        route.update({
+            "status": "recovery-available",
+            "message": (
+                "Doctor found a recoverable SweetClaude maintenance state. "
+                "Run safe recovery from Doctor; recovery will diagnose, plan, "
+                "snapshot, request approval, verify, and keep rollback data."
+            ),
+            "primary_action": {
+                "id": "run-safe-recovery",
+                "label": "Run safe recovery",
+                "delegate_skill": "sweetclaude:recover",
+                "requires_approval": True,
+                "mutates_project": True,
+            },
+            "secondary_actions": [
+                {
+                    "id": "continue-without-maintenance",
+                    "label": "Continue without maintenance",
+                    "mutates_project": False,
+                },
+            ],
+        })
+        return route
+
+    if status == "compatibility-mode":
+        route.update({
+            "status": "compatibility-mode",
+            "message": (
+                "Doctor found an accepted legacy taxonomy layout. No repair is "
+                "needed right now; continue safely in compatibility mode. "
+                "Migration remains blocked until a layout-specific plan exists."
+            ),
+            "primary_action": {
+                "id": "continue-compatibility-mode",
+                "label": "Continue in compatibility mode",
+                "mutates_project": False,
+            },
+        })
+        return route
+
+    if status == "migration-may-be-needed":
+        preflight = _migration_preflight(state.project_dir)
+        route["migration_preflight"] = preflight
+        if preflight and preflight.get("migrate_allowed"):
+            route.update({
+                "status": "supported-migration-available",
+                "message": (
+                    "Doctor found a supported flat BL-NNN migration candidate. "
+                    "Start the migration flow from Doctor; migration will run "
+                    "its own preflight and safety steps before conversion."
+                ),
+                "primary_action": {
+                    "id": "start-supported-migration",
+                    "label": "Start supported migration",
+                    "delegate_skill": "sweetclaude:migrate",
+                    "requires_approval": True,
+                    "mutates_project": True,
+                },
+                "secondary_actions": [
+                    {
+                        "id": "continue-without-migration",
+                        "label": "Continue without migration",
+                        "mutates_project": False,
+                    },
+                ],
+            })
+        else:
+            route.update({
+                "status": "migration-blocked",
+                "message": (
+                    "Doctor found old-format work items, but the available "
+                    "migration capability did not prove this layout is safe. "
+                    "No files were changed."
+                ),
+                "primary_action": {
+                    "id": "continue-without-migration",
+                    "label": "Continue without migration",
+                    "mutates_project": False,
+                },
+            })
+        return route
+
+    if status in {"manual-review", "missing-product-base", "guard-unavailable"}:
+        route.update({
+            "status": "manual-review",
+            "primary_action": {
+                "id": "manual-review",
+                "label": "Manual review",
+                "mutates_project": False,
+            },
+        })
+        return route
+
+    return route
+
+
+# ---------------------------------------------------------------------------
 # Scan
 # ---------------------------------------------------------------------------
 
@@ -1515,6 +1675,7 @@ def _scan(
     active = [f for f in all_findings if f.id not in suppressed_ids]
 
     migration_recs = _build_migration_recommendations(active, project_state)
+    maintenance_route = build_maintenance_route(project_state)
 
     result = {
         "findings": [asdict(f) for f in active],
@@ -1522,6 +1683,7 @@ def _scan(
         "suppressions_resolved": sorted(resolved_ids),
         "project_state_summary": build_state_summary(project_state),
         "migration_recommendations": migration_recs,
+        "maintenance_route": maintenance_route,
     }
     if categories:
         result["scanned_categories"] = sorted(checks_to_run.keys())
@@ -2107,6 +2269,8 @@ def main(argv: list[str] | None = None) -> int:
     p_scan = _add("scan")
     p_scan.add_argument("--category", default=None)
 
+    _add("maintenance-route")
+
     _add("create-archive")
 
     p_fix = _add("auto-fix")
@@ -2142,6 +2306,19 @@ def main(argv: list[str] | None = None) -> int:
             state = build_project_state(project_dir)
             cats = [c.strip() for c in args.category.split(",") if c.strip()] if args.category else None
             _emit(_scan(state, categories=cats))
+
+        elif args.cmd == "maintenance-route":
+            project_dir = args.project_dir.resolve()
+            sc_yaml = project_dir / ".sweetclaude" / "state" / "sweetclaude.yaml"
+            if not sc_yaml.exists():
+                _emit({"error": "not-configured",
+                       "message": "SweetClaude not configured for this project"})
+                return 0
+            state = build_project_state(project_dir)
+            _emit({
+                "maintenance_route": build_maintenance_route(state),
+                "project_state_summary": build_state_summary(state),
+            })
 
         elif args.cmd == "create-archive":
             archive = create_archive(args.project_dir.resolve())

@@ -20,7 +20,76 @@ Thin orchestrator — all scanning and file mutation happens in `scripts/doctor.
 
 ---
 
-## Step 1: Scan
+## Step 1a: Maintenance route preflight
+
+Run the compact maintenance route before the full scan. This is intentionally
+separate from the full scan because large projects can produce huge finding
+lists, and the user-facing maintenance decision must not get buried.
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/doctor.py maintenance-route --project-dir . 2>/dev/null
+```
+
+Parse the JSON output. Handle these cases:
+
+**Not configured:** If the output contains `"error": "not-configured"`, print:
+> SweetClaude is not configured for this project.
+
+Stop. Do not continue to Step 2.
+
+**Parse failure:** If the output is not valid JSON or the command exits
+non-zero, print:
+> Doctor route check failed. Run `python3 ~/.claude/scripts/sweetclaude/doctor.py maintenance-route --project-dir .` manually to see the error.
+
+Stop.
+
+**Success:** Store `maintenance_route`. Doctor is the maintenance front door;
+do not make the user choose among internal commands such as `recover`,
+`_migrate`, or taxonomy migration scripts.
+
+If `maintenance_route.status` is `recovery-available`, present
+**AskUserQuestion** before running the full scan:
+
+> Doctor found a recoverable SweetClaude maintenance state. Recovery will
+> diagnose, plan, snapshot, request approval, verify, and keep rollback data.
+
+Options:
+- **Run safe recovery** — "Use the snapshot-backed recovery flow"
+- **Continue without maintenance** — "Skip recovery for now and continue to non-migration fixes"
+
+On **Run safe recovery**: invoke `sweetclaude:recover`. Recovery owns the
+diagnose, plan, approval, execute, resume, verification, and rollback flow. When
+it completes, run the full scan and continue with the fresh findings.
+
+If `maintenance_route.status` is `supported-migration-available`, present
+**AskUserQuestion** before running the full scan:
+
+> Doctor found a supported flat BL-NNN migration candidate. Migration will run
+> its own preflight and safety steps before conversion.
+
+Options:
+- **Start supported migration** — "Open the migration flow for this supported layout"
+- **Continue without migration** — "Skip migration for now and continue to other fixes"
+
+On **Start supported migration**: invoke `sweetclaude:migrate`. Do not invoke
+`migrate_taxonomy.py` or any migration script directly from Doctor. After the
+migration flow completes, run the full scan and continue with fresh findings.
+
+If `maintenance_route.status` is `compatibility-mode`, print a visible
+maintenance route block before the full scan:
+
+> Maintenance route: {message}
+> No migration is recommended for this project.
+
+Then continue to Step 1b.
+
+If `maintenance_route.status` is `migration-blocked`, `manual-review`, or
+`no-maintenance-action`, print the route `message` when it is non-empty, then
+continue to Step 1b. Do not invoke any migration script.
+
+---
+
+## Step 1b: Scan
 
 ```bash
 python3 ~/.claude/scripts/sweetclaude/doctor.py scan --project-dir . 2>/dev/null
@@ -38,7 +107,11 @@ Stop. Do not continue to Step 2.
 
 Stop.
 
-**Success:** Store the parsed result. Extract `findings`, `skipped_categories`, `suppressions_resolved`, and `project_state_summary`. Count findings by severity (error/warning/info) for the summary line in Step 9.
+**Success:** Store the parsed result. Extract `findings`,
+`skipped_categories`, `suppressions_resolved`, and `project_state_summary`.
+Keep using the `maintenance_route` from Step 1a. Use the full scan's
+`maintenance_route` only as a fallback if Step 1a did not return one. Count
+findings by severity (error/warning/info) for the summary line in Step 9.
 
 ---
 
@@ -103,65 +176,16 @@ If `suppressions_resolved` is non-empty, list each one:
 
 ---
 
-## Step 2b: Migration gate
+## Step 2b: Maintenance router guard
 
-Check `migration_recommendations` from the scan output. If the array is
-non-empty, do not present a migration prompt until the recovery guard has
-classified the project:
+Step 1 must already have handled and visibly rendered the maintenance route
+before the full findings report. Do not present a second maintenance prompt
+here. If Step 1 did not return a route but the full scan did, handle that route
+now using the same rules from Step 1a before continuing to Step 3.
 
-```bash
-SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
-if [ ! -f "$SCRIPT" ]; then
-  SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
-fi
-if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
-  python3 "$SCRIPT" guard --project-dir . --pretty
-else
-  echo '{"status":"guard-unavailable","message":"Recovery guard unavailable. Run /sweetclaude:update before migration."}'
-fi
-```
-
-If guard `status` is `run-recover`, `manual-review`, `compatibility-mode`,
-`missing-product-base`, or `guard-unavailable`, do not present the migration
-menu. Output the guard `message`, then ask whether to run `/sweetclaude:recover`
-when recovery is available or continue to the non-migration fix menu. Do not
-invoke any migration script.
-
-If guard `status` is `migration-may-be-needed`, a migration may resolve a
-significant number of findings. Present this **before** the fix menu because a
-safe simple migration can eliminate findings that would otherwise clutter the
-fix flow.
-
-For each recommendation, present via AskUserQuestion:
-
-> {summary} — migration would resolve an estimated {estimated_resolvable} of {total_findings} findings ({pct}%). Run migration now?
-
-Options:
-- **Run migration** — "Run the migration, then rescan to see what's left"
-- **Skip** — "Continue without migrating"
-
-**On Run migration:**
-
-Delegate to the appropriate migration skill based on `script`:
-- `migrate_taxonomy.py` → blocked in this beta unless a future taxonomy
-  migration capability check proves the detected layout is supported. Do not
-  run this script directly from doctor.
-- `runner.py` → invoke `sweetclaude:_migrate`
-- `migrate-v3-to-v4.py` → invoke `sweetclaude:migrate`
-
-After the migration skill completes, **rescan automatically**:
-
-```bash
-python3 ~/.claude/scripts/sweetclaude/doctor.py scan --project-dir . 2>/dev/null
-```
-
-Parse the new scan result. Replace the current findings list and migration_recommendations with the fresh output. Print:
-
-> Migration complete. Rescanned: {new_total} findings remaining (was {old_total}).
-
-Continue to Step 3 with the new findings. The fix menu and all subsequent steps operate on the post-migration scan.
-
-**On Skip:** Continue to Step 3 with the original findings.
+`migration_recommendations` is legacy diagnostic context. Do not use it to
+present a migration prompt unless `maintenance_route.status` is
+`supported-migration-available`.
 
 ---
 

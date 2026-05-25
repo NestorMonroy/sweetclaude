@@ -86,8 +86,24 @@ def test_doctor_skill_does_not_directly_run_taxonomy_migration():
     )
 
     assert "migrate_taxonomy.py" in skill
-    assert "Do not\n  run this script directly from doctor" in skill
+    assert "Do not invoke\n`migrate_taxonomy.py`" in skill
     assert "run the script directly" not in skill.lower()
+
+
+def test_doctor_skill_uses_maintenance_router_as_front_door():
+    skill = (Path(__file__).parents[1] / "skills" / "doctor" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "doctor.py maintenance-route --project-dir ." in skill
+    assert "Store `maintenance_route`. Doctor is the maintenance front door" in skill
+    assert "Run safe recovery" in skill
+    assert "Start supported migration" in skill
+    assert "No migration is recommended for this project" in skill
+    assert "Continue in compatibility mode" not in skill
+    assert "internal commands such as `recover`,\n`_migrate`" in skill
+    assert "Step 1 must already have handled and visibly rendered" in skill
+    assert "Do not use it to\npresent a migration prompt unless `maintenance_route.status` is\n`supported-migration-available`" in skill
 
 
 def test_update_skill_decouples_framework_sync_from_project_mutation():
