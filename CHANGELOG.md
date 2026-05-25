@@ -8,6 +8,24 @@ All notable changes to SweetClaude are documented here.
 
 ---
 
+## [4.1.7-beta] — 2026-05-25
+
+### Fixed
+
+- Added evidence receipts for high-stakes completion, ship, release, and
+  external-close claims.
+- Made manual `status.py set-terminal --status done` fail closed unless a
+  matching completion evidence receipt is provided.
+- Hardened dashboard and orchestrator done transitions so active work is not
+  silently cleared without completion evidence.
+- Updated public closeout skills to validate and pass evidence receipts before
+  marking work done.
+- Added a release readiness gate that enforces beta/stable channel separation,
+  matching package/plugin/changelog metadata, and release evidence receipts
+  before tag preparation.
+
+---
+
 ## [4.1.6-beta] — 2026-05-25
 
 ### Fixed
