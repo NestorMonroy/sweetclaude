@@ -8,6 +8,16 @@ All notable changes to SweetClaude are documented here.
 
 ---
 
+## [4.1.8-beta] — 2026-05-25
+
+### Fixed
+
+- Hardened the release readiness gate so beta/stable release checks inspect the
+  actual git checkout branch, upstream, tracked cleanliness, and tag-at-HEAD
+  instead of trusting a supplied `--branch` argument alone.
+
+---
+
 ## [4.1.7-beta] — 2026-05-25
 
 ### Fixed

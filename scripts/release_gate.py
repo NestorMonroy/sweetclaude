@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -112,25 +113,88 @@ def _validate_release_receipt(receipt_path: str | Path, tag: str) -> dict:
     return receipt
 
 
+def _git(project_dir: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(project_dir), *args],
+        capture_output=True,
+        text=True,
+        check=check,
+    )
+
+
+def _is_git_repo(project_dir: Path) -> bool:
+    completed = _git(project_dir, "rev-parse", "--is-inside-work-tree", check=False)
+    return completed.returncode == 0 and completed.stdout.strip() == "true"
+
+
+def _validate_git_state(project_dir: Path, *, tag: str, branch: str) -> dict:
+    if not _is_git_repo(project_dir):
+        return {"checked": False, "reason": "not-a-git-work-tree"}
+
+    actual_branch = _git(project_dir, "branch", "--show-current").stdout.strip()
+    if not actual_branch:
+        raise ValueError("release must be prepared from a named git branch, not detached HEAD")
+    if actual_branch != branch:
+        raise ValueError(f"current git branch mismatch: expected {branch}, got {actual_branch}")
+
+    upstream = _git(
+        project_dir,
+        "rev-parse",
+        "--abbrev-ref",
+        "--symbolic-full-name",
+        "@{upstream}",
+        check=False,
+    )
+    if upstream.returncode != 0:
+        raise ValueError(f"release branch {branch} must track origin/{branch}")
+    upstream_name = upstream.stdout.strip()
+    expected_upstream = f"origin/{branch}"
+    if upstream_name != expected_upstream:
+        raise ValueError(
+            f"release branch upstream mismatch: expected {expected_upstream}, got {upstream_name}"
+        )
+
+    dirty = _git(project_dir, "status", "--porcelain", "--untracked-files=no").stdout.strip()
+    if dirty:
+        raise ValueError("release checkout has tracked modifications")
+
+    head_tags = {
+        line.strip()
+        for line in _git(project_dir, "tag", "--points-at", "HEAD").stdout.splitlines()
+        if line.strip()
+    }
+    if tag not in head_tags:
+        raise ValueError(f"release tag {tag} must point at HEAD")
+
+    return {
+        "checked": True,
+        "branch": actual_branch,
+        "upstream": upstream_name,
+        "head_tags": sorted(head_tags),
+    }
+
+
 def check_release_readiness(
     project_dir: Path,
     *,
     tag: str,
     channel: str,
     receipt_path: str | Path,
-    branch: str | None = None,
+    branch: str,
 ) -> dict:
     project_dir = project_dir.resolve()
     version = _version_from_tag(tag)
     _validate_channel(version, channel, branch)
     _metadata_version(project_dir, version)
     receipt = _validate_release_receipt(receipt_path, tag)
+    git_state = _validate_git_state(project_dir, tag=tag, branch=branch)
     return {
         "ok": True,
         "tag": tag,
         "version": version,
         "channel": channel,
         "branch": branch,
+        "git": git_state,
         "receipt": str(Path(receipt_path)),
         "checks": sorted(str(c.get("name", "")) for c in receipt.get("checks", [])),
     }
@@ -145,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     p_check.add_argument("--tag", required=True)
     p_check.add_argument("--channel", required=True, choices=["stable", "beta"])
     p_check.add_argument("--receipt", required=True)
-    p_check.add_argument("--branch", default=None)
+    p_check.add_argument("--branch", required=True)
 
     args = parser.parse_args(argv)
 
