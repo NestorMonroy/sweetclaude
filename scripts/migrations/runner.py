@@ -1265,7 +1265,7 @@ def main(argv: list[str] | None = None) -> int:
         params.setdefault(file_key, {})[k] = v
 
     if args.report_drift_for_skill:
-        scan = runner.scan_drift(args.files, persist=args.persist)
+        scan = runner.scan_drift(args.files, persist=True)
         needs = [f for f in scan["findings"] if f.get("needs_migration")]
         print(f"DRIFT_COUNT={len(needs)}")
         for f in needs:
