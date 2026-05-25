@@ -8,6 +8,24 @@ All notable changes to SweetClaude are documented here.
 
 ---
 
+## [4.1.6-beta] — 2026-05-25
+
+### Fixed
+
+- Reduced `/sweetclaude:doctor` noise for accepted compatibility-mode legacy
+  taxonomy projects. Doctor now collapses accepted legacy taxonomy findings
+  into one info item while preserving real residual findings such as duplicate
+  IDs, missing frontmatter, unknown statuses, missing milestone fields, stale
+  derived statuses, and auto-fixable date fields.
+- Made Doctor's stored run state compact and count-based. `last-doctor-run.json`
+  now records severity counts, total finding count, and a bounded finding
+  summary instead of unbounded full scan output.
+- Hardened Doctor's pre-fix menu preference lookup so it reads only compact
+  preference fields, does not print stale large Doctor run files, and does not
+  skip the menu from a one-time prior `menu_preference`.
+
+---
+
 ## [4.1.5-beta] — 2026-05-25
 
 ### Fixed

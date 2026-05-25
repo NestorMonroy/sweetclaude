@@ -100,6 +100,11 @@ def test_doctor_skill_uses_maintenance_router_as_front_door():
     assert "Run safe recovery" in skill
     assert "Start supported migration" in skill
     assert "No migration is recommended for this project" in skill
+    assert "compatibility_adjustments" in skill
+    assert "Compatibility mode collapsed {collapsed_count} accepted legacy taxonomy" in skill
+    assert "Do not `cat` or print\n`.sweetclaude/state/last-doctor-run.json`" in skill
+    assert "Use `menu_default` for skip-menu behavior" in skill
+    assert "must not skip the menu by itself" in skill
     assert "Continue in compatibility mode" not in skill
     assert "internal commands such as `recover`,\n`_migrate`" in skill
     assert "Step 1 must already have handled and visibly rendered" in skill

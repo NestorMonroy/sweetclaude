@@ -1630,6 +1630,93 @@ def build_maintenance_route(state: ProjectState) -> dict:
     return route
 
 
+def _legacy_value_from_summary(summary: str, label: str) -> str:
+    marker = f"invalid {label}: "
+    if marker not in summary:
+        return ""
+    value = summary.split(marker, 1)[1].strip()
+    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+        value = value[1:-1]
+    return value
+
+
+def _legacy_taxonomy_kind(finding: Finding) -> str | None:
+    """Return a compatibility-collapse kind for accepted legacy taxonomy noise."""
+    if finding.id == "migration-currency:taxonomy-drift:old-prefixes":
+        return "old-prefix-taxonomy-drift"
+
+    if finding.category != "file_diagnostics":
+        return None
+
+    if finding.id.startswith("file-diagnostics:invalid-id:"):
+        bad_id = _legacy_value_from_summary(finding.summary, "id")
+        if re.match(r"^(STORY|BUG|DEBT|CHORE|BL)-\d+\b", bad_id):
+            return "legacy-work-item-id"
+
+    if finding.id.startswith("file-diagnostics:invalid-milestone:"):
+        bad_milestone = _legacy_value_from_summary(finding.summary, "milestone")
+        if bad_milestone:
+            return "legacy-milestone-reference"
+
+    if finding.id.startswith("file-diagnostics:invalid-source:"):
+        return "legacy-source-reference"
+
+    return None
+
+
+def _apply_compatibility_mode_policy(
+    findings: list[Finding], maintenance_route: dict,
+) -> tuple[list[Finding], dict]:
+    """Collapse accepted legacy taxonomy noise after guard-approved recovery.
+
+    This does not suppress real integrity issues such as duplicate IDs,
+    frontmatter parse errors, missing frontmatter, date fixes, or prompted
+    config/status fixes. It only prevents accepted compatibility-mode taxonomy
+    artifacts from dominating Doctor's report.
+    """
+    if maintenance_route.get("status") != "compatibility-mode":
+        return findings, {"applied": False, "collapsed_count": 0}
+
+    visible: list[Finding] = []
+    collapsed_by_kind: dict[str, int] = {}
+
+    for finding in findings:
+        kind = _legacy_taxonomy_kind(finding)
+        if kind:
+            collapsed_by_kind[kind] = collapsed_by_kind.get(kind, 0) + 1
+            continue
+        visible.append(finding)
+
+    collapsed_count = sum(collapsed_by_kind.values())
+    if collapsed_count:
+        visible.insert(0, Finding(
+            id="compatibility-mode:accepted-legacy-taxonomy",
+            category="compatibility_mode",
+            severity="info",
+            summary=(
+                f"{collapsed_count} accepted legacy taxonomy findings were "
+                "collapsed because compatibility mode is active"
+            ),
+            detail=(
+                "compatibility-mode: accepted legacy taxonomy findings "
+                f"collapsed by kind: {collapsed_by_kind}"
+            ),
+            file_paths=[],
+            fix_type="report-only",
+            fix_recipe={
+                "action": "compatibility_summary",
+                "collapsed_count": collapsed_count,
+                "collapsed_by_kind": collapsed_by_kind,
+            },
+        ))
+
+    return visible, {
+        "applied": True,
+        "collapsed_count": collapsed_count,
+        "collapsed_by_kind": collapsed_by_kind,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Scan
 # ---------------------------------------------------------------------------
@@ -1672,10 +1759,12 @@ def _scan(
         if f.id in resolved_ids:
             f.previously_suppressed = True
 
-    active = [f for f in all_findings if f.id not in suppressed_ids]
-
-    migration_recs = _build_migration_recommendations(active, project_state)
     maintenance_route = build_maintenance_route(project_state)
+    active = [f for f in all_findings if f.id not in suppressed_ids]
+    active, compatibility_adjustments = _apply_compatibility_mode_policy(
+        active, maintenance_route,
+    )
+    migration_recs = _build_migration_recommendations(active, project_state)
 
     result = {
         "findings": [asdict(f) for f in active],
@@ -1684,6 +1773,7 @@ def _scan(
         "project_state_summary": build_state_summary(project_state),
         "migration_recommendations": migration_recs,
         "maintenance_route": maintenance_route,
+        "compatibility_adjustments": compatibility_adjustments,
     }
     if categories:
         result["scanned_categories"] = sorted(checks_to_run.keys())
@@ -2109,6 +2199,13 @@ def persist(
     auto_fixed = sum(1 for a in all_actions if a.get("action") == "auto-fix")
     user_fixed = sum(1 for a in all_actions if a.get("action") == "prompted-fix")
     skipped = sum(1 for a in all_actions if a.get("action") == "skip")
+    scan_findings = scan_findings or []
+    severity_counts = {
+        "errors": sum(1 for f in scan_findings if f.get("severity") == "error"),
+        "warnings": sum(1 for f in scan_findings if f.get("severity") == "warning"),
+        "info": sum(1 for f in scan_findings if f.get("severity") == "info"),
+        "total_findings": len(scan_findings),
+    }
 
     manifest = {
         "timestamp": _now_iso(),
@@ -2121,13 +2218,15 @@ def persist(
             "user_fixed": user_fixed,
             "skipped": skipped,
             "failed": errors,
+            **severity_counts,
         },
     }
     write_manifest(archive_path, manifest)
 
+    finding_limit = 100
     findings_summary = [
         {"id": f["id"], "severity": f["severity"], "summary": f["summary"]}
-        for f in (scan_findings or [])
+        for f in scan_findings[:finding_limit]
     ]
 
     last_run = {
@@ -2135,6 +2234,8 @@ def persist(
         "version": manifest["version"],
         "summary": manifest["summary"],
         "findings": findings_summary,
+        "findings_total": len(scan_findings),
+        "findings_truncated": max(0, len(scan_findings) - len(findings_summary)),
         "menu_preference": menu_preference,
     }
     last_run_path = project_dir / ".sweetclaude" / "state" / "last-doctor-run.json"

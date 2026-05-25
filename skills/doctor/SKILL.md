@@ -108,7 +108,8 @@ Stop. Do not continue to Step 2.
 Stop.
 
 **Success:** Store the parsed result. Extract `findings`,
-`skipped_categories`, `suppressions_resolved`, and `project_state_summary`.
+`skipped_categories`, `suppressions_resolved`, `compatibility_adjustments`, and
+`project_state_summary`.
 Keep using the `maintenance_route` from Step 1a. Use the full scan's
 `maintenance_route` only as a fallback if Step 1a did not return one. Count
 findings by severity (error/warning/info) for the summary line in Step 9.
@@ -126,6 +127,13 @@ Check if `.sweetclaude/state/last-doctor-run.json` exists.
 Skip to Step 9 (persist the clean run).
 
 **Findings present:** Render the report.
+
+If `compatibility_adjustments.applied` is true and
+`compatibility_adjustments.collapsed_count` is greater than 0, print this before
+the severity groups:
+
+> Compatibility mode collapsed {collapsed_count} accepted legacy taxonomy
+> findings. These are not recommended fixes while compatibility mode is active.
 
 ### Summary tier (default)
 
@@ -193,7 +201,17 @@ present a migration prompt unless `maintenance_route.status` is
 
 If no findings have `fix_type` of `auto` or `prompted`, skip to Step 8.
 
-Check for a stored menu default. Read `.sweetclaude/state/last-doctor-run.json` and check `menu_preference`. If the user passed `--interactive`, ignore stored preference.
+Check for a stored menu default. Do not `cat` or print
+`.sweetclaude/state/last-doctor-run.json`; older runs can contain large stale
+finding lists. Read only the compact preference fields:
+
+```bash
+python3 -c "import json, os; p='.sweetclaude/state/last-doctor-run.json'; d=json.load(open(p)) if os.path.exists(p) else {}; print(json.dumps({'exists': bool(d), 'menu_default': d.get('menu_default'), 'menu_preference': d.get('menu_preference')}))" 2>/dev/null || echo '{"exists": false}'
+```
+
+Use `menu_default` for skip-menu behavior. `menu_preference` is only the last
+one-time choice and must not skip the menu by itself. If the user passed
+`--interactive`, ignore stored preferences.
 
 If a stored default of `proceed` exists and `--interactive` was not passed, skip the menu — print "Using stored preference: proceed" and go to Step 4.
 

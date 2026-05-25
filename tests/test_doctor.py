@@ -5115,6 +5115,36 @@ class TestArchiveIntegrity:
         assert "summary" in data
         assert "findings" in data
         assert data["menu_preference"] == "proceed"
+        assert data["summary"]["warnings"] == 1
+        assert data["summary"]["errors"] == 0
+        assert data["summary"]["total_findings"] == 1
+        assert data["findings_total"] == 1
+        assert data["findings_truncated"] == 0
+
+    def test_persist_caps_last_doctor_run_findings_to_keep_status_compact(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        scan_findings = [
+            {
+                "id": f"file-diagnostics:test-{idx}",
+                "severity": "warning",
+                "summary": f"test finding {idx}",
+            }
+            for idx in range(150)
+        ]
+        persist(project_dir, archive, scan_findings=scan_findings)
+
+        last_run_path = project_dir / ".sweetclaude" / "state" / "last-doctor-run.json"
+        data = json.loads(last_run_path.read_text())
+
+        assert data["summary"]["warnings"] == 150
+        assert data["summary"]["total_findings"] == 150
+        assert data["findings_total"] == 150
+        assert data["findings_truncated"] == 50
+        assert len(data["findings"]) == 100
 
     def test_persist_records_safety_branch_in_manifest(self, tmp_path, fake_home):
         project_dir = build_fixture(tmp_path)
