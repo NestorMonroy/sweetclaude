@@ -34,6 +34,7 @@ If you are deciding whether SweetClaude is the right tool for what you are doing
 | Page | What it is |
 |---|---|
 | [Getting Started](getting-started.md) | A tutorial. Install through your first feature. Includes sample interactions so you can recognize the rhythm. |
+| [Beta Rescue](beta-rescue.md) | Recovery path for 4.x beta installs stuck after update, doctor, migrate, or repair failures. |
 | [How It Works](how-it-works.md) | The mental model. Why two-dimensional state, why phase dwelling, why deference levels, what survives a crash. |
 | [Walkthroughs](walkthroughs.md) | Six concrete scenarios end-to-end. New product from a napkin sketch, hotfix, doc pile, course correction, existing repo, building one feature with full TDD. |
 | [Phases and Workflows](phases-and-workflows.md) | Reference for the 7 phases, 6 workflow shapes, 19 work types, hard and soft gates, progressive disclosure by version stage. |

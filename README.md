@@ -2,7 +2,7 @@
 
 # SweetClaude
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.1.4--beta-blue)](https://github.com/carson-sweet/sweetclaude/releases/tag/v4.1.4-beta) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/behavioral-contracts.md)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.1.10--beta-blue)](https://github.com/carson-sweet/sweetclaude/releases/tag/v4.1.10-beta) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/behavioral-contracts.md)
 
 ## TL;DR
 
@@ -13,8 +13,10 @@ Start Claude Code and run:
 /sweetclaude:help
 ```
 
-**Beta safety note:** beta releases before `v4.1.4-beta` have been withdrawn.
-Do not install older v4 beta tags on active projects.
+**Beta safety note:** 4.x beta releases before `v4.1.9-beta` had known
+update/recovery risks. Do not install old beta tags on active projects. Use
+the current `beta-4.x` channel, and see [Beta rescue](docs/user-guide/beta-rescue.md)
+if an existing beta install reports `4.1.8-beta` or older.
 
 To intentionally install the 4.x beta channel:
 
@@ -61,6 +63,19 @@ For the 4.x beta channel, use:
 ```
 /plugin marketplace add carson-sweet/sweetclaude@beta-4.x
 /plugin install sweetclaude@sweetclaude-beta
+```
+
+To update an existing beta install safely, update the Claude Code plugin first:
+
+```
+/plugin update sweetclaude@sweetclaude-beta
+```
+
+If `/plugin list` shows the legacy key `sweetclaude@sweetclaude`, update that
+exact key instead:
+
+```
+/plugin update sweetclaude@sweetclaude
 ```
 
 Once install is complete, run:

@@ -8,6 +8,16 @@ All notable changes to SweetClaude are documented here.
 
 ---
 
+## [4.1.10-beta] — 2026-05-25
+
+### Documentation
+
+- Added a public 4.x beta rescue guide for users with stale beta installs or projects stuck after update, doctor, migrate, or repair failures.
+- Clarified that existing beta users should run Claude Code's plugin update first, restart Claude Code, then run `/sweetclaude:update` from the repaired beta install.
+- Updated install and skills-reference docs to distinguish stable updates, beta updates, legacy beta plugin keys, and project-state recovery.
+
+---
+
 ## [4.1.9-beta] — 2026-05-25
 
 ### Fixed

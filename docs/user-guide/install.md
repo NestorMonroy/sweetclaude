@@ -18,19 +18,45 @@ For the 4.x beta channel, use this instead:
 
 All skills are immediately available. Then go to your project and run `/sweetclaude:go` to begin.
 
-**Beta safety note:** beta releases before `v4.1.4-beta` have been withdrawn.
-Do not install older v4 beta tags on active projects. Use `v4.1.4-beta` or
-newer for beta testing.
+**Beta safety note:** 4.x beta releases before `v4.1.9-beta` had known
+update/recovery risks. Do not install older beta tags on active projects. Use
+the current `beta-4.x` channel for beta testing.
 
 ---
 
 ## Updating
 
-```bash
+For stable installs:
+
+```
+/plugin update sweetclaude@sweetclaude-stable
+```
+
+For beta installs:
+
+```
+/plugin update sweetclaude@sweetclaude-beta
+```
+
+If `/plugin list` shows the legacy beta key `sweetclaude@sweetclaude`, update
+that exact key:
+
+```
+/plugin update sweetclaude@sweetclaude
+```
+
+Restart Claude Code after any plugin update. Then run:
+
+```
 /sweetclaude:update
 ```
 
-Fetches the latest framework version from GitHub and syncs to installed locations. In the 4.x beta, project migration and setup are separate safety-gated flows; update reports project drift without migrating project files inline.
+`/sweetclaude:update` syncs SweetClaude framework files to installed locations.
+In the 4.x beta, project migration and setup are separate safety-gated flows;
+update reports project drift without migrating project files inline.
+
+If a beta project is already stuck from a prior update, doctor, migrate, or
+repair flow, follow [SweetClaude 4.x Beta Rescue](beta-rescue.md).
 
 ---
 
