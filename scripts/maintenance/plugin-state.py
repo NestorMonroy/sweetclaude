@@ -16,6 +16,7 @@ from typing import Any
 
 PRERELEASE_RE = re.compile(r"-([A-Za-z]+)")
 VERSION_MAJOR_RE = re.compile(r"^v?(\d+)")
+MIN_SAFE_BETA_VERSION = "4.1.9-beta"
 
 
 def _plugins_path(home: Path) -> Path:
@@ -59,6 +60,25 @@ def _atomic_write(path: Path, data: dict[str, Any]) -> None:
 def _major(version: str) -> int | None:
     m = VERSION_MAJOR_RE.match(str(version or ""))
     return int(m.group(1)) if m else None
+
+
+def _version_parts(version: str) -> tuple[int, int, int] | None:
+    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", str(version or ""))
+    if not m:
+        return None
+    return tuple(int(part) for part in m.groups())
+
+
+def _version_lt(left: str, right: str) -> bool:
+    left_parts = _version_parts(left)
+    right_parts = _version_parts(right)
+    if left_parts is None or right_parts is None:
+        return False
+    return left_parts < right_parts
+
+
+def _is_stale_beta(channel: str, version: str) -> bool:
+    return channel == "beta" and _version_lt(version, MIN_SAFE_BETA_VERSION)
 
 
 def _marketplace(plugin_key: str) -> str:
@@ -159,21 +179,28 @@ def inspect_state(home: Path, project_dir: Path | None, current_root: Path | Non
     channel = selected["channel"]
     expected_ref = {"beta": "beta-4.x", "stable": "stable-3.x"}.get(channel, "")
     expected_marketplace = {"beta": "sweetclaude-beta", "stable": "sweetclaude-stable"}.get(channel, "")
+    version = str(selected.get("version", "") or "")
+    stale_beta = _is_stale_beta(channel, version)
+    plugin_key = selected["plugin_key"]
     return {
         "ok": True,
         "installed_plugins_path": str(path),
-        "plugin_key": selected["plugin_key"],
+        "plugin_key": plugin_key,
         "marketplace": selected["marketplace"],
         "legacy_marketplace": bool(selected["legacy_marketplace"]),
         "channel": channel,
         "expected_ref": expected_ref,
         "expected_marketplace": expected_marketplace,
         "install_path": selected.get("installPath", ""),
-        "version": selected.get("version", ""),
+        "version": version,
         "git_commit_sha": selected.get("gitCommitSha", ""),
         "scope": selected.get("scope", ""),
         "install_exists": bool(selected["install_exists"]),
         "project_path": selected.get("projectPath", ""),
+        "stale_beta_install": stale_beta,
+        "minimum_safe_beta_version": MIN_SAFE_BETA_VERSION,
+        "plugin_update_command": f"/plugin update {plugin_key}" if plugin_key else "",
+        "restart_required_after_plugin_update": stale_beta,
         "entries": rows,
     }
 
@@ -248,6 +275,10 @@ def _emit_shell(result: dict[str, Any]) -> None:
         "SC_PLUGIN_GIT_SHA": "git_commit_sha",
         "SC_PLUGIN_SCOPE": "scope",
         "SC_PLUGIN_INSTALL_EXISTS": "install_exists",
+        "SC_PLUGIN_STALE_BETA": "stale_beta_install",
+        "SC_PLUGIN_MIN_SAFE_BETA_VERSION": "minimum_safe_beta_version",
+        "SC_PLUGIN_UPDATE_COMMAND": "plugin_update_command",
+        "SC_PLUGIN_RESTART_REQUIRED_AFTER_UPDATE": "restart_required_after_plugin_update",
         "SC_PLUGIN_REASON": "reason",
     }
     for key, field in mapping.items():

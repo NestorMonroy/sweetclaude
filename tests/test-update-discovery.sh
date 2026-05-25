@@ -409,6 +409,14 @@ echo "$PF_OUT" | grep -q '^SC_PLUGIN_LEGACY_MARKETPLACE=true$' \
   && pass "preflight marks legacy marketplace" \
   || fail "preflight did not mark legacy marketplace: $PF_OUT"
 
+echo "$PF_OUT" | grep -q '^SC_PLUGIN_STALE_BETA=true$' \
+  && pass "preflight marks stale beta install" \
+  || fail "preflight did not mark stale beta install: $PF_OUT"
+
+echo "$PF_OUT" | grep -q '^SC_PLUGIN_UPDATE_COMMAND=/plugin update sweetclaude@sweetclaude$' \
+  && pass "preflight emits exact plugin update command" \
+  || fail "preflight did not emit plugin update command: $PF_OUT"
+
 # ---------------------------------------------------------------------------
 # Test 9: update skill contains channel-preserving source and metadata rules
 # ---------------------------------------------------------------------------

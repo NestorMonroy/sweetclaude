@@ -20,6 +20,41 @@ Thin orchestrator — all scanning and file mutation happens in `scripts/doctor.
 
 ---
 
+## Step 0: Plugin Update Guard
+
+Before any Doctor scan or maintenance routing, run the SweetClaude preflight
+helper to detect stale beta plugin installs:
+
+```bash
+if [ -f ~/.claude/scripts/sweetclaude/preflight.sh ]; then
+  eval "$(bash ~/.claude/scripts/sweetclaude/preflight.sh . 2>/dev/null)"
+fi
+```
+
+If `SC_PLUGIN_STALE_BETA=true`, print this message with the variables substituted, then stop before any project
+maintenance, migration, doctor, setup, or recovery routing:
+
+```
+SweetClaude beta plugin update required.
+──────────────────────────────────────
+Installed plugin: {SC_PLUGIN_KEY}
+Installed version: {SC_PLUGIN_VERSION}
+Minimum safe beta: {SC_PLUGIN_MIN_SAFE_BETA_VERSION}
+
+Run this Claude Code command:
+{SC_PLUGIN_UPDATE_COMMAND}
+
+Then restart Claude Code and run:
+/sweetclaude:update
+
+Stopping here because this installed beta is old enough to have unsafe
+update/recovery behavior. No project files were changed.
+```
+
+Do not invoke `/sweetclaude:update`, `/sweetclaude:doctor`,
+`/sweetclaude:recover`, `/sweetclaude:migrate`, `_migrate`, setup, purge, or
+any project-mutating skill from this stale-beta stop path.
+
 ## Step 1a: Maintenance route preflight
 
 Run the compact maintenance route before the full scan. This is intentionally

@@ -47,6 +47,32 @@ def test_inspect_detects_legacy_beta_channel_and_expected_ref(tmp_path):
     assert result["expected_ref"] == "beta-4.x"
     assert result["expected_marketplace"] == "sweetclaude-beta"
     assert result["git_commit_sha"] == "d2ff161"
+    assert result["stale_beta_install"] is True
+    assert result["minimum_safe_beta_version"] == "4.1.9-beta"
+    assert result["plugin_update_command"] == "/plugin update sweetclaude@sweetclaude"
+    assert result["restart_required_after_plugin_update"] is True
+
+
+def test_inspect_does_not_mark_current_beta_as_stale(tmp_path):
+    install = _install_dir(tmp_path, ".claude", "plugins", "cache", "sweetclaude-beta", "sweetclaude", "4.1.12-beta")
+    _write_installed(tmp_path, {
+        "version": 2,
+        "plugins": {
+            "sweetclaude@sweetclaude-beta": [{
+                "scope": "user",
+                "installPath": install,
+                "version": "4.1.12-beta",
+                "gitCommitSha": "nextbeta",
+                "lastUpdated": "2026-05-25T18:48:15Z",
+            }]
+        },
+    })
+
+    result = plugin_state.inspect_state(tmp_path, None, None)
+
+    assert result["channel"] == "beta"
+    assert result["stale_beta_install"] is False
+    assert result["plugin_update_command"] == "/plugin update sweetclaude@sweetclaude-beta"
 
 
 def test_inspect_detects_stable_channel_from_stable_marketplace(tmp_path):

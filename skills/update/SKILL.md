@@ -47,6 +47,30 @@ eval "$(bash ~/.claude/scripts/sweetclaude/preflight.sh --from-update 2>/dev/nul
 
 `DECLINE_CLEARED=true` if the project's `framework.update.declined` was cleared. `RUNNER` is set for use in Step 6b. `SC_PLUGIN_CHANNEL`, `SC_PLUGIN_EXPECTED_REF`, `SC_PLUGIN_KEY`, `SC_PLUGIN_INSTALL_PATH`, `SC_PLUGIN_VERSION`, and `SC_PLUGIN_GIT_SHA` are emitted by the deterministic plugin-state helper and are the source of truth for channel-safe update decisions. If the user picks "Not now" later, `declined` will be re-set to the specific version declined (per Gap #1's version-aware decline rule).
 
+If `SC_PLUGIN_STALE_BETA=true`, print this message with the variables substituted, then stop before any project
+maintenance, migration, doctor, setup, or recovery routing:
+
+```
+SweetClaude beta plugin update required.
+──────────────────────────────────────
+Installed plugin: {SC_PLUGIN_KEY}
+Installed version: {SC_PLUGIN_VERSION}
+Minimum safe beta: {SC_PLUGIN_MIN_SAFE_BETA_VERSION}
+
+Run this Claude Code command:
+{SC_PLUGIN_UPDATE_COMMAND}
+
+Then restart Claude Code and run:
+/sweetclaude:update
+
+Stopping here because this installed beta is old enough to have unsafe
+update/recovery behavior. No project files were changed.
+```
+
+Do not invoke `/sweetclaude:update`, `/sweetclaude:doctor`,
+`/sweetclaude:recover`, `/sweetclaude:migrate`, `_migrate`, setup, purge, or
+any project-mutating skill from this stale-beta stop path.
+
 ---
 
 ## Step 1: Read current install state

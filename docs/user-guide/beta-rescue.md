@@ -46,7 +46,7 @@ update that exact key:
 /plugin update sweetclaude@sweetclaude
 ```
 
-This should move the beta install to the current `4.1.11-beta` or newer release.
+This should move the beta install to the current `4.1.12-beta` or newer release.
 
 ---
 

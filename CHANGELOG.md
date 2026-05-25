@@ -8,6 +8,16 @@ All notable changes to SweetClaude are documented here.
 
 ---
 
+## [4.1.12-beta] — 2026-05-25
+
+### Fixed
+
+- Added a stale beta plugin guard to bootstrap, update, and doctor so users on beta installs older than `4.1.9-beta` see the exact `/plugin update ...` command before any project maintenance runs.
+- Extended plugin-state/preflight metadata with stale-beta detection, minimum safe beta version, exact plugin update command, and restart-required fields.
+- Added regression coverage for stale legacy beta installs, preflight command emission, and front-door stale-beta stops in update/bootstrap/doctor.
+
+---
+
 ## [4.1.11-beta] — 2026-05-25
 
 ### Changed

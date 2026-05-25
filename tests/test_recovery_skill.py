@@ -172,3 +172,28 @@ def test_user_docs_route_to_no_arg_recover_not_diagnose_subcommand():
     rescue = (root / "docs" / "user-guide" / "beta-rescue.md").read_text(encoding="utf-8")
     assert "/sweetclaude:recover" in rescue
     assert "Recovery diagnoses first" in rescue
+
+
+def test_stale_beta_plugin_guard_is_front_door_for_update_bootstrap_and_doctor():
+    root = Path(__file__).parents[1]
+    for rel in [
+        "skills/update/SKILL.md",
+        "skills/bootstrap/SKILL.md",
+        "skills/doctor/SKILL.md",
+    ]:
+        text = (root / rel).read_text(encoding="utf-8")
+        assert "SC_PLUGIN_STALE_BETA=true" in text
+        assert "SweetClaude beta plugin update required" in text
+        assert "{SC_PLUGIN_UPDATE_COMMAND}" in text
+        assert "Then restart Claude Code and run:" in text
+        assert "/sweetclaude:update" in text
+        assert "No project files were changed" in text
+
+    doctor = (root / "skills/doctor/SKILL.md").read_text(encoding="utf-8")
+    assert doctor.index("Plugin Update Guard") < doctor.index("Maintenance route preflight")
+
+    bootstrap = (root / "skills/bootstrap/SKILL.md").read_text(encoding="utf-8")
+    assert bootstrap.index("SC_PLUGIN_STALE_BETA=true") < bootstrap.index("Handle missing or unparseable file")
+
+    update = (root / "skills/update/SKILL.md").read_text(encoding="utf-8")
+    assert update.index("SC_PLUGIN_STALE_BETA=true") < update.index("Read current install state")
