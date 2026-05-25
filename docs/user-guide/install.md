@@ -18,8 +18,8 @@ For the 4.x beta channel, use this instead:
 
 All skills are immediately available. Then go to your project and run `/sweetclaude:go` to begin.
 
-**Beta safety note:** beta releases before `v4.1.2-beta` have been withdrawn.
-Do not install older v4 beta tags on active projects. Use `v4.1.2-beta` or
+**Beta safety note:** beta releases before `v4.1.3-beta` have been withdrawn.
+Do not install older v4 beta tags on active projects. Use `v4.1.3-beta` or
 newer for beta testing.
 
 ---

@@ -6,8 +6,8 @@ You have an idea. Maybe it is well-formed, maybe it is a napkin sketch. SweetCla
 
 1. Install SweetClaude (if you have not already) — inside Claude Code run:
    ```
-   /plugin marketplace add https://github.com/carson-sweet/sweetclaude
-   /plugin install sweetclaude@sweetclaude
+   /plugin marketplace add carson-sweet/sweetclaude@stable-3.x
+   /plugin install sweetclaude@sweetclaude-stable
    ```
 2. Create an empty folder for your project and open Claude Code in it
 3. Run:
@@ -24,7 +24,6 @@ That is it. SweetClaude takes over from here and walks you through each step.
 SweetClaude creates:
 - A git repository (if you want one)
 - A `.sweetclaude/` folder that tracks your progress, decisions, and configuration
-- A `strategy/` folder for strategic documents
 - A `CLAUDE.md` file that teaches future AI sessions about your project
 
 ### Step 2: Concept Articulation
@@ -40,7 +39,7 @@ SweetClaude runs `/sweetclaude:product-discovery` to establish what is being bui
 
 At any depth, SweetClaude can analyze competitors via `/sweetclaude:product-competition` and define user personas via `/sweetclaude:user-personas`.
 
-**Output:** Discovery artifacts in `strategy/` — depth depends on level chosen
+**Output:** Discovery artifacts in `.sweetclaude/state/` — depth depends on level chosen
 
 ### Step 4: Handoff
 

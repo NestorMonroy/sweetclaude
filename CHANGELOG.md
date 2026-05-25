@@ -4,7 +4,80 @@ All notable changes to SweetClaude are documented here.
 
 ---
 
-## [Unreleased] — targeting 4.1.0-beta
+## [Unreleased]
+
+---
+
+## [4.1.3-beta] — 2026-05-25
+
+### New features
+
+- Added `/sweetclaude:recover`, a manifest-backed recovery path for projects
+  left in bad update, migration, doctor, or repair states. It diagnoses and
+  plans read-only, snapshots before mutation, requires approval to execute,
+  verifies doctor/update/migrate/fix safety, supports resume and rollback, and
+  writes a recovery report.
+
+### Fixed
+
+- Recovered SynCog-class beta failure states by stabilizing unsupported typed
+  backlog layouts without running taxonomy migration. The recovery route marks
+  migration as deferred, records the accepted legacy layout, leaves product
+  artifacts unchanged, and is idempotent after recovery.
+- Hardened user-facing migration guards so status, go, bootstrap, doctor,
+  backlog, issue, triage, and GitHub issue flows route unsafe legacy layouts to
+  `/sweetclaude:recover` instead of telling users to run blind migration.
+- Recovery guards now ignore normal time-based doctor checkup markers and only
+  treat migration-related doctor prompts as recovery failures, preventing
+  recovered projects from being routed back into recovery by routine checkups.
+- New setup runs add `.sweetclaude/state/recovery-runs/` to `.gitignore` so
+  recovery snapshots, manifests, and reports are not committed accidentally.
+
+---
+
+## [4.1.2-beta] — 2026-05-24
+
+### Fixed
+
+- Disabled unsafe update-time taxonomy/orphan migration prompts. `sweetclaude:update` now reports legacy taxonomy and orphan findings without moving, copying, deleting, or normalizing project files.
+- `sweetclaude:doctor` no longer recommends taxonomy migration unless `migrate_taxonomy.py` is actually executable as a CLI entry point.
+- Corrected doctor routing guidance so taxonomy migration no longer delegates to the v3-to-v4 backlog migration skill.
+- Stable 3.x installs no longer get automatic prerelease prompts for 4.x beta tags; beta users still get prompted for newer beta/RC tags.
+
+---
+
+## [4.1.1-beta] — 2026-05-24
+
+### New features
+
+**Doctor diagnostic skill (EP-001, ISSUE-177–181)**
+- `sweetclaude:doctor` — unified diagnostic scan and repair skill across 8 categories: state integrity, hooks, storage, migration, config, files, onboarding, environment. 257 tests.
+- `validate_frontmatter()` used for all schema checks — consistent validation across all doctor categories.
+- Category filter support — run specific diagnostic categories instead of full scan.
+- Health delegation — `_health` delegates to doctor for consistency checks.
+- `fix-sweetclaude`, `migrate-diagnose`, and `claude-config-audit` replaced with thin wrappers that redirect to `doctor`.
+
+**Dashboard (ISSUE-188–190)**
+- `sweetclaude:dashboard` — local web dashboard showing roadmap, releases, epics, backlog, dependencies, git history, and skill activity.
+- Detail panel UX with sidebar navigation.
+- Drag-and-drop reorder and cross-priority moves for backlog issues.
+- Write-back API — changes in the dashboard persist to issue files.
+- Source flag, datetime fields, and story drag-and-drop support.
+
+**Status system overhaul (EP-002a/b, ISSUE-182–186)**
+- EP-002a: status integrity — canonical validation, derived status computation, consistency checks.
+- EP-002b: status visibility — derived status, view scopes, dashboard integration.
+- Milestone auto-close and auto-reopen with `source:auto` tracking.
+- Consolidated status views — single `/sweetclaude:status` command with dynamic view selection.
+
+**DateTime normalization (ISSUE-192)**
+- All timestamps normalized to full ISO 8601 with timezone across all state files and skill output.
+
+### Fixed
+
+- All script paths resolved to `~/.claude/scripts/sweetclaude/` for consistent cross-platform operation.
+- Auto-close bug fixes — false closure of items prevented.
+- Migration output now uses `ISSUE-NNN` format with flat backlog structure; orphan scan added.
 
 ---
 

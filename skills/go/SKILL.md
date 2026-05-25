@@ -55,9 +55,37 @@ find "$product_base/backlog" -maxdepth 2 -name 'BL-*.md' -o -name 'STORY-*.md' -
 
 If old-format files are found, output:
 
-> Your project has backlog items in the old format (BL-NNN / STORY-NNN / BUG-NNN). The current taxonomy uses ISSUE-NNN, so these items are invisible to current skills. Run `/sweetclaude:migrate` to convert them. Migration creates a backup first and is reversible.
+Run the recovery guard before recommending any migration:
 
-Then stop. Do not proceed to Step 3.
+```bash
+SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+if [ ! -f "$SCRIPT" ]; then
+  SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+fi
+if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
+  python3 "$SCRIPT" guard --project-dir . --pretty
+else
+  echo '{"status":"guard-unavailable","message":"Recovery guard unavailable. Run /sweetclaude:update before migration."}'
+fi
+```
+
+Parse the guard JSON:
+
+- `run-recover`: output
+  > Your project has old-format work items and recovery detected an unsafe migration/update state. Run `/sweetclaude:recover` before migration. Do not run `/sweetclaude:migrate` yet.
+  Then stop.
+- `manual-review` or `missing-product-base`: output the guard `message` and
+  stop. Do not recommend migration.
+- `compatibility-mode`: do not stop. Continue to Step 2 and use session-state
+  priority logic; old work items may be invisible to cache-backed backlog views,
+  but active work and checkpoint state are still usable. Do not recommend
+  migration.
+- `migration-may-be-needed`: output
+  > Your project has backlog items in the old format (BL-NNN / STORY-NNN / BUG-NNN). This appears to be a simple migration candidate. Review `/sweetclaude:migrate` before executing it; if there are duplicate IDs, typed backlog folders, stale migration state, or pending doctor prompts, run `/sweetclaude:recover` instead.
+  Then stop.
+- `guard-unavailable`: output the guard `message` and stop.
+
+If the guard did not return `compatibility-mode`, stop. Do not proceed to Step 3.
 
 ## Step 2: Apply improvement register
 

@@ -105,7 +105,32 @@ If `suppressions_resolved` is non-empty, list each one:
 
 ## Step 2b: Migration gate
 
-Check `migration_recommendations` from the scan output. If the array is non-empty, a migration would resolve a significant number of findings. Present this **before** the fix menu — migration should run first because it eliminates findings that would otherwise clutter the fix flow.
+Check `migration_recommendations` from the scan output. If the array is
+non-empty, do not present a migration prompt until the recovery guard has
+classified the project:
+
+```bash
+SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+if [ ! -f "$SCRIPT" ]; then
+  SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+fi
+if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
+  python3 "$SCRIPT" guard --project-dir . --pretty
+else
+  echo '{"status":"guard-unavailable","message":"Recovery guard unavailable. Run /sweetclaude:update before migration."}'
+fi
+```
+
+If guard `status` is `run-recover`, `manual-review`, `compatibility-mode`,
+`missing-product-base`, or `guard-unavailable`, do not present the migration
+menu. Output the guard `message`, then ask whether to run `/sweetclaude:recover`
+when recovery is available or continue to the non-migration fix menu. Do not
+invoke any migration script.
+
+If guard `status` is `migration-may-be-needed`, a migration may resolve a
+significant number of findings. Present this **before** the fix menu because a
+safe simple migration can eliminate findings that would otherwise clutter the
+fix flow.
 
 For each recommendation, present via AskUserQuestion:
 

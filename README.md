@@ -2,7 +2,7 @@
 
 # SweetClaude
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.1.2--beta-blue)](https://github.com/carson-sweet/sweetclaude/releases/tag/v4.1.2-beta) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/behavioral-contracts.md)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.1.3--beta-blue)](https://github.com/carson-sweet/sweetclaude/releases/tag/v4.1.3-beta) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/behavioral-contracts.md)
 
 ## TL;DR
 
@@ -13,7 +13,7 @@ Start Claude Code and run:
 /sweetclaude:help
 ```
 
-**Beta safety note:** beta releases before `v4.1.2-beta` have been withdrawn.
+**Beta safety note:** beta releases before `v4.1.3-beta` have been withdrawn.
 Do not install older v4 beta tags on active projects.
 
 To intentionally install the 4.x beta channel:
@@ -165,7 +165,8 @@ You can invoke skills directly if you know what you want. These are the most com
 | `/sweetclaude:off` | Suspend SweetClaude — preserves all artifacts, reactivate with `/sweetclaude:go` |
 | `/sweetclaude:purge` | Delete all SweetClaude artifacts — recommends a backup branch, shows all files, requires "I understand". **Taking a branch snapshot before is highly recommended.** |
 | `/sweetclaude:update` | Fetch latest SweetClaude from GitHub and sync to all projects |
-| `/sweetclaude:fix-sweetclaude` | Audit and repair SweetClaude configuration |
+| `/sweetclaude:doctor` | Diagnostic scan and repair across 8 categories — state integrity, hooks, storage, migration, config, files, onboarding, environment. Absorbed `fix-sweetclaude`, `migrate-diagnose`, and `claude-config-audit`. |
+| `/sweetclaude:recover` | Recover projects left in bad update, migration, doctor, or repair states. Snapshots first, requires approval, verifies safety, supports resume/rollback, and does not run unsafe taxonomy migration. |
 | `/sweetclaude:hook-repair` | Restore broken installed hooks from backup. Uses Bash only — works when Write/Edit are blocked. See [hook-development.md](docs/user-guide/hook-development.md) for manual and emergency procedures. |
 
 ### Advanced
@@ -234,4 +235,3 @@ Which in reality means you're moving dollars from my coffee budget to [my dog Sm
 Smushford thanks you.
 
 <img src="smushford.png" alt="Smushford Wellington DuBois III" width="400" style="display:block;margin-left:0;">
-

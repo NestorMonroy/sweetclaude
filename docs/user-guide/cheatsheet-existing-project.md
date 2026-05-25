@@ -8,8 +8,8 @@ SweetClaude is not just a coding tool. Even on an existing project, the strategi
 
 1. Install SweetClaude (if you have not already) — inside Claude Code run:
    ```
-   /plugin marketplace add https://github.com/carson-sweet/sweetclaude
-   /plugin install sweetclaude@sweetclaude
+   /plugin marketplace add carson-sweet/sweetclaude@stable-3.x
+   /plugin install sweetclaude@sweetclaude-stable
    ```
 2. Open Claude Code in your project folder
 3. Run:
@@ -60,7 +60,6 @@ You confirm or adjust. SweetClaude does not assume it knows better than you.
 
 SweetClaude creates:
 - `.sweetclaude/` folder with state tracking, decision log, and traceability
-- `strategy/` folder structure (empty, ready for strategic work if you want it)
 - Updates to CLAUDE.md if needed
 
 ### Step 6: First Action
@@ -87,10 +86,22 @@ If you are in the middle of implementation, these are your daily tools:
 If SweetClaude detected mismatches between its configuration and your actual project state:
 
 ```
-/sweetclaude:fix-sweetclaude
+/sweetclaude:doctor
 ```
 
-This audits CLAUDE.md accuracy, phase state, file locations, and empty registers. It proposes fixes for your approval — it does not change anything without asking.
+Diagnostic scan and repair across 8 categories: state integrity, hooks, storage, migration, config, files, onboarding, environment. Proposes fixes for your approval — it does not change anything without asking.
+
+If a beta update, migration, doctor, or repair flow left the project stuck or
+confused:
+
+```
+/sweetclaude:recover
+```
+
+Recovery diagnoses first, shows the exact plan, snapshots affected
+SweetClaude state and product artifacts, then requires approval before any
+write. For unsupported legacy layouts it stabilizes the project without
+running taxonomy migration.
 
 ### Add Strategic Foundation (Even Mid-Project)
 

@@ -181,15 +181,26 @@ if $PLUGIN_IS_V4 && ( $PROJECT_NOT_V4 || [ "$V3_FILES" -gt 0 ] ); then
     echo "Found $V3_FILES v3 stories at ${PRODUCT_BASE}/backlog/."
   fi
   echo ""
-  echo "Migration creates a safety backup and moves items to .sweetclaude/product/. Your"
-  echo "current work is not affected. A clean git working tree is not required."
+  SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+  if [ ! -f "$SCRIPT" ]; then
+    SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+  fi
+  if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
+    python3 "$SCRIPT" guard --project-dir . --pretty
+  else
+    echo '{"status":"guard-unavailable","message":"Recovery guard unavailable. Run /sweetclaude:update before migration."}'
+  fi
   echo ""
-  echo "Run: /sweetclaude:migrate"
+  echo "If the guard says recovery is needed, run: /sweetclaude:recover"
+  echo "Run /sweetclaude:migrate only when the guard says this is a simple migration candidate."
   exit 1
 fi
 ```
 
-If the v4 hard stop fires: print the message above and exit. No further skill execution.
+If the v4 hard stop fires: print the message above and exit. If the guard
+returns `run-recover`, `manual-review`, `compatibility-mode`,
+`missing-product-base`, or `guard-unavailable`, do not recommend migration. No
+further skill execution.
 
 If it does not fire (project is already at 4.x and has no v3 BL files): continue to Step 5c.
 

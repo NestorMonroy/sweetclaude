@@ -1,9 +1,9 @@
 # SweetClaude Skills Reference
 
-**Version:** 1.7
-**Date:** 2026-05-19
+**Version:** 1.8
+**Date:** 2026-05-24
 
-All 109 skills, organized by domain. Internal framework skills (_features, _health, _migrate, _route, bootstrap, master) are not user-invocable and have no table rows — they are referenced in section introductions only. One skill (`dashboard`) exists on disk but is not yet committed; it is excluded from this count. This page is reference — for narrative explanations of how skills fit together, read [Walkthroughs](walkthroughs.md) and [How It Works](how-it-works.md).
+All 112 skills, organized by domain. Internal framework skills (_features, _health, _migrate, _route, bootstrap, master, orchestrator) are not user-invocable and have no table rows — they are referenced in section introductions only. This page is reference — for narrative explanations of how skills fit together, read [Walkthroughs](walkthroughs.md) and [How It Works](how-it-works.md).
 
 You rarely need to memorize commands. `/sweetclaude:go` is the single entry point — it routes automatically based on project state and what you describe in plain English. The list below is for when you know exactly what you want.
 
@@ -38,7 +38,7 @@ Session navigation and automatic routing. Most of these fire without being invok
 
 ---
 
-## System (18 skills)
+## System (21 skills)
 
 Framework management — setup, teardown, updates, audits, and guards. Always available regardless of version stage.
 
@@ -48,9 +48,12 @@ Framework management — setup, teardown, updates, audits, and guards. Always av
 | **Init** | `/sweetclaude:init` | Bootstrap SweetClaude infrastructure only (no product discovery). Detects project type, creates `.sweetclaude/`, generates CLAUDE.md stub. For existing codebases with real history, use `/sweetclaude` (which routes to setup) instead. |
 | **Off** | `/sweetclaude:off` | Suspend SweetClaude for this project. Preserves all artifacts. Reactivate with `/sweetclaude:go`. |
 | **Update** | `/sweetclaude:update` | Fetch the latest version from GitHub and sync to all installed locations. Shows what changed. Migrates `phase.yaml`/`skills.yaml` from v2.x to `sweetclaude.yaml` format. On a v3→v4 upgrade, shows a major version warning before installing. |
-| **Migrate** | `/sweetclaude:migrate` | Migrate old-format backlog items (`BL-NNN`, `STORY-NNN`, `BUG-NNN`, etc.) to the unified `ISSUE-NNN` taxonomy under `.sweetclaude/product/backlog/`. Creates a safety backup, validates all files, shows a preview, executes the transform, verifies output, and offers to delete the old location. Run once per project after updating. |
-| **Migrate Diagnose** | _(internal)_ | Diagnoses v3 `BL-NNN` file problems before migration — missing fields, unknown statuses, duplicate IDs. Called by `sweetclaude:migrate` on failure and by bootstrap when v3 files are detected in a v4 install. Not user-invocable directly. |
-| **Fix SweetClaude** | `/sweetclaude:fix-sweetclaude` | Audit and repair configuration. Checks CLAUDE.md accuracy, phase state, file locations, `sweetclaude.yaml` consistency, empty registers, hook registrations. If `sweetclaude.yaml` is unparseable, offers repair options. Proposes fixes — does not change anything without asking. |
+| **Migrate** | `/sweetclaude:migrate` | Migrate simple old-format backlog items (`BL-NNN`, `STORY-NNN`, `BUG-NNN`, etc.) to the unified `ISSUE-NNN` taxonomy under `.sweetclaude/product/backlog/`. Creates a safety backup, validates all files, shows a preview, executes the transform, verifies output, and offers to delete the old location. If a project has duplicate IDs, typed legacy folders, stale migration state, or pending doctor prompts, use `/sweetclaude:recover` first. |
+| **Migrate Diagnose** | _(internal)_ | Redirects to `sweetclaude:doctor`. File diagnostics are now part of the doctor system. |
+| **Doctor** | `/sweetclaude:doctor` | Unified diagnostic scan and repair across 8 categories: state integrity, hooks, storage, migration, config, files, onboarding, environment. Absorbed `fix-sweetclaude`, `migrate-diagnose`, and `claude-config-audit`. Proposes fixes — does not change anything without asking. |
+| **Recover** | `/sweetclaude:recover` | Recover or unblock projects left in bad update, migration, doctor, or repair states. Diagnoses first, writes a manifest, snapshots affected state and product artifacts, requires approval before execution, verifies doctor/update/migrate/fix safety, supports resume and rollback, and never runs taxonomy migration for unsupported layouts. |
+| **Dashboard** | `/sweetclaude:dashboard` | Launch a local web dashboard showing roadmap, releases, epics, backlog, dependencies, git history, and skill activity. Supports drag-and-drop reorder, detail panels, and write-back to issue files. |
+| **Fix SweetClaude** | `/sweetclaude:fix-sweetclaude` | Redirects to `sweetclaude:doctor`. Retained as an alias for discoverability. |
 | **Purge** | `/sweetclaude:purge` | Delete all SweetClaude artifacts. Recommends a backup branch first. Requires typed confirmation. |
 | **Assess Mode** | `/sweetclaude:project-assess-shape` | Five-question interview to recommend and configure a project mode (Flow, Kanban, Shape Up, or Agile). Writes mode to `sweetclaude.yaml` and compiles `effective-gates.yaml`. Runs automatically at init; available on demand to re-assess. |
 | **Behavioral Regression** | `/sweetclaude:behavioral-regression` | Run the 15-contract behavioral test suite against the current model version. Tests phase dwelling, propose-not-ask, TDD enforcement claims, deference levels, detour recovery, improvement register triggers, and more. Run after any Claude model upgrade to detect silent behavioral drift. |
@@ -61,7 +64,7 @@ Framework management — setup, teardown, updates, audits, and guards. Always av
 | **Help** | `/sweetclaude:help` | Conversational help — describe what you want, learn how to work through prompting. Or browse all commands by category. |
 | **Hook Repair** | `/sweetclaude:hook-repair` | Restore broken installed hooks from `hooks.bak/`. Uses Bash only — works when Write/Edit hooks are blocking. Diagnoses broken hooks via `bash -n`, proposes restoration via AskUserQuestion, verifies after restore. Falls through to `bash scripts/emergency-hook-restore.sh` if backup is missing or itself broken. |
 | **Feature Setup** | `/sweetclaude:feature-setup` | Sync local SweetClaude repo to all installed locations and rebuild the project cache. Delegates to `scripts/sync-to-installed.sh` (phase gate, test gate, backup, rollback). For SweetClaude development only. |
-| **Claude Config Audit** | _(internal)_ | Scan the CLAUDE.md hierarchy, `settings.json`, and `~/.claude/rules/` for instructions that conflict with SweetClaude. Every conflict is raised to the user — nothing is changed without approval. |
+| **Claude Config Audit** | _(internal)_ | Redirects to `sweetclaude:doctor`. Config compatibility checks are now part of the doctor system. |
 
 ---
 

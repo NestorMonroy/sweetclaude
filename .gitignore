@@ -10,6 +10,7 @@ restore-config.sh
 
 # SweetClaude dogfood artifacts (internal work, not framework source)
 .sweetclaude/*
+.sweetclaude/state/recovery-runs/
 /strategy/
 /corpus/
 

@@ -27,8 +27,8 @@ If `gh` is not authenticated yet, run `gh auth login` once.
 Inside Claude Code, run:
 
 ```
-/plugin marketplace add https://github.com/carson-sweet/sweetclaude
-/plugin install sweetclaude@sweetclaude
+/plugin marketplace add carson-sweet/sweetclaude@stable-3.x
+/plugin install sweetclaude@sweetclaude-stable
 ```
 
 After install, every Claude Code session — in any project folder — has over 100 SweetClaude skills available as `/sweetclaude:something` commands.
@@ -54,7 +54,7 @@ Then in Claude Code:
 /sweetclaude:go
 ```
 
-SweetClaude detects the empty folder and routes to setup. It asks if you want a git repo (say yes), creates `.sweetclaude/`, `strategy/`, and a `CLAUDE.md`. Then it asks how collaborative you want to be this session — pick **Collaborative** for your first run so you can see every step.
+SweetClaude detects the empty folder and routes to setup. It asks if you want a git repo (say yes), creates `.sweetclaude/` and a `CLAUDE.md`. Then it asks how collaborative you want to be this session — pick **Collaborative** for your first run so you can see every step.
 
 Then it asks you to describe the idea.
 
@@ -134,11 +134,9 @@ your-project/
 │   │   ├── decision-log.md         ← any decisions you made with rationale
 │   │   ├── assumption-register.md  ← assumptions worth checking later
 │   │   └── improvement-register.md ← anything you told SweetClaude to do differently
+│   ├── product/
+│   │   └── backlog/                ← issues as ISSUE-NNN-slug.md files
 │   └── traceability/
-├── strategy/
-│   ├── concept.md                  ← the framing you settled on
-│   ├── discovery.md                ← who is this for, why does it matter
-│   └── personas/
 └── CLAUDE.md                       ← teaches future sessions about this project
 ```
 

@@ -8,7 +8,7 @@ description: "Structured backlog grooming session."
 
 ## MIGRATION GUARD
 
-Before any other work, check for unmigrated v3 BL files:
+Before any other work, check for legacy migration/recovery risk:
 
 ```bash
 PRODUCT_BASE=$(python3 -c "
@@ -22,15 +22,28 @@ if p.exists():
         exit()
 print('.sweetclaude/product')
 " 2>/dev/null || echo '.sweetclaude/product')
-V3_FILES=$(find "${PRODUCT_BASE}/backlog" -maxdepth 1 -name 'BL-*.md' 2>/dev/null | wc -l | tr -d ' ')
-if [ "$V3_FILES" -gt 0 ]; then
-  echo "This project has $V3_FILES v3 stories that need to be migrated first."
-  echo "Run: /sweetclaude:migrate"
-  exit 1
+LEGACY_FILES=$(find "${PRODUCT_BASE}" -maxdepth 4 -type f \( -name 'BL-*.md' -o -name 'STORY-*.md' -o -name 'BUG-*.md' -o -name 'DEBT-*.md' -o -name 'CHORE-*.md' \) 2>/dev/null | wc -l | tr -d ' ')
+if [ "$LEGACY_FILES" -gt 0 ]; then
+  SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+  if [ ! -f "$SCRIPT" ]; then
+    SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+  fi
+  if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
+    python3 "$SCRIPT" guard --project-dir . --pretty
+  else
+    echo '{"status":"guard-unavailable","message":"Recovery guard unavailable. Run /sweetclaude:update before migration."}'
+  fi
 fi
 ```
 
-If the guard fires: print the message and stop. Do not proceed.
+If the guard output has `status` `run-recover`, `manual-review`,
+`compatibility-mode`, `missing-product-base`, or `guard-unavailable`: print the
+guard `message`, tell the user to run `/sweetclaude:recover` when recovery is
+available, and stop. Do not recommend migration.
+
+If the guard output has `status` `migration-may-be-needed`: print the guard
+`message`, then stop and tell the user to review `/sweetclaude:migrate` before
+running it. Do not invoke migration from this skill.
 
 ```python
 import pathlib, yaml, re, datetime
