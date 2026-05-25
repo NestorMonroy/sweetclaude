@@ -18,8 +18,8 @@ For the 4.x beta channel, use this instead:
 
 All skills are immediately available. Then go to your project and run `/sweetclaude:go` to begin.
 
-**Beta safety note:** beta releases before `v4.1.3-beta` have been withdrawn.
-Do not install older v4 beta tags on active projects. Use `v4.1.3-beta` or
+**Beta safety note:** beta releases before `v4.1.4-beta` have been withdrawn.
+Do not install older v4 beta tags on active projects. Use `v4.1.4-beta` or
 newer for beta testing.
 
 ---
@@ -30,7 +30,7 @@ newer for beta testing.
 /sweetclaude:update
 ```
 
-Fetches the latest version from GitHub and syncs to all installed locations. Shows what changed, migrates state schemas if needed, and prompts to onboard any skills marked `uninitialized`.
+Fetches the latest framework version from GitHub and syncs to installed locations. In the 4.x beta, project migration and setup are separate safety-gated flows; update reports project drift without migrating project files inline.
 
 ---
 

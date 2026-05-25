@@ -41,6 +41,7 @@ def test_status_skill_routes_unsafe_layouts_to_recover_not_migrate():
 def test_legacy_project_skills_use_recovery_guard_before_migration():
     root = Path(__file__).parents[1] / "skills"
     guarded_skills = [
+        "bootstrap",
         "go",
         "project-backlog",
         "project-backlog-triage",
@@ -54,3 +55,79 @@ def test_legacy_project_skills_use_recovery_guard_before_migration():
         assert "guard --project-dir . --pretty" in skill
         assert "/sweetclaude:recover" in skill
         assert "Run: /sweetclaude:migrate" not in skill
+
+
+def test_bootstrap_v4_hard_stop_classifies_before_recommending_migrate():
+    skill = (
+        Path(__file__).parents[1] / "skills" / "bootstrap" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    guard_idx = skill.index("guard --project-dir . --pretty")
+    migrate_idx = skill.index("Run /sweetclaude:migrate only when the guard says")
+    assert guard_idx < migrate_idx
+    assert "If the guard says recovery is needed, run: /sweetclaude:recover" in skill
+    assert "do not recommend migration" in skill
+
+
+def test_migrate_skill_runs_preflight_before_lock_and_backup():
+    skill = (Path(__file__).parents[1] / "skills" / "migrate" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    preflight_idx = skill.index("preflight --project-dir .")
+    assert preflight_idx < skill.index('LOCK_FILE=".sweetclaude/state/migration.lock"')
+    assert preflight_idx < skill.index('BACKUP_DIR=".sweetclaude/state/backups"')
+    assert "Do not create `migration.lock`, backups, copied files, or migration maps" in skill
+
+
+def test_doctor_skill_does_not_directly_run_taxonomy_migration():
+    skill = (Path(__file__).parents[1] / "skills" / "doctor" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "migrate_taxonomy.py" in skill
+    assert "Do not\n  run this script directly from doctor" in skill
+    assert "run the script directly" not in skill.lower()
+
+
+def test_update_skill_decouples_framework_sync_from_project_mutation():
+    skill = (Path(__file__).parents[1] / "skills" / "update" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    capability = (
+        Path(__file__).parents[1]
+        / "skills"
+        / "update"
+        / "capability-surface.md"
+    ).read_text(encoding="utf-8")
+
+    assert "does not run\nproject-state migrations inline" in skill
+    assert "--scan-drift" in skill
+    assert "--report-drift-for-skill" not in skill
+    assert "No project files were changed by update." in skill
+    assert "Do not write `doctor-prompt-pending.json` from update" in skill
+    assert "Do not execute its project skill-state migration" in skill
+    assert "Skip feature configuration from update" in skill
+    assert "Skip plan-directory configuration from update" in skill
+    assert "Project-state migration is not run inline" in skill
+    assert "invoke `sweetclaude:_migrate`" not in skill
+    assert "invoke `sweetclaude:purge`" not in skill
+    assert "invoke `sweetclaude:adopt`" not in skill
+    assert "mv .sweetclaude" not in skill
+    assert "configure-plan-dir.py" not in skill
+    assert "Both parts must execute" not in capability
+    assert "disabled from update" in capability
+    assert "Do not execute these\ncommands from update" in capability
+
+
+def test_fix_sweetclaude_is_redirect_only():
+    skill = (
+        Path(__file__).parents[1] / "skills" / "fix-sweetclaude" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "replaced by `/sweetclaude:doctor`" in skill
+    assert "Invoke `sweetclaude:doctor` now." in skill
+    assert "python3" not in skill
+    assert "rm " not in skill
+    assert "mv " not in skill
+    assert "migrate_taxonomy.py" not in skill

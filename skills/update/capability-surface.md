@@ -1,6 +1,9 @@
 # Step 7: Surface capabilities (capability-surface.md)
 
-**IMPORTANT: This step has two parts. Both parts must execute. Do not stop after 7a.**
+**IMPORTANT:** `/sweetclaude:update` may use only the read-only "What's new"
+section below. Project skill-state migration, bootstrap, and onboarding are
+disabled from update in beta 4.x stabilization because they mutate project
+state without the maintenance safety contract.
 
 ## 7a: What's new in this update
 
@@ -22,11 +25,16 @@ New in this update:
 
 If nothing is new, show: "No new skills or hooks in this update."
 
-**Skill state check and bootstrap:**
+**Skill state check and bootstrap (disabled from update):**
 
-This runs unconditionally — regardless of whether any new skills were found.
+Do not run this section from `/sweetclaude:update`. It is retained as historical
+reference until the logic is moved behind a dedicated doctor/setup capability
+with diagnosis, plan, snapshot, approval, verification, and rollback/fail-closed
+behavior.
 
-Only run if `.sweetclaude/` exists in the current project directory.
+Historical reference only: the old implementation ran this only if
+`.sweetclaude/` existed in the current project directory. Do not execute these
+commands from update.
 
 Read `.sweetclaude/state/skills.yaml` if it exists.
 

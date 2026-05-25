@@ -8,6 +8,31 @@ All notable changes to SweetClaude are documented here.
 
 ---
 
+## [4.1.4-beta] — 2026-05-25
+
+### Fixed
+
+- Made `/sweetclaude:migrate` fail closed on unsupported typed backlog layouts
+  before creating locks, backups, converted files, or `MIGRATION-MAP.md`.
+- Added a deterministic migration preflight command that blocks accepted
+  compatibility-mode projects, typed legacy backlog folders, duplicate old
+  work-item IDs, malformed SweetClaude state, and layouts with no flat
+  `BL-NNN` files for the v3-to-v4 backlog migrator.
+- Hardened `/sweetclaude:doctor` so taxonomy migration remains blocked in beta
+  unless a future capability check proves the detected project layout is
+  supported. Doctor no longer directly invokes `migrate_taxonomy.py` from the
+  migration menu or prompted-fix delegation path.
+- Decoupled `/sweetclaude:update` framework sync from project mutation. Update
+  now treats project drift and taxonomy/orphan checks as read-only diagnostics
+  and does not invoke `_migrate`, purge/adopt, feature setup, capability
+  bootstrap, plan-directory writes, or doctor prompt marker writes inline.
+- Added installed-plugin smoke coverage on disposable llm-session-harness and
+  SynCog copies, proving recovery/compatibility routing, zero product artifact
+  mutation during recovery, read-only update drift checks, and stable/beta
+  prerelease isolation.
+
+---
+
 ## [4.1.3-beta] — 2026-05-25
 
 ### New features

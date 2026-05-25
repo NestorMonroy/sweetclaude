@@ -11,6 +11,7 @@ overall flow orchestration. This script provides the operations the skill
 delegates to.
 
 CLI subcommands:
+  preflight          --project-dir DIR
   resolve-base       --project-dir DIR
   scan-orphans       --project-dir DIR
   validate           --project-dir DIR
@@ -195,6 +196,109 @@ def _read_v3_file(path: pathlib.Path) -> tuple[dict, str] | tuple[None, str]:
 
 _WORK_ITEM_PATTERNS = ["BL-*.md", "STORY-*.md", "BUG-*.md", "DEBT-*.md", "CHORE-*.md", "ISSUE-*.md"]
 _TYPED_SUBDIRS = ["stories", "bugs", "debt", "chores"]
+_OLD_PREFIX_ID_RE = re.compile(r"^(STORY|BUG|DEBT|CHORE|BL)-\d+", re.I)
+
+
+def _read_sweetclaude_state(project_dir: pathlib.Path) -> dict:
+    state_path = project_dir / ".sweetclaude" / "state" / "sweetclaude.yaml"
+    if not state_path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(state_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        return {"_parse_error": str(exc)}
+    return data if isinstance(data, dict) else {}
+
+
+def migration_preflight(project_dir: pathlib.Path) -> dict:
+    """Read-only safety decision for the v3-to-v4 BL migration.
+
+    This migrator only supports the flat BL-NNN backlog layout. Typed backlog
+    layouts and accepted compatibility-mode projects must not proceed through
+    this script because doing so can create empty migration maps or mixed state.
+    """
+    product_base = resolve_product_base(project_dir)
+    backlog_path = product_base / "backlog"
+    direct_bl_files = sorted(backlog_path.glob("BL-*.md")) if backlog_path.is_dir() else []
+
+    typed_files: list[pathlib.Path] = []
+    if backlog_path.is_dir():
+        for subdir in _TYPED_SUBDIRS:
+            typed_dir = backlog_path / subdir
+            if typed_dir.is_dir():
+                typed_files.extend(sorted(typed_dir.rglob("*.md")))
+
+    old_typed_files = [
+        path for path in typed_files
+        if path.name.startswith(("STORY-", "BUG-", "DEBT-", "CHORE-", "BL-"))
+    ]
+
+    duplicate_ids: dict[str, list[str]] = {}
+    seen_ids: dict[str, list[str]] = {}
+    for path in old_typed_files:
+        fm = _sniff_frontmatter(path) or {}
+        id_match = _OLD_PREFIX_ID_RE.match(path.stem)
+        item_id = str(fm.get("id") or (id_match.group(0) if id_match else path.stem)).strip()
+        if item_id:
+            seen_ids.setdefault(item_id, []).append(str(path))
+    duplicate_ids = {
+        item_id: paths for item_id, paths in seen_ids.items() if len(paths) > 1
+    }
+
+    state = _read_sweetclaude_state(project_dir)
+    taxonomy_status = (
+        ((state.get("recovery") or {}).get("taxonomy") or {}).get("status")
+        if isinstance(state, dict)
+        else None
+    )
+
+    blockers: list[dict] = []
+    if state.get("_parse_error"):
+        blockers.append({
+            "code": "sweetclaude-state-parse-error",
+            "message": "sweetclaude.yaml cannot be parsed; migration requires manual review.",
+        })
+    if taxonomy_status == "stabilized-without-migration":
+        blockers.append({
+            "code": "compatibility-mode",
+            "message": "Project is in accepted legacy compatibility mode.",
+        })
+    if old_typed_files:
+        blockers.append({
+            "code": "unsupported-typed-backlog-layout",
+            "message": "Typed backlog folders are not supported by this BL migrator.",
+            "file_count": len(old_typed_files),
+        })
+    if duplicate_ids:
+        blockers.append({
+            "code": "duplicate-work-item-ids",
+            "message": "Duplicate work item IDs require explicit collision handling.",
+            "duplicates": duplicate_ids,
+        })
+    if not direct_bl_files and not old_typed_files and backlog_path.is_dir():
+        blockers.append({
+            "code": "no-flat-bl-files",
+            "message": "No flat BL-NNN files were found for this migrator.",
+        })
+
+    migrate_allowed = not blockers and bool(direct_bl_files)
+    status = "ok" if migrate_allowed else "blocked"
+    recommendation = (
+        "Proceed with v3 flat BL-NNN migration."
+        if migrate_allowed
+        else "Do not run this migration. Use /sweetclaude:recover or a layout-specific migration plan."
+    )
+
+    return {
+        "status": status,
+        "migrate_allowed": migrate_allowed,
+        "product_base": str(product_base),
+        "backlog_path": str(backlog_path),
+        "flat_bl_count": len(direct_bl_files),
+        "typed_old_prefix_count": len(old_typed_files),
+        "blocking_factors": blockers,
+        "recommendation": recommendation,
+    }
 
 
 def _sniff_frontmatter(path: pathlib.Path) -> dict | None:
@@ -466,6 +570,13 @@ def execute(project_dir: pathlib.Path, include_done: bool) -> dict:
     guard = _check_already_migrated(project_dir)
     if guard:
         return guard
+    preflight = migration_preflight(project_dir)
+    if not preflight["migrate_allowed"]:
+        return {
+            "error": "migration-blocked",
+            "preflight": preflight,
+            "message": preflight["recommendation"],
+        }
     plan = build_plan(project_dir, include_done)
     today = datetime.datetime.now(
         datetime.timezone.utc,
@@ -668,6 +779,7 @@ def main(argv: list[str] | None = None) -> int:
         return p
 
     _add("resolve-base")
+    _add("preflight")
     _add("scan-orphans")
     _add("validate")
     p_plan = _add("plan")
@@ -684,6 +796,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "resolve-base":
         _emit({"product_base": str(resolve_product_base(project_dir))})
+    elif args.cmd == "preflight":
+        _emit(migration_preflight(project_dir))
     elif args.cmd == "scan-orphans":
         _emit(scan_orphans(project_dir))
     elif args.cmd == "validate":

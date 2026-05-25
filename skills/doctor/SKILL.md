@@ -143,7 +143,9 @@ Options:
 **On Run migration:**
 
 Delegate to the appropriate migration skill based on `script`:
-- `migrate_taxonomy.py` → run the script directly; do **not** invoke `sweetclaude:migrate` because that skill wraps the v3-to-v4 BL migration script
+- `migrate_taxonomy.py` → blocked in this beta unless a future taxonomy
+  migration capability check proves the detected layout is supported. Do not
+  run this script directly from doctor.
 - `runner.py` → invoke `sweetclaude:_migrate`
 - `migrate-v3-to-v4.py` → invoke `sweetclaude:migrate`
 
@@ -377,9 +379,14 @@ When a prompted fix involves migration or restoration:
 
 - **Schema migration** (`fix_recipe.script` = "runner.py"): Invoke `sweetclaude:_migrate` skill. Record result via `record-action`.
 
-- **Taxonomy migration** (`fix_recipe.script` = "migrate_taxonomy.py"): Run the script directly. Record result.
+- **Taxonomy migration** (`fix_recipe.script` = "migrate_taxonomy.py"): Block in this beta unless a future taxonomy
+  migration capability check proves the detected layout is supported. Do not
+  run this script directly from doctor. Record the blocked action and route the
+  user to `/sweetclaude:recover` or manual review based on the recovery guard.
 
-- **v3-to-v4 migration** (`fix_recipe.script` = "migrate-v3-to-v4.py"): Run the script. Record result.
+- **v3-to-v4 migration** (`fix_recipe.script` = "migrate-v3-to-v4.py"): Invoke `sweetclaude:migrate`, which runs its
+  read-only preflight before creating locks, backups, files, or migration maps.
+  Record result.
 
 - **Purge/re-onboard**: Invoke `sweetclaude:purge`. Record result.
 
