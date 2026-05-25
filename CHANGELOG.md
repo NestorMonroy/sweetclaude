@@ -8,6 +8,15 @@ All notable changes to SweetClaude are documented here.
 
 ---
 
+## [4.1.9-beta] — 2026-05-25
+
+### Fixed
+
+- Hardened `/sweetclaude:update` for existing beta users with stale or legacy plugin metadata. Update now detects the installed SweetClaude channel, preserves the stable/beta branch boundary, ignores wrong-branch local repo sources, and repairs the recorded plugin version, commit SHA, and install path after sync.
+- Added deterministic plugin install-state inspection and repair coverage for legacy `sweetclaude` beta installs.
+
+---
+
 ## [4.1.8-beta] — 2026-05-25
 
 ### Fixed

@@ -21,6 +21,7 @@
 set -u
 
 VERSIONLESS="$HOME/.claude/scripts/sweetclaude"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FROM_UPDATE=false
 PROJECT_DIR=""
 
@@ -118,7 +119,34 @@ if [ -f "$VERSIONLESS/migrations/runner.py" ]; then
   RUNNER="$VERSIONLESS/migrations/runner.py"
 fi
 
-# 3. Clear legacy decline — only when invoked from update context.
+# 4. Resolve SweetClaude plugin install/channel state.
+SC_PLUGIN_OK=false
+SC_PLUGIN_KEY=""
+SC_PLUGIN_MARKETPLACE=""
+SC_PLUGIN_LEGACY_MARKETPLACE=false
+SC_PLUGIN_CHANNEL=""
+SC_PLUGIN_EXPECTED_REF=""
+SC_PLUGIN_EXPECTED_MARKETPLACE=""
+SC_PLUGIN_INSTALL_PATH=""
+SC_PLUGIN_VERSION=""
+SC_PLUGIN_GIT_SHA=""
+SC_PLUGIN_SCOPE=""
+SC_PLUGIN_INSTALL_EXISTS=false
+SC_PLUGIN_REASON=""
+PLUGIN_STATE_SCRIPT="$SCRIPT_DIR/maintenance/plugin-state.py"
+if [ ! -f "$PLUGIN_STATE_SCRIPT" ]; then
+  PLUGIN_STATE_SCRIPT="$VERSIONLESS/maintenance/plugin-state.py"
+fi
+if [ -f "$PLUGIN_STATE_SCRIPT" ]; then
+  CURRENT_ROOT_ARGS=()
+  if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    CURRENT_ROOT_ARGS=(--current-root "$CLAUDE_PLUGIN_ROOT")
+  fi
+  PLUGIN_STATE_OUT=$(python3 "$PLUGIN_STATE_SCRIPT" --project-dir "${PROJECT_DIR:-$PWD}" inspect "${CURRENT_ROOT_ARGS[@]}" --shell 2>/dev/null || true)
+  [ -n "$PLUGIN_STATE_OUT" ] && eval "$PLUGIN_STATE_OUT"
+fi
+
+# 5. Clear legacy decline — only when invoked from update context.
 if [ "$FROM_UPDATE" = "true" ] && [ -n "$PROJECT_DIR" ] && \
    [ -f "$PROJECT_DIR/.sweetclaude/state/sweetclaude.yaml" ]; then
   CLEAR_DECLINE="$VERSIONLESS/maintenance/clear-decline.py"
@@ -134,3 +162,16 @@ printf 'SELF_HEAL=%s\n'          "$SELF_HEAL"
 printf 'VERSION_DIR_HEALED=%s\n' "$VERSION_DIR_HEALED"
 printf 'DECLINE_CLEARED=%s\n'    "$DECLINE_CLEARED"
 printf 'RUNNER=%s\n'             "$RUNNER"
+printf 'SC_PLUGIN_OK=%s\n'       "$SC_PLUGIN_OK"
+printf 'SC_PLUGIN_KEY=%s\n'      "$SC_PLUGIN_KEY"
+printf 'SC_PLUGIN_MARKETPLACE=%s\n' "$SC_PLUGIN_MARKETPLACE"
+printf 'SC_PLUGIN_LEGACY_MARKETPLACE=%s\n' "$SC_PLUGIN_LEGACY_MARKETPLACE"
+printf 'SC_PLUGIN_CHANNEL=%s\n'  "$SC_PLUGIN_CHANNEL"
+printf 'SC_PLUGIN_EXPECTED_REF=%s\n' "$SC_PLUGIN_EXPECTED_REF"
+printf 'SC_PLUGIN_EXPECTED_MARKETPLACE=%s\n' "$SC_PLUGIN_EXPECTED_MARKETPLACE"
+printf 'SC_PLUGIN_INSTALL_PATH=%s\n' "$SC_PLUGIN_INSTALL_PATH"
+printf 'SC_PLUGIN_VERSION=%s\n' "$SC_PLUGIN_VERSION"
+printf 'SC_PLUGIN_GIT_SHA=%s\n' "$SC_PLUGIN_GIT_SHA"
+printf 'SC_PLUGIN_SCOPE=%s\n' "$SC_PLUGIN_SCOPE"
+printf 'SC_PLUGIN_INSTALL_EXISTS=%s\n' "$SC_PLUGIN_INSTALL_EXISTS"
+printf 'SC_PLUGIN_REASON=%s\n' "$SC_PLUGIN_REASON"

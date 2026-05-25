@@ -45,28 +45,60 @@ fi
 eval "$(bash ~/.claude/scripts/sweetclaude/preflight.sh --from-update 2>/dev/null)"
 ```
 
-`DECLINE_CLEARED=true` if the project's `framework.update.declined` was cleared. `RUNNER` is set for use in Step 6b. If the user picks "Not now" later, `declined` will be re-set to the specific version declined (per Gap #1's version-aware decline rule).
+`DECLINE_CLEARED=true` if the project's `framework.update.declined` was cleared. `RUNNER` is set for use in Step 6b. `SC_PLUGIN_CHANNEL`, `SC_PLUGIN_EXPECTED_REF`, `SC_PLUGIN_KEY`, `SC_PLUGIN_INSTALL_PATH`, `SC_PLUGIN_VERSION`, and `SC_PLUGIN_GIT_SHA` are emitted by the deterministic plugin-state helper and are the source of truth for channel-safe update decisions. If the user picks "Not now" later, `declined` will be re-set to the specific version declined (per Gap #1's version-aware decline rule).
 
 ---
 
 ## Step 1: Read current install state
 
-Read `~/.claude/plugins/installed_plugins.json` and find the `sweetclaude@sweetclaude` entry. Extract:
-- `installPath` — the plugin cache directory
-- `version` — current installed version
-- `gitCommitSha` — the commit currently installed
+Use the plugin-state variables emitted by Step -1. Do not manually choose a
+SweetClaude entry from `installed_plugins.json` when the helper has provided
+one. The helper understands the current plugin root, local project-scoped
+installs, legacy `sweetclaude@sweetclaude` beta installs, and the stable/beta
+channel split.
+
+Required variables:
+
+- `SC_PLUGIN_KEY` — the exact installed plugin key to repair after sync
+- `SC_PLUGIN_INSTALL_PATH` — the plugin cache directory to update
+- `SC_PLUGIN_VERSION` — current installed version
+- `SC_PLUGIN_GIT_SHA` — currently recorded installed commit
+- `SC_PLUGIN_CHANNEL` — `stable` or `beta`
+- `SC_PLUGIN_EXPECTED_REF` — `stable-3.x` or `beta-4.x`
+- `SC_PLUGIN_LEGACY_MARKETPLACE` — true when a legacy marketplace key is in use
+
+If `SC_PLUGIN_OK` is not `true`, stop and report that SweetClaude cannot find a
+repairable installed plugin entry. Do not guess from arbitrary plugin cache
+directories.
+
+Set:
+
+```bash
+installPath="$SC_PLUGIN_INSTALL_PATH"
+installed_version="$SC_PLUGIN_VERSION"
+installed_sha="$SC_PLUGIN_GIT_SHA"
+EXPECTED_REF="$SC_PLUGIN_EXPECTED_REF"
+PLUGIN_KEY="$SC_PLUGIN_KEY"
+```
 
 Read `{installPath}/.claude-plugin/plugin.json` and extract:
 - `repository` — the GitHub repo URL (fallback: `https://github.com/carson-sweet/sweetclaude`)
 
 Present:
 ```
-SweetClaude v{version}
-═══════════════════════
+SweetClaude v{installed_version}
+════════════════════════════════
 
 Installed: {installPath}
-Commit:    {gitCommitSha (short)}
+Commit:    {installed_sha (short)}
+Channel:   {SC_PLUGIN_CHANNEL} ({EXPECTED_REF})
 Source:    {repository}
+```
+
+If `SC_PLUGIN_LEGACY_MARKETPLACE=true`, include one warning line:
+
+```
+Legacy install metadata detected; this update will repair the recorded version, commit, and install path for the existing plugin entry.
 ```
 
 ---
@@ -87,14 +119,20 @@ except: print('')
 " 2>/dev/null)
 ```
 
-If `REPO_PATH` is non-empty AND `$REPO_PATH/package.json` exists AND the repo has a remote matching the repository URL, fetch from origin and use it as the source:
+If `REPO_PATH` is non-empty AND `$REPO_PATH/package.json` exists AND the repo has a remote matching the repository URL, fetch from origin. Use the local repo only when its current branch exactly matches `$EXPECTED_REF`. If the local repo is on any other branch, print a warning and ignore it for this update so beta users cannot be updated from main or stable users from beta:
 
 ```bash
 git -C "$REPO_PATH" fetch origin
-git -C "$REPO_PATH" log --oneline -1
+LOCAL_BRANCH=$(git -C "$REPO_PATH" branch --show-current 2>/dev/null || true)
+if [ "$LOCAL_BRANCH" != "$EXPECTED_REF" ]; then
+  echo "Ignoring local SweetClaude repo for update: branch $LOCAL_BRANCH does not match channel ref $EXPECTED_REF"
+  REPO_PATH=""
+else
+  git -C "$REPO_PATH" log --oneline -1
+fi
 ```
 
-- If fetch succeeds: use `$REPO_PATH` as SOURCE_DIR. The local repo may be ahead of GitHub (unpushed dev commits) — that is intentional and correct. Skip to Step 3.
+- If fetch succeeds and the local branch matches `$EXPECTED_REF`: use `$REPO_PATH` as SOURCE_DIR. The local repo may be ahead of GitHub on that channel branch — that is intentional and correct. Skip to Step 3.
 - If fetch fails (network error): warn ("Could not reach GitHub to check for remote updates — proceeding with local repo state.") and use `$REPO_PATH` as SOURCE_DIR. Skip to Step 3.
 
 ### 2b: GitHub (standard user workflow)
@@ -105,9 +143,9 @@ If no local repo found, clone a fresh shallow copy from GitHub. Use `gh` if avai
 TMPDIR=$(mktemp -d)
 
 if command -v gh &>/dev/null; then
-  gh repo clone {owner}/{repo} "$TMPDIR/sweetclaude" -- --depth 1
+  gh repo clone {owner}/{repo} "$TMPDIR/sweetclaude" -- --depth 1 --branch "$EXPECTED_REF"
 else
-  git clone --depth 1 {repository_url} "$TMPDIR/sweetclaude"
+  git clone --depth 1 --branch "$EXPECTED_REF" {repository_url} "$TMPDIR/sweetclaude"
 fi
 ```
 
@@ -122,13 +160,13 @@ Use `$TMPDIR/sweetclaude` as SOURCE_DIR.
 
 ## Step 3: Compare versions
 
-When SOURCE_DIR is the local repo (came from Step 2a), compare against `origin/HEAD` — not local `HEAD` — so commits on GitHub that haven't been pulled yet are detected. If origin is ahead of local HEAD, pull before syncing:
+When SOURCE_DIR is the local repo (came from Step 2a), compare against `origin/$EXPECTED_REF` — not local `HEAD` and not `origin/HEAD` — so the current install channel is preserved and commits on the matching channel branch are detected. If origin is ahead of local HEAD, pull before syncing:
 
 ```bash
 # Determine effective SHA to compare
 CONFIGURED_REPO=$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/sweetclaude-install.json'))); print(d.get('repo_path',''))" 2>/dev/null || echo "")
 if [ "$SOURCE_DIR" = "$CONFIGURED_REPO" ]; then
-  EFFECTIVE_SHA=$(git -C $SOURCE_DIR rev-parse origin/HEAD)
+  EFFECTIVE_SHA=$(git -C $SOURCE_DIR rev-parse "origin/$EXPECTED_REF")
   LOCAL_SHA=$(git -C $SOURCE_DIR rev-parse HEAD)
   if [ "$EFFECTIVE_SHA" != "$LOCAL_SHA" ]; then
     git -C $SOURCE_DIR pull --ff-only origin
@@ -363,15 +401,25 @@ If `$HOOK_RECONCILE_LOG` contains only `ok: hooks already up to date`, omit both
 
 ## Step 5: Update plugin metadata
 
-Update `~/.claude/plugins/installed_plugins.json`:
+Update `~/.claude/plugins/installed_plugins.json` through the deterministic
+plugin-state helper. Do not hand-edit JSON and do not hard-code
+`sweetclaude@sweetclaude`; update the exact `SC_PLUGIN_KEY` selected in Step 1.
 
-1. Read the HEAD SHA: `git -C $SOURCE_DIR rev-parse HEAD`
-2. Read the version from `$SOURCE_DIR/package.json`
-3. Update the `sweetclaude@sweetclaude` entry:
-   - `lastUpdated` → current ISO timestamp
-   - `gitCommitSha` → HEAD SHA
-   - `version` → package.json version
-   - `installPath` → the version-named directory synced in Step 4 (`$VERSION_DIR`) if it was created; otherwise leave unchanged. This ensures Claude Code loads skills from the same directory that was just synced.
+```bash
+NEW_SHA=$(git -C "$SOURCE_DIR" rev-parse HEAD)
+NEW_VER=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$SOURCE_DIR/package.json")
+SYNC_TARGET="${VERSION_DIR:-$installPath}"
+python3 ~/.claude/scripts/sweetclaude/maintenance/plugin-state.py \
+  --project-dir . \
+  repair \
+  --plugin-key "$PLUGIN_KEY" \
+  --install-path "$SYNC_TARGET" \
+  --version "$NEW_VER" \
+  --sha "$NEW_SHA"
+```
+
+This repairs stale existing-user metadata: `lastUpdated`, `gitCommitSha`,
+`version`, and `installPath` all move to the just-synced channel version.
 
 ---
 
