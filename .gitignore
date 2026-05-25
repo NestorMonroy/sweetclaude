@@ -2,9 +2,6 @@
 uninstall.sh
 restore-config.sh
 
-# macOS metadata
-.DS_Store
-
 # Playwright MCP artifacts (screenshots, page captures, console logs)
 .playwright-mcp/
 
@@ -42,6 +39,9 @@ scripts/bump-version.sh
 
 # Generated script output
 scripts/migration-report.md
+
+# macOS metadata
+.DS_Store
 
 # Python cache
 __pycache__/
