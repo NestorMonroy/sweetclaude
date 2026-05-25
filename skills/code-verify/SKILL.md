@@ -49,6 +49,29 @@ The distinction: "tests ran" is a mechanical fact. "the feature is done" is a cl
 
 ---
 
+
+## Evidence Receipt
+
+When every required check passes for a concrete work item, write a completion
+evidence receipt before making any completion, close, ship, or release claim:
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/evidence.py write \
+  --project-dir . \
+  --subject-id {WORK_ITEM_ID} \
+  --receipt-type completion \
+  --check verification \
+  --status pass \
+  --command "{exact verification command}" \
+  --summary "{short result summary}"
+```
+
+Keep the returned `receipt` path and pass it to closeout commands with
+`--evidence-receipt {receipt}`.
+
+do not write a passing receipt for partial verification, stale output, failed
+commands, unrelated test runs, or an unspecified work item.
+
 ## Stop Signs
 
 Do not proceed to commit, PR, or phase advancement if any of the following are true:

@@ -371,8 +371,19 @@ git ls-remote --heads origin {branch} | grep -q . \
 Report: `✓ origin/{branch} deleted` or `✓ origin/{branch} not present — skipped`
 
 **Step C5 — Move story to `done/` and update frontmatter**:
+
+Require a fresh completion evidence receipt for `{STORY-ID}` before closing.
+Use the receipt created by `/sweetclaude:code-verify`; do not self-generate a
+passing receipt from memory or old output. Validate it first:
+
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file "{issue_file_path}" --status done --actor go --project-dir .
+python3 ~/.claude/scripts/sweetclaude/evidence.py validate --receipt "{receipt_path}" --subject-id "{STORY-ID}"
+```
+
+If no valid receipt exists, stop and run `/sweetclaude:code-verify` first.
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file "{issue_file_path}" --status done --actor go --project-dir . --evidence-receipt "{receipt_path}"
 ```
 Report: `✓ {STORY-ID} → done/{filename}`
 

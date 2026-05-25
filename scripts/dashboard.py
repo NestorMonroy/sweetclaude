@@ -389,7 +389,23 @@ def handle_update(project_dir, payload):
             old_status = ""
         try:
             if new_status in TS:
-                set_terminal(str(src_path), new_status, actor, project_dir=str(project_dir), source="manual")
+                evidence_receipt = payload.get("evidence_receipt")
+                if new_status == "done" and not evidence_receipt:
+                    return {
+                        "error": (
+                            "Cannot mark done without evidence_receipt. "
+                            "Run /sweetclaude:code-verify first, then retry with the receipt path."
+                        )
+                    }
+                set_terminal(
+                    str(src_path),
+                    new_status,
+                    actor,
+                    project_dir=str(project_dir),
+                    source="manual",
+                    evidence_receipt=evidence_receipt,
+                    require_evidence=True,
+                )
             else:
                 write_status(str(src_path), new_status, actor, project_dir=str(project_dir), source="manual")
             return {"ok": True, "id": item_id, "field": "status", "old": old_status, "new": new_status}

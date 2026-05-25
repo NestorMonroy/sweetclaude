@@ -186,6 +186,7 @@ After table: suggest `project-sprints` to schedule issues into a sprint, or `pro
 
 ## View
 
+
 ```python
 path = find_issue_by_id('<ID>')
 if not path:
@@ -322,6 +323,17 @@ If `superseded`, ask: "What issue replaces this one?" Set `superseded_by: ISSUE-
 
 If `terminal_status` is `done` and current status is not `in-review` or `active`, warn: "This issue hasn't reached review. Close anyway?" Proceed only on confirmation.
 
+
+If `terminal_status` is `done`, require a valid completion evidence receipt.
+Use the receipt created by `sweetclaude:code-verify`; do not self-generate a
+passing receipt from memory or a stale prior run. Validate it before closing:
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/evidence.py validate --receipt {receipt_path} --subject-id <ID>
+```
+
+If no valid receipt exists, stop and run `/sweetclaude:code-verify` first.
+
 ```python
 path = find_issue_by_id('<ID>')
 if not (ROADMAP_ISSUES in path.parents or path.parent == ROADMAP_ISSUES):
@@ -333,6 +345,14 @@ if terminal_status == 'superseded':
     fm['superseded_by'] = '<replacement_id>'
     write_issue_file(path, fm, body)
 ```
+
+For `done`:
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {path} --status done --actor project-issues --project-dir . --evidence-receipt {receipt_path}
+```
+
+For `abandoned` or `superseded`:
 
 ```bash
 python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {path} --status {terminal_status} --actor project-issues --project-dir .

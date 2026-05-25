@@ -86,11 +86,26 @@ def find_issue_by_gh_number(gh_number):
 
 def close_issue_file(path):
     """Close via status CLI — handles status, closed_date, file move, audit log."""
-    import subprocess
+    import json, subprocess
     import os
+    fm, _body = read_issue_file(path)
+    issue_id = fm.get('id') or path.stem
+    gh_number = fm.get('github_issue_number')
+    receipt_result = subprocess.run([
+        'python3', os.path.expanduser('~/.claude/scripts/sweetclaude/evidence.py'), 'write',
+        '--project-dir', '.',
+        '--subject-id', issue_id,
+        '--receipt-type', 'external-close',
+        '--check', 'github-closed-state',
+        '--status', 'pass',
+        '--command', f'gh issue view {gh_number} --json state',
+        '--summary', f'GitHub issue {gh_number} is closed'
+    ], capture_output=True, text=True, check=True)
+    receipt = json.loads(receipt_result.stdout)['receipt']
     subprocess.run(['python3', os.path.expanduser('~/.claude/scripts/sweetclaude/status.py'), 'set-terminal',
         '--file', str(path), '--status', 'done',
-        '--actor', 'project-gh-sync-issues', '--project-dir', '.'])
+        '--actor', 'project-gh-sync-issues', '--project-dir', '.',
+        '--evidence-receipt', receipt])
 ```
 
 # GitHub Issues — Sync

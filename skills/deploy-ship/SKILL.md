@@ -130,6 +130,21 @@ If smoke test passes, log result:
 | {next #} | {today} | Smoke test passed for {work item id} | {brief description of what was tested} | N/A |
 ```
 
+Then write a ship evidence receipt and keep the returned path for any closeout
+command:
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/evidence.py write \
+  --project-dir . \
+  --subject-id {work item id} \
+  --receipt-type ship \
+  --check smoke-test \
+  --status pass \
+  --command "manual post-deploy smoke test" \
+  --summary "{brief description of what was tested}"
+```
+
+
 ---
 
 ## Step 7: Close out the work item

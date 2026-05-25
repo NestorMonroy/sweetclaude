@@ -30,6 +30,7 @@ if _SCRIPTS_DIR not in sys.path:
 
 import orchestrator_loop
 from orchestrator_loop import run_loop, resume_loop
+from evidence import write_receipt
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +175,32 @@ def _make_workflow_state(project_dir, workflow_id="STORY-025", current_step_id="
         state.update(extra)
     (wf_dir / f"{workflow_id}.yaml").write_text(yaml.safe_dump(state))
     return wf_dir / f"{workflow_id}.yaml"
+
+
+def _make_product_issue(project_dir, item_id="ISSUE-025", status="active"):
+    path = project_dir / ".sweetclaude" / "product" / "roadmap" / "issues" / f"{item_id}-test.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "---\n"
+        + yaml.safe_dump({
+            "id": item_id,
+            "title": f"Test issue {item_id}",
+            "type": "enhancement",
+            "status": status,
+            "created": "2026-05-25",
+        }, default_flow_style=False)
+        + "---\n\n## Description\nTest issue.\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _make_project_status_script(project_dir):
+    scripts_dir = project_dir / "scripts"
+    scripts_dir.mkdir(exist_ok=True)
+    status_py = scripts_dir / "status.py"
+    status_py.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    return status_py
 
 
 def _make_step(id, phase="ACTIVATION", agent=None, model="sonnet", subagent_type="code",
@@ -973,6 +1000,68 @@ class TestSessionStateIntegration:
         data = yaml.safe_load(sc_yaml.read_text())
         history = data.get("work_history", [])
         assert any(h.get("result") == "complete" for h in history)
+
+
+    def test_workflow_completion_with_product_item_requires_evidence_before_close(self, tmp_path):
+        """A completed workflow must not clear active work if item close lacks evidence."""
+        project_dir = _full_project(
+            tmp_path,
+            workflow_id="ISSUE-025",
+            current_step_id="COMPLETE",
+        )
+        _make_product_issue(project_dir, item_id="ISSUE-025", status="active")
+        _make_project_status_script(project_dir)
+
+        with patch.object(orchestrator_loop.subprocess, "run") as run_spy:
+            result = run_loop("ISSUE-025", project_dir=str(project_dir), deference_level="autonomous")
+
+        assert result["payload"]["status_update"] == "evidence_required"
+        run_spy.assert_not_called()
+
+        sc_yaml = tmp_path / ".sweetclaude" / "state" / "sweetclaude.yaml"
+        data = yaml.safe_load(sc_yaml.read_text())
+        active = data.get("work", {}).get("active")
+        assert active["id"] == "ISSUE-025"
+        assert active["phase"] == "VERIFY"
+        assert active["completion_pending_evidence"] is True
+        assert not any(h.get("result") == "complete" for h in data.get("work_history", []))
+
+    def test_workflow_completion_with_receipt_passes_evidence_to_status_update(self, tmp_path):
+        """When a completion receipt exists, orchestrator can close and clear active work."""
+        project_dir = _full_project(
+            tmp_path,
+            workflow_id="ISSUE-025",
+            current_step_id="COMPLETE",
+        )
+        _make_product_issue(project_dir, item_id="ISSUE-025", status="active")
+        _make_project_status_script(project_dir)
+        receipt = write_receipt(
+            project_dir,
+            subject_id="ISSUE-025",
+            receipt_type="completion",
+            check_name="tests",
+            status="pass",
+            command="pytest -q",
+            summary="focused verification passed",
+        )
+        wf_state = tmp_path / ".sweetclaude" / "state" / "workflows" / "ISSUE-025.yaml"
+        state = yaml.safe_load(wf_state.read_text())
+        state["artifacts"]["completion_evidence_receipt"] = str(receipt)
+        wf_state.write_text(yaml.safe_dump(state))
+
+        completed = MagicMock(returncode=0, stdout='{"status": "done"}', stderr="")
+        with patch.object(orchestrator_loop.subprocess, "run", return_value=completed) as run_spy:
+            result = run_loop("ISSUE-025", project_dir=str(project_dir), deference_level="autonomous")
+
+        assert result["payload"]["status_update"] == "updated"
+        cmd = run_spy.call_args.args[0]
+        assert "--evidence-receipt" in cmd
+        assert str(receipt) in cmd
+
+        sc_yaml = tmp_path / ".sweetclaude" / "state" / "sweetclaude.yaml"
+        data = yaml.safe_load(sc_yaml.read_text())
+        assert data.get("work", {}).get("active") is None
+        assert any(h.get("result") == "complete" for h in data.get("work_history", []))
 
     def test_workflow_abort_clears_active_work(self, tmp_path):
         """When workflow is halted, sweetclaude.yaml work.active is cleared."""

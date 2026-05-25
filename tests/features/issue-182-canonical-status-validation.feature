@@ -252,7 +252,8 @@ Feature: Canonical status validation module
 
   Scenario: CLI set-terminal command moves file
     Given a markdown file at "roadmap/issues/ISSUE-222-test.md" with status "active"
-    When I run "python3 scripts/status.py set-terminal --file roadmap/issues/ISSUE-222-test.md --status done --actor go"
+    And a valid completion evidence receipt exists for "ISSUE-222"
+    When I run "python3 scripts/status.py set-terminal --file roadmap/issues/ISSUE-222-test.md --status done --actor go --evidence-receipt .sweetclaude/state/evidence/ISSUE-222-completion.json"
     Then the exit code is 0
     And the file exists at "roadmap/issues/done/ISSUE-222-test.md"
 

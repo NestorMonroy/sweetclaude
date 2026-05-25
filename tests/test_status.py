@@ -43,6 +43,7 @@ from status import (
     sync_parent_status,
     _reopen_file,
 )
+from evidence import write_receipt
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +99,18 @@ def _make_issue(project_dir: Path, rel_path: str, status: str, issue_id: str = N
         "created": "2026-05-22",
     })
     return path
+
+
+def _write_completion_receipt(project_dir: Path, subject_id: str) -> Path:
+    return write_receipt(
+        project_dir,
+        subject_id=subject_id,
+        receipt_type="completion",
+        check_name="tests",
+        status="pass",
+        command="pytest -q",
+        summary="focused verification passed",
+    )
 
 
 def _get_cache_row(project_dir: Path, item_id: str) -> dict | None:
@@ -1036,6 +1049,37 @@ class TestCliSetTerminal:
     def test_exit_code_zero(self, tmp_path):
         project_dir = _setup_project_dir(tmp_path)
         _make_issue(project_dir, "roadmap/issues/ISSUE-222-test.md", "active", "ISSUE-222")
+        receipt = _write_completion_receipt(project_dir, "ISSUE-222")
+
+        result = _run_cli([
+            "set-terminal",
+            "--file", str(project_dir / "roadmap" / "issues" / "ISSUE-222-test.md"),
+            "--status", "done",
+            "--actor", "go",
+            "--project-dir", str(project_dir),
+            "--evidence-receipt", str(receipt),
+        ])
+        assert result.returncode == 0
+
+    def test_file_moved_to_done(self, tmp_path):
+        project_dir = _setup_project_dir(tmp_path)
+        _make_issue(project_dir, "roadmap/issues/ISSUE-222-test.md", "active", "ISSUE-222")
+        receipt = _write_completion_receipt(project_dir, "ISSUE-222")
+
+        _run_cli([
+            "set-terminal",
+            "--file", str(project_dir / "roadmap" / "issues" / "ISSUE-222-test.md"),
+            "--status", "done",
+            "--actor", "go",
+            "--project-dir", str(project_dir),
+            "--evidence-receipt", str(receipt),
+        ])
+
+        assert (project_dir / "roadmap" / "issues" / "done" / "ISSUE-222-test.md").exists()
+
+    def test_done_without_evidence_receipt_fails_closed(self, tmp_path):
+        project_dir = _setup_project_dir(tmp_path)
+        _make_issue(project_dir, "roadmap/issues/ISSUE-222-test.md", "active", "ISSUE-222")
 
         result = _run_cli([
             "set-terminal",
@@ -1044,21 +1088,30 @@ class TestCliSetTerminal:
             "--actor", "go",
             "--project-dir", str(project_dir),
         ])
-        assert result.returncode == 0
 
-    def test_file_moved_to_done(self, tmp_path):
+        assert result.returncode == 1
+        out = json.loads(result.stdout)
+        assert "evidence" in out["error"].lower()
+        assert (project_dir / "roadmap" / "issues" / "ISSUE-222-test.md").exists()
+
+    def test_done_with_wrong_subject_receipt_fails_closed(self, tmp_path):
         project_dir = _setup_project_dir(tmp_path)
         _make_issue(project_dir, "roadmap/issues/ISSUE-222-test.md", "active", "ISSUE-222")
+        receipt = _write_completion_receipt(project_dir, "ISSUE-999")
 
-        _run_cli([
+        result = _run_cli([
             "set-terminal",
             "--file", str(project_dir / "roadmap" / "issues" / "ISSUE-222-test.md"),
             "--status", "done",
             "--actor", "go",
             "--project-dir", str(project_dir),
+            "--evidence-receipt", str(receipt),
         ])
 
-        assert (project_dir / "roadmap" / "issues" / "done" / "ISSUE-222-test.md").exists()
+        assert result.returncode == 1
+        out = json.loads(result.stdout)
+        assert "subject mismatch" in out["error"].lower()
+        assert (project_dir / "roadmap" / "issues" / "ISSUE-222-test.md").exists()
 
 
 # ---------------------------------------------------------------------------

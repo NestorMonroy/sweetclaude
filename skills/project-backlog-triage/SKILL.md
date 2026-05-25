@@ -195,8 +195,17 @@ python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {path} --sta
 
 On `done` (status → done, move to done/):
 
+Require a valid completion evidence receipt before marking done. Use the
+receipt created by `/sweetclaude:code-verify`, then validate it:
+
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {path} --status done --actor project-backlog-triage --project-dir .
+python3 ~/.claude/scripts/sweetclaude/evidence.py validate --receipt "{receipt_path}" --subject-id "{ID}"
+```
+
+If no valid receipt exists, stop and run `/sweetclaude:code-verify` first.
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {path} --status done --actor project-backlog-triage --project-dir . --evidence-receipt "{receipt_path}"
 ```
 
 `set-terminal` handles: status change, `closed_date`, file move, audit log, cache rebuild.

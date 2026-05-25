@@ -209,45 +209,98 @@ def _find_item_file(project_dir, item_id):
     return None
 
 
-def _update_item_status(project_dir, item_id, result):
+def _completion_evidence_receipt(state):
+    if not isinstance(state, dict):
+        return None
+
+    candidates = [
+        state.get("completion_evidence_receipt"),
+        state.get("evidence_receipt"),
+        state.get("completion_receipt"),
+    ]
+
+    artifacts = state.get("artifacts")
+    if isinstance(artifacts, dict):
+        candidates.extend([
+            artifacts.get("completion_evidence_receipt"),
+            artifacts.get("evidence_receipt"),
+            artifacts.get("completion_receipt"),
+        ])
+
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            candidate = candidate.get("path") or candidate.get("receipt")
+        if candidate:
+            return str(candidate)
+    return None
+
+
+def _update_item_status(project_dir, item_id, result, evidence_receipt=None):
     filepath = _find_item_file(project_dir, item_id)
     if not filepath:
-        return
+        return None
     status_py = os.path.join(project_dir, "scripts", "status.py")
     if not os.path.isfile(status_py):
         print("WARNING: scripts/status.py not found, skipping status update", file=sys.stderr)
-        return
+        return False
     if result == "complete":
+        if not evidence_receipt:
+            print(
+                "WARNING: workflow completed, but SweetClaude did not mark {} done "
+                "because no completion evidence receipt was recorded. Run "
+                "/sweetclaude:code-verify, then close the item with the receipt.".format(item_id),
+                file=sys.stderr,
+            )
+            return False
         cmd = ["python3", status_py, "set-terminal",
                "--file", filepath, "--status", "done",
-               "--actor", "orchestrator", "--project-dir", project_dir]
+               "--actor", "orchestrator", "--project-dir", project_dir,
+               "--evidence-receipt", evidence_receipt]
     elif result == "halted":
         cmd = ["python3", status_py, "set",
                "--file", filepath, "--status", "on-hold",
                "--actor", "orchestrator", "--project-dir", project_dir]
     else:
-        return
+        return None
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
     if r.returncode != 0:
         print("WARNING: status update failed for {}: {}".format(
             item_id, r.stdout.strip() or r.stderr.strip()), file=sys.stderr)
+        return False
+    return True
 
 
-def _complete_sc(project_dir, workflow_id, result):
+def _complete_sc(project_dir, workflow_id, result, workflow_state=None):
     sc = _load_sc_yaml(project_dir)
     work = sc.setdefault("work", {})
     active = work.get("active", {})
     if active and active.get("id") and active["id"] != workflow_id:
-        return
+        return {"status_update": "skipped-active-mismatch"}
     item_id = active.get("id") if active else None
     if item_id:
-        _update_item_status(project_dir, item_id, result)
+        evidence_receipt = None
+        if result == "complete":
+            evidence_receipt = _completion_evidence_receipt(workflow_state)
+        status_updated = _update_item_status(
+            project_dir,
+            item_id,
+            result,
+            evidence_receipt=evidence_receipt,
+        )
+        if result == "complete" and status_updated is False:
+            active["phase"] = "VERIFY"
+            active["completion_pending_evidence"] = True
+            active["workflow_completed_at"] = _now_iso()
+            work["active"] = active
+            _save_sc_yaml(sc, project_dir)
+            return {"status_update": "evidence_required"}
     history = sc.setdefault("work_history", [])
     already = any(h.get("id") == workflow_id and h.get("result") == result for h in history)
     if not already:
         history.append({"id": workflow_id, "result": result, "at": _now_iso()})
     work["active"] = None
     _save_sc_yaml(sc, project_dir)
+    return {"status_update": "updated" if item_id else "no-item"}
 
 
 def _invoke_agent(*args, **kwargs):
@@ -326,12 +379,12 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
         current_step_id = state.get("current_step_id")
 
         if current_step_id == "COMPLETE":
-            _complete_sc(project_dir, workflow_id, "complete")
-            return {"reason": "complete", "step_id": "COMPLETE", "payload": {}}
+            payload = _complete_sc(project_dir, workflow_id, "complete", workflow_state=state)
+            return {"reason": "complete", "step_id": "COMPLETE", "payload": payload or {}}
 
         if current_step_id == "HALTED":
-            _complete_sc(project_dir, workflow_id, "halted")
-            return {"reason": "halted", "step_id": "HALTED", "payload": {}}
+            payload = _complete_sc(project_dir, workflow_id, "halted", workflow_state=state)
+            return {"reason": "halted", "step_id": "HALTED", "payload": payload or {}}
 
         step = _find_step(current_step_id, steps)
         if step is None:
