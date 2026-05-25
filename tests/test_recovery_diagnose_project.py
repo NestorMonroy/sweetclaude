@@ -265,6 +265,25 @@ def test_recover_project_cli_diagnose_emits_json(tmp_path):
     assert "unsupported-typed-backlog-layout" in result["failure_class_codes"]
 
 
+def test_recover_project_cli_without_subcommand_defaults_to_read_only_diagnosis(tmp_path):
+    project = _copy_syncog_fixture(tmp_path)
+
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH)],
+        cwd=project,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stderr == ""
+    result = json.loads(completed.stdout)
+    assert result["command"] == "diagnose"
+    assert result["mutating_actions_allowed"] is False
+    assert result["recovery_route"] == "stabilize-without-migration"
+
+
 def test_recover_project_cli_guard_emits_json(tmp_path):
     project = _copy_syncog_fixture(tmp_path)
 

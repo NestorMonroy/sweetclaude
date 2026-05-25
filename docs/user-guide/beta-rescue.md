@@ -46,7 +46,7 @@ update that exact key:
 /plugin update sweetclaude@sweetclaude
 ```
 
-This should move the beta install to the current `4.1.10-beta` or newer release.
+This should move the beta install to the current `4.1.11-beta` or newer release.
 
 ---
 
@@ -79,10 +79,11 @@ not run migration commands directly.
 If a project was left in a bad migration, doctor, update, or repair state:
 
 ```
-/sweetclaude:recover diagnose
+/sweetclaude:recover
 ```
 
-If recovery reports a safe plan, continue with recovery execution from the same
+Recovery diagnoses first, shows a plan, snapshots before mutation, and asks
+before execution. If recovery reports a safe plan, continue from the same
 command flow. Recovery snapshots affected SweetClaude state and product
 artifacts before changing anything, verifies the result, and reports rollback
 instructions.

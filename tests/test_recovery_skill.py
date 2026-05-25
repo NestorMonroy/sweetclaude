@@ -7,6 +7,8 @@ def test_recover_skill_delegates_to_recovery_script_and_keeps_safety_gates():
     )
 
     assert "sweetclaude:recover" in skill
+    assert "Default user entrypoint: `/sweetclaude:recover`" in skill
+    assert "No argument is required" in skill
     assert "scripts/recovery/recover_project.py" in skill
     assert "diagnose --project-dir . --pretty" in skill
     assert "plan --project-dir . --pretty" in skill
@@ -152,3 +154,21 @@ def test_fix_sweetclaude_is_redirect_only():
     assert "rm " not in skill
     assert "mv " not in skill
     assert "migrate_taxonomy.py" not in skill
+
+
+def test_user_docs_route_to_no_arg_recover_not_diagnose_subcommand():
+    root = Path(__file__).parents[1]
+    docs = [
+        root / "README.md",
+        root / "docs" / "user-guide" / "install.md",
+        root / "docs" / "user-guide" / "beta-rescue.md",
+        root / "docs" / "user-guide" / "skills-reference.md",
+    ]
+
+    for path in docs:
+        text = path.read_text(encoding="utf-8")
+        assert "/sweetclaude:recover diagnose" not in text
+
+    rescue = (root / "docs" / "user-guide" / "beta-rescue.md").read_text(encoding="utf-8")
+    assert "/sweetclaude:recover" in rescue
+    assert "Recovery diagnoses first" in rescue

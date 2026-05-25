@@ -8,6 +8,16 @@ All notable changes to SweetClaude are documented here.
 
 ---
 
+## [4.1.11-beta] — 2026-05-25
+
+### Changed
+
+- Made `/sweetclaude:recover` the documented recovery entrypoint. Recovery now diagnoses first by default, then plans, snapshots, asks for approval, executes, verifies, and reports rollback instructions.
+- Kept explicit recovery script subcommands for automation, but removed `recover diagnose` from user-facing beta rescue instructions.
+- Made `scripts/recovery/recover_project.py` default to read-only diagnosis when run without a subcommand.
+
+---
+
 ## [4.1.10-beta] — 2026-05-25
 
 ### Documentation
