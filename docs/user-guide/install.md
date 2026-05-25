@@ -5,8 +5,8 @@
 Inside Claude Code, no terminal required:
 
 ```
-/plugin marketplace add https://github.com/carson-sweet/sweetclaude
-/plugin install sweetclaude@sweetclaude
+/plugin marketplace add carson-sweet/sweetclaude@stable-3.x
+/plugin install sweetclaude@sweetclaude-stable
 ```
 
 All skills are immediately available. Then go to your project and run `/sweetclaude:go` to begin.

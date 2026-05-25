@@ -2,14 +2,14 @@
 
 # SweetClaude
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-3.68.5-blue)](https://github.com/carson-sweet/sweetclaude/releases) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/behavioral-contracts.md)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-3.68.6-stable-blue)](https://github.com/carson-sweet/sweetclaude/releases/tag/v3.68.6) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/behavioral-contracts.md)
 
 ## TL;DR
 
 Start Claude Code and run:
 ```
-/plugin marketplace add https://github.com/carson-sweet/sweetclaude
-/plugin install sweetclaude@sweetclaude
+/plugin marketplace add carson-sweet/sweetclaude@stable-3.x
+/plugin install sweetclaude@sweetclaude-stable
 /sweetclaude:help
 ```
 
@@ -42,8 +42,8 @@ There are too many Claude Code plugins to count, so it's important to know if on
 Start Claude Code in your project folder as you normally would, then inside Claude Code run these commands:
 
 ```
-/plugin marketplace add https://github.com/carson-sweet/sweetclaude
-/plugin install sweetclaude@sweetclaude
+/plugin marketplace add carson-sweet/sweetclaude@stable-3.x
+/plugin install sweetclaude@sweetclaude-stable
 ```
 
 Once install is complete, run:
@@ -216,6 +216,3 @@ Which in reality means you're moving dollars from my coffee budget to [my dog Sm
 Smushford thanks you.
 
 <img src="smushford.png" alt="Smushford Wellington DuBois III" width="400" style="display:block;margin-left:0;">
-
-
-
