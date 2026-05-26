@@ -20,6 +20,7 @@ REQUIRED_CHECKS = [
     "installation-smoke",
     "static-checks",
     "release-metadata",
+    "manifest-validation",
 ]
 
 

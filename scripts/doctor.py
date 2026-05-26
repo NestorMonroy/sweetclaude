@@ -51,6 +51,7 @@ from schema import (
     normalize_status,
     validate_frontmatter,
 )
+from maintenance.capability_manifest import capability_config, project_shape_config
 from status import CANONICAL_STATUSES, TERMINAL_STATUSES, derived_status
 
 
@@ -1417,13 +1418,20 @@ _OLD_PREFIXES = frozenset({"STORY-", "BUG-", "DEBT-", "CHORE-", "BL-"})
 
 
 def _build_migration_recommendations(
-    findings: list[Finding], state: ProjectState,
+    findings: list[Finding], state: ProjectState, maintenance_route: dict,
 ) -> list[dict]:
+    if maintenance_route.get("status") != "supported-migration-available":
+        return []
+    allowed_capability = (maintenance_route.get("primary_action") or {}).get("capability_id")
+    if allowed_capability != "migrate.flat_bl_to_issue":
+        return []
+
     recs: list[dict] = []
 
     migration_findings = [
         f for f in findings
         if f.category == "migration_currency"
+        and f.fix_type == "prompted"
         and getattr(f, "fix_recipe", {}).get("type") == "migration"
     ]
     for mf in migration_findings:
@@ -1504,6 +1512,39 @@ def _migration_preflight(project_dir: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _capability_action(capability_id: str, action_id: str, label: str) -> dict:
+    capability = capability_config(capability_id)
+    action = {
+        "id": action_id,
+        "label": label,
+        "capability_id": capability_id,
+        "requires_approval": bool(capability.get("requires_approval", False)),
+        "mutates_project": bool(capability.get("mutates_project", False)),
+        "supported_project_shapes": list(capability.get("supports_project_shapes") or []),
+    }
+    if capability.get("delegate_skill"):
+        action["delegate_skill"] = capability["delegate_skill"]
+    if capability.get("verification_commands"):
+        action["verification_commands"] = list(capability["verification_commands"])
+    if capability.get("safety_contract"):
+        action["safety_contract"] = list(capability["safety_contract"])
+    return action
+
+
+def _blocked_capabilities(project_shape: str) -> list[dict]:
+    shape = project_shape_config(project_shape)
+    blocked: list[dict] = []
+    for capability_id in shape.get("blocked_capabilities") or []:
+        capability = capability_config(capability_id)
+        blocked.append({
+            "capability_id": capability_id,
+            "supported": bool(capability.get("supported", True)),
+            "block_reason": capability.get("block_reason", ""),
+            "supported_project_shapes": list(capability.get("supports_project_shapes") or []),
+        })
+    return blocked
+
+
 def build_maintenance_route(state: ProjectState) -> dict:
     """Classify the maintenance UX path Doctor should present.
 
@@ -1524,10 +1565,14 @@ def build_maintenance_route(state: ProjectState) -> dict:
         }
 
     status = guard.get("status")
+    project_shape = str(guard.get("project_shape", "") or "")
+    shape_config = project_shape_config(project_shape) if project_shape else {}
     route: dict = {
         "status": "no-maintenance-action",
         "doctor_front_door": True,
         "message": guard.get("message", ""),
+        "project_shape": project_shape,
+        "blocked_capabilities": _blocked_capabilities(project_shape) if project_shape else [],
         "primary_action": None,
         "secondary_actions": [],
         "guard": guard,
@@ -1541,13 +1586,11 @@ def build_maintenance_route(state: ProjectState) -> dict:
                 "Run safe recovery from Doctor; recovery will diagnose, plan, "
                 "snapshot, request approval, verify, and keep rollback data."
             ),
-            "primary_action": {
-                "id": "run-safe-recovery",
-                "label": "Run safe recovery",
-                "delegate_skill": "sweetclaude:recover",
-                "requires_approval": True,
-                "mutates_project": True,
-            },
+            "primary_action": _capability_action(
+                str(shape_config.get("recovery_capability", "recover.stabilize_without_migration")),
+                "run-safe-recovery",
+                "Run safe recovery",
+            ),
             "secondary_actions": [
                 {
                     "id": "continue-without-maintenance",
@@ -1566,18 +1609,32 @@ def build_maintenance_route(state: ProjectState) -> dict:
                 "needed right now; continue safely in compatibility mode. "
                 "Migration remains blocked until a layout-specific plan exists."
             ),
-            "primary_action": {
-                "id": "continue-compatibility-mode",
-                "label": "Continue in compatibility mode",
-                "mutates_project": False,
-            },
+            "primary_action": _capability_action(
+                str(shape_config.get("doctor_capability", "doctor.compatibility_mode")),
+                "continue-compatibility-mode",
+                "Continue in compatibility mode",
+            ),
         })
         return route
 
     if status == "migration-may-be-needed":
         preflight = _migration_preflight(state.project_dir)
         route["migration_preflight"] = preflight
-        if preflight and preflight.get("migrate_allowed"):
+        capability_id = str(shape_config.get("migration_capability", ""))
+        capability = capability_config(capability_id) if capability_id else {}
+        capability_shapes = list(capability.get("supports_project_shapes") or [])
+        route["capability_check"] = {
+            "capability_id": capability_id,
+            "project_shape": project_shape,
+            "supported_project_shapes": capability_shapes,
+            "supported": bool(capability_id and project_shape in capability_shapes),
+            "preflight_required": bool(capability.get("preflight_required", False)),
+        }
+        if (
+            route["capability_check"]["supported"]
+            and preflight
+            and preflight.get("migrate_allowed")
+        ):
             route.update({
                 "status": "supported-migration-available",
                 "message": (
@@ -1585,13 +1642,11 @@ def build_maintenance_route(state: ProjectState) -> dict:
                     "Start the migration flow from Doctor; migration will run "
                     "its own preflight and safety steps before conversion."
                 ),
-                "primary_action": {
-                    "id": "start-supported-migration",
-                    "label": "Start supported migration",
-                    "delegate_skill": "sweetclaude:migrate",
-                    "requires_approval": True,
-                    "mutates_project": True,
-                },
+                "primary_action": _capability_action(
+                    capability_id,
+                    "start-supported-migration",
+                    "Start supported migration",
+                ),
                 "secondary_actions": [
                     {
                         "id": "continue-without-migration",
@@ -1619,11 +1674,11 @@ def build_maintenance_route(state: ProjectState) -> dict:
     if status in {"manual-review", "missing-product-base", "guard-unavailable"}:
         route.update({
             "status": "manual-review",
-            "primary_action": {
-                "id": "manual-review",
-                "label": "Manual review",
-                "mutates_project": False,
-            },
+            "primary_action": _capability_action(
+                str(shape_config.get("doctor_capability", "doctor.manual_review")),
+                "manual-review",
+                "Manual review",
+            ),
         })
         return route
 
@@ -1717,6 +1772,56 @@ def _apply_compatibility_mode_policy(
     }
 
 
+def _apply_manifest_migration_policy(
+    findings: list[Finding], maintenance_route: dict,
+) -> tuple[list[Finding], dict]:
+    """Keep legacy migration checks report-only unless the manifest route allows them."""
+    allowed = maintenance_route.get("status") == "supported-migration-available"
+    allowed_capability = (
+        (maintenance_route.get("primary_action") or {}).get("capability_id")
+        if allowed
+        else None
+    )
+    visible: list[Finding] = []
+    blocked_count = 0
+    for finding in findings:
+        recipe = finding.fix_recipe or {}
+        if recipe.get("type") != "migration":
+            visible.append(finding)
+            continue
+        if (
+            allowed_capability == "migrate.flat_bl_to_issue"
+            and recipe.get("script") == "migrate-v3-to-v4.py"
+        ):
+            visible.append(finding)
+            continue
+        blocked_count += 1
+        visible.append(Finding(
+            id=finding.id,
+            category=finding.category,
+            severity=finding.severity,
+            summary=finding.summary,
+            detail=(
+                f"{finding.detail}\n\nManifest migration policy: prompted migration "
+                f"is blocked for maintenance_route={maintenance_route.get('status')}."
+            ),
+            file_paths=finding.file_paths,
+            fix_type="report-only",
+            fix_recipe={
+                "action": "capability_blocked",
+                "type": "capability_blocked_migration",
+                "route_status": maintenance_route.get("status"),
+                "project_shape": maintenance_route.get("project_shape"),
+            },
+            previously_suppressed=finding.previously_suppressed,
+        ))
+    return visible, {
+        "applied": True,
+        "blocked_prompt_count": blocked_count,
+        "allowed_capability": allowed_capability,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Scan
 # ---------------------------------------------------------------------------
@@ -1764,7 +1869,12 @@ def _scan(
     active, compatibility_adjustments = _apply_compatibility_mode_policy(
         active, maintenance_route,
     )
-    migration_recs = _build_migration_recommendations(active, project_state)
+    active, manifest_migration_policy = _apply_manifest_migration_policy(
+        active, maintenance_route,
+    )
+    migration_recs = _build_migration_recommendations(
+        active, project_state, maintenance_route,
+    )
 
     result = {
         "findings": [asdict(f) for f in active],
@@ -1774,6 +1884,7 @@ def _scan(
         "migration_recommendations": migration_recs,
         "maintenance_route": maintenance_route,
         "compatibility_adjustments": compatibility_adjustments,
+        "manifest_migration_policy": manifest_migration_policy,
     }
     if categories:
         result["scanned_categories"] = sorted(checks_to_run.keys())

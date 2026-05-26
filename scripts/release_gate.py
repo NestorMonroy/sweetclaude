@@ -11,15 +11,7 @@ import sys
 from pathlib import Path
 
 from evidence import validate_receipt
-
-
-REQUIRED_RELEASE_CHECKS = {
-    "tests",
-    "channel-isolation",
-    "installation-smoke",
-    "static-checks",
-    "release-metadata",
-}
+from maintenance.capability_manifest import channel_config, expected_ref, required_release_checks
 
 
 def _load_json(path: Path) -> dict:
@@ -52,24 +44,23 @@ def _has_prerelease(version: str) -> bool:
 
 
 def _validate_channel(version: str, channel: str, branch: str | None) -> None:
-    if channel not in {"stable", "beta"}:
-        raise ValueError("channel must be 'stable' or 'beta'")
+    config = channel_config(channel)
+    expected_major = int(config["major_version"])
+    channel_ref = expected_ref(channel)
+    prerelease_required = bool(config.get("prerelease_required"))
+    prerelease_allowed = bool(config.get("prerelease_allowed", True))
 
-    if channel == "stable":
-        if _has_prerelease(version):
-            raise ValueError("stable channel cannot release prerelease versions")
-        if _major(version) != 3:
-            raise ValueError("current stable channel is stable-3.x; stable releases must be 3.x")
-        if branch and branch != "stable-3.x":
-            raise ValueError("stable releases must be prepared from stable-3.x")
-        return
+    if _has_prerelease(version) and not prerelease_allowed:
+        raise ValueError(f"{channel} channel cannot release prerelease versions")
+    if prerelease_required and not _has_prerelease(version):
+        raise ValueError(f"{channel} channel releases must use an explicit prerelease suffix")
+    if _major(version) != expected_major:
+        raise ValueError(
+            f"current {channel} channel is {channel_ref}; {channel} releases must be {expected_major}.x"
+        )
+    if branch and branch != channel_ref:
+        raise ValueError(f"{channel} releases must be prepared from {channel_ref}")
 
-    if not _has_prerelease(version):
-        raise ValueError("beta channel releases must use an explicit prerelease suffix")
-    if _major(version) != 4:
-        raise ValueError("current beta channel is beta-4.x; beta releases must be 4.x")
-    if branch and branch != "beta-4.x":
-        raise ValueError("beta releases must be prepared from beta-4.x")
 
 
 def _metadata_version(project_dir: Path, version: str) -> None:
@@ -105,7 +96,7 @@ def _validate_release_receipt(receipt_path: str | Path, tag: str) -> dict:
         for check in receipt.get("checks", [])
         if isinstance(check, dict)
     }
-    missing = sorted(REQUIRED_RELEASE_CHECKS - checks)
+    missing = sorted(required_release_checks() - checks)
     if missing:
         raise ValueError(
             "Release evidence receipt is missing required checks: " + ", ".join(missing)

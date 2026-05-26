@@ -123,6 +123,7 @@ def test_diagnose_ignores_normal_time_based_doctor_prompt_after_stabilization(tm
     assert "bad-doctor-migration-recommendation" not in result["failure_class_codes"]
     assert result["recovery_route"] == "no-recovery-needed"
     assert guard["status"] == "compatibility-mode"
+    assert guard["project_shape"] == "accepted_legacy_taxonomy"
     assert guard["migrate_allowed"] is False
 
 
@@ -165,6 +166,7 @@ def test_guard_routes_unstable_legacy_layout_to_recover(tmp_path):
 
     assert result["command"] == "guard"
     assert result["status"] == "run-recover"
+    assert result["project_shape"] == "recovery_required"
     assert result["migrate_allowed"] is False
     assert result["recovery_route"] == "stabilize-without-migration"
     assert "unsupported-typed-backlog-layout" in result["failure_class_codes"]
@@ -195,6 +197,7 @@ def test_guard_keeps_recovered_legacy_layout_in_compatibility_mode(tmp_path):
     result = guard_project(project)
 
     assert result["status"] == "compatibility-mode"
+    assert result["project_shape"] == "accepted_legacy_taxonomy"
     assert result["migrate_allowed"] is False
     assert result["recovery_route"] == "no-recovery-needed"
     assert result["taxonomy_recovery_status"] == "stabilized-without-migration"
@@ -233,11 +236,35 @@ def test_diagnose_reports_no_recovery_needed_for_simple_current_layout(tmp_path)
     )
 
     result = diagnose_project(project)
+    guard = guard_project(project)
 
     assert result["failure_classes"] == []
     assert result["blocking_factors"] == []
     assert result["can_plan_recovery"] is False
     assert result["recovery_route"] == "no-recovery-needed"
+    assert guard["project_shape"] == "current_layout"
+
+
+def test_guard_does_not_call_non_bl_old_prefixes_flat_bl_backlog(tmp_path):
+    project = tmp_path / "project"
+    backlog = project / "docs" / "product" / "backlog"
+    backlog.mkdir(parents=True)
+    (backlog / "STORY-001-old-story.md").write_text(
+        "---\n"
+        "id: STORY-001\n"
+        "title: Old story\n"
+        "status: new\n"
+        "type: story\n"
+        "---\n\n"
+        "Old story taxonomy item.\n",
+        encoding="utf-8",
+    )
+
+    guard = guard_project(project)
+
+    assert guard["status"] == "manual-review"
+    assert guard["project_shape"] == "manual_escalation"
+    assert guard["migrate_allowed"] is False
 
 
 def test_recover_project_cli_diagnose_emits_json(tmp_path):

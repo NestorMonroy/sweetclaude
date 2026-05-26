@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import pathlib
 import re
@@ -33,10 +34,20 @@ import sys
 
 import yaml
 
+SCRIPTS_DIR = pathlib.Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from maintenance.capability_manifest import capability_config
+from recovery.recover_project import guard_project
+
 
 V3_VALID_STATUSES = {"backlog", "in_progress", "done", "cancelled", "blocked", "abandoned", "deferred"}
 VALID_TYPES = {"story", "bug", "debt", "chore"}
 TERMINAL_STATUSES = {"done", "abandoned"}
+MIGRATION_CAPABILITY_ID = "migrate.flat_bl_to_issue"
+SUPPORTED_PROJECT_SHAPE = "flat_bl_backlog"
+MIGRATION_EXECUTION_MANIFEST = pathlib.Path(".sweetclaude/state/migrations/v3-to-v4-execution.json")
 
 # Status remapping from v3 to v4 vocabulary.
 STATUS_REMAP = {
@@ -210,6 +221,31 @@ def _read_sweetclaude_state(project_dir: pathlib.Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _migration_capability_contract() -> dict:
+    capability = capability_config(MIGRATION_CAPABILITY_ID)
+    return {
+        "capability_id": MIGRATION_CAPABILITY_ID,
+        "supported_project_shapes": list(capability.get("supports_project_shapes") or []),
+        "safety_contract": list(capability.get("safety_contract") or []),
+        "verification_commands": list(capability.get("verification_commands") or []),
+        "requires_approval": bool(capability.get("requires_approval", False)),
+        "mutates_project": bool(capability.get("mutates_project", False)),
+        "preflight_required": bool(capability.get("preflight_required", False)),
+    }
+
+
+def _migration_guard(project_dir: pathlib.Path) -> dict:
+    try:
+        return guard_project(project_dir)
+    except Exception as exc:
+        return {
+            "status": "guard-error",
+            "project_shape": "",
+            "migrate_allowed": False,
+            "message": f"Migration guard failed: {exc}",
+        }
+
+
 def migration_preflight(project_dir: pathlib.Path) -> dict:
     """Read-only safety decision for the v3-to-v4 BL migration.
 
@@ -220,6 +256,11 @@ def migration_preflight(project_dir: pathlib.Path) -> dict:
     product_base = resolve_product_base(project_dir)
     backlog_path = product_base / "backlog"
     direct_bl_files = sorted(backlog_path.glob("BL-*.md")) if backlog_path.is_dir() else []
+    capability = _migration_capability_contract()
+    guard = _migration_guard(project_dir)
+    project_shape = str(guard.get("project_shape", "") or "")
+    supported_shapes = capability["supported_project_shapes"]
+    manifest_supported = project_shape in supported_shapes
 
     typed_files: list[pathlib.Path] = []
     if backlog_path.is_dir():
@@ -253,6 +294,43 @@ def migration_preflight(project_dir: pathlib.Path) -> dict:
     )
 
     blockers: list[dict] = []
+    if guard.get("status") == "guard-error":
+        blockers.append({
+            "code": "migration-guard-error",
+            "message": guard.get("message", "Migration guard failed."),
+        })
+    if project_shape != SUPPORTED_PROJECT_SHAPE:
+        blockers.append({
+            "code": "unsupported-project-shape",
+            "message": (
+                f"This migrator only supports project_shape={SUPPORTED_PROJECT_SHAPE}; "
+                f"detected {project_shape or 'unknown'}."
+            ),
+            "project_shape": project_shape or "unknown",
+            "supported_project_shapes": supported_shapes,
+        })
+    if not manifest_supported:
+        blockers.append({
+            "code": "manifest-capability-unsupported",
+            "message": (
+                f"Manifest capability {MIGRATION_CAPABILITY_ID} does not support "
+                f"project_shape={project_shape or 'unknown'}."
+            ),
+            "capability_id": MIGRATION_CAPABILITY_ID,
+            "project_shape": project_shape or "unknown",
+            "supported_project_shapes": supported_shapes,
+        })
+    if guard.get("status") == "run-recover":
+        blockers.append({
+            "code": "recovery-required",
+            "message": "Recovery guard requires /sweetclaude:recover before migration.",
+            "recovery_route": guard.get("recovery_route"),
+        })
+    if guard.get("migrate_allowed") is False and project_shape == SUPPORTED_PROJECT_SHAPE:
+        blockers.append({
+            "code": "guard-blocked-migration",
+            "message": guard.get("message", "Migration guard did not allow migration."),
+        })
     if state.get("_parse_error"):
         blockers.append({
             "code": "sweetclaude-state-parse-error",
@@ -281,7 +359,13 @@ def migration_preflight(project_dir: pathlib.Path) -> dict:
             "message": "No flat BL-NNN files were found for this migrator.",
         })
 
-    migrate_allowed = not blockers and bool(direct_bl_files)
+    migrate_allowed = (
+        not blockers
+        and bool(direct_bl_files)
+        and manifest_supported
+        and project_shape == SUPPORTED_PROJECT_SHAPE
+        and bool(guard.get("migrate_allowed"))
+    )
     status = "ok" if migrate_allowed else "blocked"
     recommendation = (
         "Proceed with v3 flat BL-NNN migration."
@@ -292,11 +376,25 @@ def migration_preflight(project_dir: pathlib.Path) -> dict:
     return {
         "status": status,
         "migrate_allowed": migrate_allowed,
+        "capability_id": MIGRATION_CAPABILITY_ID,
+        "project_shape": project_shape,
+        "manifest_supported": manifest_supported,
+        "supported_project_shapes": supported_shapes,
+        "safety_contract": capability["safety_contract"],
+        "verification_commands": capability["verification_commands"],
+        "requires_approval": capability["requires_approval"],
+        "mutates_project": capability["mutates_project"],
+        "preflight_required": capability["preflight_required"],
+        "guard_status": guard.get("status"),
+        "guard": guard,
         "product_base": str(product_base),
         "backlog_path": str(backlog_path),
         "flat_bl_count": len(direct_bl_files),
         "typed_old_prefix_count": len(old_typed_files),
         "blocking_factors": blockers,
+        "block_reason": "" if migrate_allowed else "; ".join(
+            factor.get("message", factor.get("code", "")) for factor in blockers
+        ),
         "recommendation": recommendation,
     }
 
@@ -442,6 +540,14 @@ def _make_slug(title: str) -> str:
 
 def build_plan(project_dir: pathlib.Path, include_done: bool) -> dict:
     """Compute the migration plan without writing. Same logic as execute() but no I/O."""
+    preflight = migration_preflight(project_dir)
+    if not preflight["migrate_allowed"]:
+        return {
+            "error": "migration-blocked",
+            "preflight": preflight,
+            "message": preflight["recommendation"],
+        }
+
     product_base = resolve_product_base(project_dir)
     backlog_path = product_base / "backlog"
     files = sorted(backlog_path.glob("BL-*.md"), key=lambda p: p.name)
@@ -491,6 +597,13 @@ def build_plan(project_dir: pathlib.Path, include_done: bool) -> dict:
         )
 
     return {
+        "capability_id": preflight["capability_id"],
+        "project_shape": preflight["project_shape"],
+        "manifest_supported": preflight["manifest_supported"],
+        "supported_project_shapes": preflight["supported_project_shapes"],
+        "safety_contract": preflight["safety_contract"],
+        "verification_commands": preflight["verification_commands"],
+        "preflight": preflight,
         "product_base": str(product_base),
         "counter": counter,
         "skipped_done": skipped_done,
@@ -623,14 +736,17 @@ def execute(project_dir: pathlib.Path, include_done: bool) -> dict:
 
     rewritten_milestones = _rewrite_milestone_references(project_dir, migration_map)
 
-    return {
+    result = {
         "product_base": plan["product_base"],
         "counter": plan["counter"],
         "skipped_done": plan["skipped_done"],
+        "source_paths": [item["v3_file"] for item in plan["plan_items"]],
         "created_paths": created_paths,
         "migration_map": migration_map,
         "rewritten_milestones": rewritten_milestones,
     }
+    result["execution_manifest"] = str(_write_execution_manifest(project_dir, result))
+    return result
 
 
 def _rewrite_milestone_references(
@@ -681,6 +797,186 @@ def _write_migration_map(
     map_path.write_text("\n".join(map_lines) + "\n", encoding="utf-8")
 
 
+def _sha256_file(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _file_integrity_entries(paths: list[str]) -> list[dict]:
+    entries: list[dict] = []
+    for path_str in paths:
+        path = pathlib.Path(path_str)
+        if path.is_file():
+            entries.append({
+                "path": str(path),
+                "sha256": _sha256_file(path),
+                "size": path.stat().st_size,
+            })
+    return entries
+
+
+def _write_execution_manifest(project_dir: pathlib.Path, result: dict) -> pathlib.Path:
+    manifest_path = project_dir / MIGRATION_EXECUTION_MANIFEST
+    map_path = project_dir / ".sweetclaude" / "product" / "backlog" / "MIGRATION-MAP.md"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema_version": 1,
+        "status": "succeeded",
+        "capability_id": MIGRATION_CAPABILITY_ID,
+        "project_shape": SUPPORTED_PROJECT_SHAPE,
+        "manifest_supported": True,
+        "product_base": result.get("product_base"),
+        "created_paths": result.get("created_paths", []),
+        "created_files": _file_integrity_entries(result.get("created_paths", [])),
+        "source_files": _file_integrity_entries(result.get("source_paths", [])),
+        "migration_map_path": str(map_path),
+        "migration_map_sha256": _sha256_file(map_path) if map_path.is_file() else "",
+        "migration_map": result.get("migration_map", []),
+        "rewritten_milestones": result.get("rewritten_milestones", []),
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return manifest_path
+
+
+def _completed_migration_state(project_dir: pathlib.Path) -> dict:
+    backlog_dir = project_dir / ".sweetclaude" / "product" / "backlog"
+    map_path = backlog_dir / "MIGRATION-MAP.md"
+    execution_manifest_path = project_dir / MIGRATION_EXECUTION_MANIFEST
+    execution_manifest: dict | None = None
+    execution_manifest_error = ""
+    if execution_manifest_path.exists():
+        try:
+            data = json.loads(execution_manifest_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                execution_manifest = data
+            else:
+                execution_manifest_error = "execution manifest is not a JSON object"
+        except json.JSONDecodeError as exc:
+            execution_manifest_error = str(exc)
+    issue_files = list(backlog_dir.rglob("ISSUE-*.md")) if backlog_dir.exists() else []
+    return {
+        "execution_manifest_exists": execution_manifest_path.is_file(),
+        "execution_manifest": execution_manifest,
+        "execution_manifest_error": execution_manifest_error,
+        "execution_manifest_path": str(execution_manifest_path),
+        "migration_map_exists": map_path.is_file(),
+        "issue_count": len(issue_files),
+        "migration_map": str(map_path),
+    }
+
+
+def _completion_mutation_guard(project_dir: pathlib.Path) -> dict:
+    capability = _migration_capability_contract()
+    completed = _completed_migration_state(project_dir)
+    execution_manifest = completed["execution_manifest"] or {}
+    blockers: list[dict] = []
+    if not completed["execution_manifest_exists"]:
+        blockers.append({
+            "code": "missing-execution-manifest",
+            "message": f"{MIGRATION_EXECUTION_MANIFEST.as_posix()} must exist before finalization or cleanup.",
+        })
+    if completed["execution_manifest_error"]:
+        blockers.append({
+            "code": "invalid-execution-manifest",
+            "message": completed["execution_manifest_error"],
+        })
+    if execution_manifest.get("status") != "succeeded":
+        blockers.append({
+            "code": "execution-not-succeeded",
+            "message": "Migration execute manifest must have status=succeeded.",
+        })
+    if execution_manifest.get("capability_id") != MIGRATION_CAPABILITY_ID:
+        blockers.append({
+            "code": "execution-capability-mismatch",
+            "message": "Migration execute manifest capability does not match this migrator.",
+        })
+    if execution_manifest.get("project_shape") != SUPPORTED_PROJECT_SHAPE:
+        blockers.append({
+            "code": "execution-project-shape-mismatch",
+            "message": "Migration execute manifest project shape does not match this migrator.",
+        })
+    if execution_manifest.get("manifest_supported") is not True:
+        blockers.append({
+            "code": "execution-manifest-not-supported",
+            "message": "Migration execute manifest must record manifest_supported=true.",
+        })
+    created_files = execution_manifest.get("created_files")
+    source_files = execution_manifest.get("source_files")
+    if not isinstance(created_files, list) or not created_files:
+        blockers.append({
+            "code": "missing-created-file-integrity",
+            "message": "Migration execute manifest must include created file integrity hashes.",
+        })
+    if not isinstance(source_files, list) or not source_files:
+        blockers.append({
+            "code": "missing-source-file-integrity",
+            "message": "Migration execute manifest must include source file integrity hashes.",
+        })
+    for entry in created_files if isinstance(created_files, list) else []:
+        path = pathlib.Path(str(entry.get("path", "")))
+        if not path.is_file() or _sha256_file(path) != entry.get("sha256"):
+            blockers.append({
+                "code": "created-file-integrity-mismatch",
+                "message": f"Created file integrity check failed: {path}",
+            })
+            break
+    for entry in source_files if isinstance(source_files, list) else []:
+        path = pathlib.Path(str(entry.get("path", "")))
+        if not path.is_file() or _sha256_file(path) != entry.get("sha256"):
+            blockers.append({
+                "code": "source-file-integrity-mismatch",
+                "message": f"Source file integrity check failed: {path}",
+            })
+            break
+    map_hash = execution_manifest.get("migration_map_sha256")
+    if not map_hash:
+        blockers.append({
+            "code": "missing-migration-map-integrity",
+            "message": "Migration execute manifest must include MIGRATION-MAP.md hash.",
+        })
+    if not completed["migration_map_exists"]:
+        blockers.append({
+            "code": "missing-migration-map",
+            "message": "MIGRATION-MAP.md must exist before finalization or cleanup.",
+        })
+    elif map_hash and _sha256_file(pathlib.Path(completed["migration_map"])) != map_hash:
+        blockers.append({
+            "code": "migration-map-integrity-mismatch",
+            "message": "MIGRATION-MAP.md hash does not match execute manifest.",
+        })
+    if completed["issue_count"] <= 0:
+        blockers.append({
+            "code": "missing-migrated-issues",
+            "message": "At least one migrated ISSUE file must exist before finalization or cleanup.",
+        })
+    allowed = not blockers
+    return {
+        "status": "ok" if allowed else "blocked",
+        "migrate_allowed": allowed,
+        "capability_id": MIGRATION_CAPABILITY_ID,
+        "project_shape": execution_manifest.get("project_shape", ""),
+        "manifest_supported": execution_manifest.get("manifest_supported") is True,
+        "supported_project_shapes": capability["supported_project_shapes"],
+        "safety_contract": capability["safety_contract"],
+        "verification_commands": capability["verification_commands"],
+        "requires_approval": capability["requires_approval"],
+        "mutates_project": capability["mutates_project"],
+        "completed_migration": {
+            key: value for key, value in completed.items()
+            if key != "execution_manifest"
+        },
+        "blocking_factors": blockers,
+        "recommendation": (
+            "Continue migration completion."
+            if allowed
+            else "Do not finalize or clean up before a successful migration execute step."
+        ),
+    }
+
+
 def verify(project_dir: pathlib.Path, created_paths: list[str]) -> dict:
     """Step 7 — confirm every created path exists, parses, and has required fields."""
     failures: list[dict] = []
@@ -720,6 +1016,14 @@ def finalize(project_dir: pathlib.Path) -> dict:
     privacy=new + installed_version=old → bootstrap hard-stop loop that
     a re-run would not detect (V3_FILES at new product_base = 0).
     """
+    guard = _completion_mutation_guard(project_dir)
+    if not guard["migrate_allowed"]:
+        return {
+            "error": "migration-blocked",
+            "preflight": guard,
+            "message": guard["recommendation"],
+        }
+
     # 1. sweetclaude.yaml first — the authoritative "what version is this project"
     sc_path = project_dir / ".sweetclaude" / "state" / "sweetclaude.yaml"
     sc = yaml.safe_load(sc_path.read_text()) or {}
@@ -736,6 +1040,7 @@ def finalize(project_dir: pathlib.Path) -> dict:
     privacy_path.write_text(yaml.safe_dump(d, default_flow_style=False, sort_keys=False))
 
     return {
+        "capability_id": guard["capability_id"],
         "artifact_privacy_base_path": ".sweetclaude/product",
         "installed_version": "4.1.0",
     }
@@ -748,6 +1053,14 @@ def cleanup_v3_files(project_dir: pathlib.Path) -> dict:
     after a completed migration creates a "stuck migration" state in bootstrap
     (V3_FILES > 0 triggers the hard-stop loop).
     """
+    guard = _completion_mutation_guard(project_dir)
+    if not guard["migrate_allowed"]:
+        return {
+            "error": "migration-blocked",
+            "preflight": guard,
+            "message": guard["recommendation"],
+        }
+
     removed: list[str] = []
     for candidate in (
         project_dir / ".sweetclaude" / "product" / "backlog",
@@ -803,7 +1116,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "validate":
         _emit(validate(project_dir))
     elif args.cmd == "plan":
-        _emit(build_plan(project_dir, args.include_done))
+        result = build_plan(project_dir, args.include_done)
+        _emit(result)
+        if result.get("error"):
+            return 1
     elif args.cmd == "execute":
         result = execute(project_dir, args.include_done)
         _emit(result)
@@ -813,9 +1129,15 @@ def main(argv: list[str] | None = None) -> int:
         paths = json.loads(args.created_paths_file.read_text())
         _emit(verify(project_dir, paths))
     elif args.cmd == "finalize":
-        _emit(finalize(project_dir))
+        result = finalize(project_dir)
+        _emit(result)
+        if result.get("error"):
+            return 1
     elif args.cmd == "cleanup-v3-files":
-        _emit(cleanup_v3_files(project_dir))
+        result = cleanup_v3_files(project_dir)
+        _emit(result)
+        if result.get("error"):
+            return 1
     return 0
 
 

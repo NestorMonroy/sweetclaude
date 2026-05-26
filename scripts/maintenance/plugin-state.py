@@ -13,10 +13,18 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+MAINTENANCE_DIR = Path(__file__).resolve().parent
+if str(MAINTENANCE_DIR) not in sys.path:
+    sys.path.insert(0, str(MAINTENANCE_DIR))
+
+from capability_manifest import (
+    expected_marketplace,
+    expected_ref,
+    minimum_safe_version,
+)
 
 PRERELEASE_RE = re.compile(r"-([A-Za-z]+)")
 VERSION_MAJOR_RE = re.compile(r"^v?(\d+)")
-MIN_SAFE_BETA_VERSION = "4.1.9-beta"
 
 
 def _plugins_path(home: Path) -> Path:
@@ -78,7 +86,8 @@ def _version_lt(left: str, right: str) -> bool:
 
 
 def _is_stale_beta(channel: str, version: str) -> bool:
-    return channel == "beta" and _version_lt(version, MIN_SAFE_BETA_VERSION)
+    minimum = minimum_safe_version(channel)
+    return bool(minimum) and _version_lt(version, minimum)
 
 
 def _marketplace(plugin_key: str) -> str:
@@ -177,8 +186,8 @@ def inspect_state(home: Path, project_dir: Path | None, current_root: Path | Non
             "entries": [],
         }
     channel = selected["channel"]
-    expected_ref = {"beta": "beta-4.x", "stable": "stable-3.x"}.get(channel, "")
-    expected_marketplace = {"beta": "sweetclaude-beta", "stable": "sweetclaude-stable"}.get(channel, "")
+    channel_ref = expected_ref(channel) if channel != "unknown" else ""
+    channel_marketplace = expected_marketplace(channel) if channel != "unknown" else ""
     version = str(selected.get("version", "") or "")
     stale_beta = _is_stale_beta(channel, version)
     plugin_key = selected["plugin_key"]
@@ -189,8 +198,8 @@ def inspect_state(home: Path, project_dir: Path | None, current_root: Path | Non
         "marketplace": selected["marketplace"],
         "legacy_marketplace": bool(selected["legacy_marketplace"]),
         "channel": channel,
-        "expected_ref": expected_ref,
-        "expected_marketplace": expected_marketplace,
+        "expected_ref": channel_ref,
+        "expected_marketplace": channel_marketplace,
         "install_path": selected.get("installPath", ""),
         "version": version,
         "git_commit_sha": selected.get("gitCommitSha", ""),
@@ -198,7 +207,7 @@ def inspect_state(home: Path, project_dir: Path | None, current_root: Path | Non
         "install_exists": bool(selected["install_exists"]),
         "project_path": selected.get("projectPath", ""),
         "stale_beta_install": stale_beta,
-        "minimum_safe_beta_version": MIN_SAFE_BETA_VERSION,
+        "minimum_safe_beta_version": minimum_safe_version("beta"),
         "plugin_update_command": f"/plugin update {plugin_key}" if plugin_key else "",
         "restart_required_after_plugin_update": stale_beta,
         "entries": rows,
@@ -288,6 +297,44 @@ def _emit_shell(result: dict[str, Any]) -> None:
         print(f"{key}={_shell_quote(value)}")
 
 
+def _fail_closed_shell_state(
+    home: Path,
+    project_dir: Path | None,
+    current_root: Path | None,
+    error: str,
+) -> dict[str, Any]:
+    path = _plugins_path(home)
+    data = _load(path)
+    rows = _collect_entries(data, project_dir=project_dir, current_root=current_root)
+    selected = rows[0] if rows else {}
+    channel = selected.get("channel", "")
+    plugin_key = selected.get("plugin_key", "")
+    # If the manifest cannot be loaded, any beta install is treated as unsafe.
+    stale_beta = channel == "beta"
+    return {
+        "ok": False,
+        "installed_plugins_path": str(path),
+        "reason": f"plugin state inspection failed closed: {error}",
+        "plugin_key": plugin_key,
+        "marketplace": selected.get("marketplace", ""),
+        "legacy_marketplace": bool(selected.get("legacy_marketplace", False)),
+        "channel": channel,
+        "expected_ref": "",
+        "expected_marketplace": "",
+        "install_path": selected.get("installPath", ""),
+        "version": selected.get("version", ""),
+        "git_commit_sha": selected.get("gitCommitSha", ""),
+        "scope": selected.get("scope", ""),
+        "install_exists": bool(selected.get("install_exists", False)),
+        "project_path": selected.get("projectPath", ""),
+        "stale_beta_install": stale_beta,
+        "minimum_safe_beta_version": "",
+        "plugin_update_command": f"/plugin update {plugin_key}" if plugin_key else "",
+        "restart_required_after_plugin_update": stale_beta,
+        "entries": rows,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Inspect or repair SweetClaude plugin metadata")
     parser.add_argument("--home", type=Path, default=Path.home())
@@ -325,6 +372,14 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, indent=2))
             return 0
     except Exception as exc:
+        if args.cmd == "inspect" and getattr(args, "shell", False):
+            _emit_shell(_fail_closed_shell_state(
+                args.home,
+                args.project_dir,
+                getattr(args, "current_root", None),
+                str(exc),
+            ))
+            return 1
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 1
     return 1

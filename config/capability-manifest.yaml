@@ -1,0 +1,157 @@
+# SweetClaude capability manifest
+# Central source for release-channel facts and safety gates that should be
+# shared by update, doctor, migrate, recover, status, and release tooling.
+schema_version: 1
+
+channels:
+  stable:
+    branch: stable-3.x
+    major_version: 3
+    expected_marketplace: sweetclaude-stable
+    prerelease_required: false
+    prerelease_allowed: false
+
+  beta:
+    branch: beta-4.x
+    major_version: 4
+    expected_marketplace: sweetclaude-beta
+    prerelease_required: true
+    prerelease_allowed: true
+    minimum_safe_version: 4.1.9-beta
+
+release:
+  required_evidence_checks:
+    - tests
+    - channel-isolation
+    - installation-smoke
+    - static-checks
+    - release-metadata
+    - manifest-validation
+
+capabilities:
+  recover.stabilize_without_migration:
+    title: Stabilize recoverable legacy layout without taxonomy migration
+    delegate_skill: sweetclaude:recover
+    supports_project_shapes:
+      - recovery_required
+    mutates_project: true
+    requires_approval: true
+    safety_contract:
+      - diagnose
+      - plan
+      - snapshot
+      - verify-snapshot
+      - approve
+      - execute
+      - record-progress
+      - resume
+      - verify-postconditions
+      - rollback
+    verification_commands:
+      - "python3 scripts/recovery/recover_project.py diagnose --project-dir <project>"
+      - "python3 scripts/recovery/recover_project.py plan --project-dir <project>"
+
+  migrate.flat_bl_to_issue:
+    title: Migrate flat BL-NNN backlog to ISSUE taxonomy
+    delegate_skill: sweetclaude:migrate
+    executable: scripts/migrate/migrate-v3-to-v4.py
+    supports_project_shapes:
+      - flat_bl_backlog
+    mutates_project: true
+    requires_approval: true
+    preflight_required: true
+    safety_contract:
+      - diagnose
+      - preflight
+      - plan
+      - snapshot
+      - approve
+      - execute
+      - verify-postconditions
+      - rollback
+    verification_commands:
+      - "python3 scripts/migrate/migrate-v3-to-v4.py preflight --project-dir <project>"
+
+  migrate.typed_legacy_backlog:
+    title: Typed legacy backlog migration
+    supported: false
+    supports_project_shapes: []
+    mutates_project: false
+    requires_approval: true
+    block_reason: "Typed legacy backlog layouts remain compatibility/recovery-only until a layout-specific migration manifest passes dry-run, rollback, and verification drills."
+
+  doctor.compatibility_mode:
+    title: Continue in compatibility mode
+    supports_project_shapes:
+      - accepted_legacy_taxonomy
+    mutates_project: false
+    requires_approval: false
+
+  doctor.manual_review:
+    title: Manual maintenance review
+    supports_project_shapes:
+      - manual_escalation
+      - missing_product_base
+    mutates_project: false
+    requires_approval: false
+
+  update.framework_sync:
+    title: Framework/plugin update without project artifact migration
+    supports_project_shapes:
+      - current_layout
+      - accepted_legacy_taxonomy
+      - flat_bl_backlog
+      - recovery_required
+      - manual_escalation
+      - missing_product_base
+    mutates_project: false
+    mutates_global_config: true
+    requires_approval: true
+
+project_shapes:
+  recovery_required:
+    guard_status: run-recover
+    migrate_allowed: false
+    message: "This project is in a recoverable SweetClaude migration/update state. Run /sweetclaude:recover before any taxonomy migration."
+    recovery_route: stabilize-without-migration
+    recovery_capability: recover.stabilize_without_migration
+
+  manual_escalation:
+    guard_status: manual-review
+    migrate_allowed: false
+    message: "This project needs manual SweetClaude recovery review before migration or other maintenance commands."
+    doctor_capability: doctor.manual_review
+
+  accepted_legacy_taxonomy:
+    guard_status: compatibility-mode
+    migrate_allowed: false
+    message: "This project has an accepted legacy taxonomy layout. Do not run /sweetclaude:migrate unless a future layout-specific migration plan explicitly allows it."
+    doctor_capability: doctor.compatibility_mode
+    blocked_capabilities:
+      - migrate.typed_legacy_backlog
+
+  flat_bl_backlog:
+    migration: flat_bl_to_issue
+    guard_status: migration-may-be-needed
+    migrate_allowed: true
+    message: "Old-format work items were found and no recovery-only state was detected. Review /sweetclaude:migrate before executing it."
+    migration_capability: migrate.flat_bl_to_issue
+
+  typed_legacy_backlog:
+    migration: blocked
+    guard_status: compatibility-mode
+    migrate_allowed: false
+    recovery: stabilize-without-migration
+    blocked_capabilities:
+      - migrate.typed_legacy_backlog
+
+  missing_product_base:
+    guard_status: missing-product-base
+    migrate_allowed: false
+    message: "SweetClaude product artifacts were not found. Run /sweetclaude:doctor or /sweetclaude:setup instead of migration."
+    doctor_capability: doctor.manual_review
+
+  current_layout:
+    guard_status: ok
+    migrate_allowed: false
+    message: "No SweetClaude migration or recovery guard is currently active."

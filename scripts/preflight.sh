@@ -38,12 +38,12 @@ fi
 
 SELF_HEAL=false
 DECLINE_CLEARED=false
+CONFIG_SYNCED=false
 
 # 1. Self-heal: populate versionless path if absent.
 #    Uses rsync for atomicity and dotfile safety (T11b fix).
 #    Filters installed_plugins.json by scope=user + most-recent lastUpdated (T11a fix).
-if [ ! -d "$VERSIONLESS" ]; then
-  INSTALL_PATH=$(python3 -c "
+INSTALL_PATH=$(python3 -c "
 import json, os
 try:
     d = json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json')))
@@ -59,11 +59,27 @@ except Exception:
     pass
 " 2>/dev/null)
 
+if [ ! -d "$VERSIONLESS" ]; then
   if [ -n "$INSTALL_PATH" ] && [ -d "$INSTALL_PATH/scripts" ]; then
     mkdir -p "$VERSIONLESS"
     if rsync -a "$INSTALL_PATH/scripts/" "$VERSIONLESS/" 2>/dev/null; then
       SELF_HEAL=true
     fi
+  fi
+fi
+
+# 1b. Keep versionless config populated alongside versionless scripts. The
+# manifest is a framework-owned safety contract; never rely on project cwd.
+CONFIG_SOURCE=""
+if [ -n "$INSTALL_PATH" ] && [ -d "$INSTALL_PATH/config" ]; then
+  CONFIG_SOURCE="$INSTALL_PATH/config"
+elif [ -d "$SCRIPT_DIR/../config" ]; then
+  CONFIG_SOURCE="$SCRIPT_DIR/../config"
+fi
+if [ -n "$CONFIG_SOURCE" ]; then
+  mkdir -p "$HOME/.claude/config/sweetclaude"
+  if rsync -a "$CONFIG_SOURCE/" "$HOME/.claude/config/sweetclaude/" 2>/dev/null; then
+    CONFIG_SYNCED=true
   fi
 fi
 
@@ -163,6 +179,7 @@ fi
 # 5. Emit KEY=VALUE.
 printf 'VERSIONLESS_PATH=%s\n'   "$VERSIONLESS"
 printf 'SELF_HEAL=%s\n'          "$SELF_HEAL"
+printf 'CONFIG_SYNCED=%s\n'      "$CONFIG_SYNCED"
 printf 'VERSION_DIR_HEALED=%s\n' "$VERSION_DIR_HEALED"
 printf 'DECLINE_CLEARED=%s\n'    "$DECLINE_CLEARED"
 printf 'RUNNER=%s\n'             "$RUNNER"

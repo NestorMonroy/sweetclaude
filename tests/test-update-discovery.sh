@@ -302,11 +302,14 @@ trap "rm -rf $SH_TMPDIR" EXIT
 # Simulated user environment:
 #  - $SH_TMPDIR/.claude/plugins/installed_plugins.json  — points to installPath
 #  - $SH_TMPDIR/.claude/plugins/cache/.../1.0.0/scripts/  — has framework scripts
+#  - $SH_TMPDIR/.claude/plugins/cache/.../1.0.0/config/   — has framework config
 #  - $SH_TMPDIR/.claude/scripts/sweetclaude/             — MISSING (this is what self-heal creates)
 INSTALL_PATH="$SH_TMPDIR/.claude/plugins/cache/sweetclaude/sweetclaude/1.0.0"
 mkdir -p "$INSTALL_PATH/scripts/migrations"
+mkdir -p "$INSTALL_PATH/config"
 mkdir -p "$SH_TMPDIR/.claude/plugins"
 cp "$REPO_ROOT/scripts/migrations/runner.py" "$INSTALL_PATH/scripts/migrations/runner.py"
+cp "$REPO_ROOT/config/capability-manifest.yaml" "$INSTALL_PATH/config/capability-manifest.yaml"
 echo "print('marker-installed-from-plugin-cache')" > "$INSTALL_PATH/scripts/marker.py"
 cat > "$SH_TMPDIR/.claude/plugins/installed_plugins.json" << JSON
 {
@@ -336,6 +339,10 @@ if [ ! -d ~/.claude/scripts/sweetclaude ]; then
   if [ -n "$IP" ] && [ -d "$IP/scripts" ]; then
     mkdir -p ~/.claude/scripts/sweetclaude
     cp -R "$IP/scripts/"* ~/.claude/scripts/sweetclaude/
+    if [ -d "$IP/config" ]; then
+      mkdir -p ~/.claude/config/sweetclaude
+      cp -R "$IP/config/"* ~/.claude/config/sweetclaude/
+    fi
   fi
 fi
 '
@@ -348,6 +355,10 @@ fi
 [ -f "$SH_TMPDIR/.claude/scripts/sweetclaude/marker.py" ] \
   && pass "self-heal backfilled non-migrations scripts too" \
   || fail "marker.py not backfilled"
+
+[ -f "$SH_TMPDIR/.claude/config/sweetclaude/capability-manifest.yaml" ] \
+  && pass "self-heal backfilled capability manifest config" \
+  || fail "capability manifest config not backfilled"
 
 # Idempotency: running again should not error and should not duplicate.
 MTIME1=$(stat -f %m "$SH_TMPDIR/.claude/scripts/sweetclaude/migrations/runner.py" 2>/dev/null \
@@ -376,8 +387,15 @@ echo "[8] preflight emits beta channel metadata for legacy beta install"
 PF_TMPDIR=$(mktemp -d)
 trap "rm -rf $PF_TMPDIR" EXIT
 PF_INSTALL="$PF_TMPDIR/.claude/plugins/cache/sweetclaude/sweetclaude/4.1.2-beta"
-mkdir -p "$PF_INSTALL/scripts/maintenance" "$PF_TMPDIR/.claude/plugins" "$PF_TMPDIR/project"
+mkdir -p "$PF_INSTALL/scripts/maintenance" "$PF_INSTALL/config" "$PF_TMPDIR/.claude/plugins" "$PF_TMPDIR/project/config"
+cp "$REPO_ROOT/scripts/preflight.sh" "$PF_INSTALL/scripts/preflight.sh"
 cp "$REPO_ROOT/scripts/maintenance/plugin-state.py" "$PF_INSTALL/scripts/maintenance/plugin-state.py"
+cp "$REPO_ROOT/scripts/maintenance/capability_manifest.py" "$PF_INSTALL/scripts/maintenance/capability_manifest.py"
+cp "$REPO_ROOT/config/capability-manifest.yaml" "$PF_INSTALL/config/capability-manifest.yaml"
+cat > "$PF_TMPDIR/project/config/capability-manifest.yaml" << YAML
+schema_version: 1
+channels: {}
+YAML
 cat > "$PF_TMPDIR/.claude/plugins/installed_plugins.json" << JSON
 {
   "version": 2,
@@ -395,11 +413,16 @@ cat > "$PF_TMPDIR/.claude/plugins/installed_plugins.json" << JSON
 }
 JSON
 
-PF_OUT=$(cd "$PF_TMPDIR/project" && HOME="$PF_TMPDIR" bash "$REPO_ROOT/scripts/preflight.sh")
+PF_OUT=$(cd "$PF_TMPDIR/project" && HOME="$PF_TMPDIR" bash "$PF_INSTALL/scripts/preflight.sh")
 
 echo "$PF_OUT" | grep -q '^SC_PLUGIN_CHANNEL=beta$' \
   && pass "preflight reports beta channel" \
   || fail "preflight did not report beta channel: $PF_OUT"
+
+echo "$PF_OUT" | grep -q '^CONFIG_SYNCED=true$' \
+  && [ -f "$PF_TMPDIR/.claude/config/sweetclaude/capability-manifest.yaml" ] \
+  && pass "preflight syncs framework capability manifest config" \
+  || fail "preflight did not sync framework config: $PF_OUT"
 
 echo "$PF_OUT" | grep -q '^SC_PLUGIN_EXPECTED_REF=beta-4.x$' \
   && pass "preflight reports beta-4.x expected ref" \
@@ -416,6 +439,45 @@ echo "$PF_OUT" | grep -q '^SC_PLUGIN_STALE_BETA=true$' \
 echo "$PF_OUT" | grep -q '^SC_PLUGIN_UPDATE_COMMAND=/plugin update sweetclaude@sweetclaude$' \
   && pass "preflight emits exact plugin update command" \
   || fail "preflight did not emit plugin update command: $PF_OUT"
+
+# ---------------------------------------------------------------------------
+# Test 8b: missing installed manifest fails closed for beta installs
+# ---------------------------------------------------------------------------
+
+echo "[8b] preflight fails closed when installed beta manifest is missing"
+
+PF_MISSING_CFG=$(mktemp -d)
+PF_MISSING_INSTALL="$PF_MISSING_CFG/.claude/plugins/cache/sweetclaude/sweetclaude/4.1.2-beta"
+mkdir -p "$PF_MISSING_INSTALL/scripts/maintenance" "$PF_MISSING_CFG/.claude/plugins" "$PF_MISSING_CFG/project"
+cp "$REPO_ROOT/scripts/preflight.sh" "$PF_MISSING_INSTALL/scripts/preflight.sh"
+cp "$REPO_ROOT/scripts/maintenance/plugin-state.py" "$PF_MISSING_INSTALL/scripts/maintenance/plugin-state.py"
+cp "$REPO_ROOT/scripts/maintenance/capability_manifest.py" "$PF_MISSING_INSTALL/scripts/maintenance/capability_manifest.py"
+cat > "$PF_MISSING_CFG/.claude/plugins/installed_plugins.json" << JSON
+{
+  "version": 2,
+  "plugins": {
+    "sweetclaude@sweetclaude-beta": [
+      {
+        "scope": "user",
+        "installPath": "$PF_MISSING_INSTALL",
+        "version": "4.1.2-beta",
+        "gitCommitSha": "missing-config",
+        "lastUpdated": "2026-05-25T18:48:15Z"
+      }
+    ]
+  }
+}
+JSON
+
+PF_MISSING_OUT=$(cd "$PF_MISSING_CFG/project" && HOME="$PF_MISSING_CFG" bash "$PF_MISSING_INSTALL/scripts/preflight.sh")
+
+echo "$PF_MISSING_OUT" | grep -q '^SC_PLUGIN_OK=false$' \
+  && pass "preflight reports plugin state failure when manifest is missing" \
+  || fail "preflight did not report plugin state failure: $PF_MISSING_OUT"
+
+echo "$PF_MISSING_OUT" | grep -q '^SC_PLUGIN_STALE_BETA=true$' \
+  && pass "preflight fails closed for missing beta manifest" \
+  || fail "preflight did not fail closed for missing beta manifest: $PF_MISSING_OUT"
 
 # ---------------------------------------------------------------------------
 # Test 9: update skill contains channel-preserving source and metadata rules

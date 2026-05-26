@@ -57,6 +57,10 @@ def test_plan_stabilizes_syncog_state_without_writes_or_product_moves(tmp_path):
     assert plan["command"] == "plan"
     assert plan["plan_status"] == "planned"
     assert plan["recovery_route"] == "stabilize-without-migration"
+    assert plan["capability_id"] == "recover.stabilize_without_migration"
+    assert plan["project_shape"] == "recovery_required"
+    assert plan["manifest_supported"] is True
+    assert "snapshot" in plan["safety_contract"]
     assert plan["mutating_actions_allowed"] is False
     assert plan["execute_requires_approval"] is True
     assert plan["requires_snapshot_before_execute"] is True
@@ -163,3 +167,5 @@ def test_recover_project_cli_plan_emits_manifest_json(tmp_path):
     assert plan["plan_id"].startswith("recovery-plan-")
     assert plan["plan_status"] == "planned"
     assert plan["recovery_route"] == "stabilize-without-migration"
+    assert plan["capability_id"] == "recover.stabilize_without_migration"
+    assert plan["manifest_supported"] is True

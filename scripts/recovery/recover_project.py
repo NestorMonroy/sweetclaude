@@ -21,6 +21,12 @@ from typing import Any
 
 import yaml
 
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from maintenance.capability_manifest import capability_config, project_shape_config
+
 try:
     from recovery.characterize_project import characterize_project
 except ModuleNotFoundError:  # Allows direct script execution.
@@ -262,6 +268,55 @@ def _diagnosis_summary(diagnosis: dict[str, Any]) -> dict[str, Any]:
         ),
         "sweetclaude_state": diagnosis.get("sweetclaude_state", {}),
     }
+
+
+def _recovery_project_shape(route: str) -> str:
+    if route == "stabilize-without-migration":
+        return "recovery_required"
+    if route == "manual-escalation":
+        return "manual_escalation"
+    if route == "no-recovery-needed":
+        return "current_layout"
+    return "manual_escalation"
+
+
+def _recovery_capability_contract(project_shape: str) -> dict[str, Any]:
+    shape = project_shape_config(project_shape)
+    capability_id = str(shape.get("recovery_capability", "") or "")
+    if not capability_id:
+        return {
+            "capability_id": "",
+            "project_shape": project_shape,
+            "manifest_supported": False,
+            "supported_project_shapes": [],
+            "safety_contract": [],
+            "verification_commands": [],
+        }
+    capability = capability_config(capability_id)
+    supported_shapes = list(capability.get("supports_project_shapes") or [])
+    return {
+        "capability_id": capability_id,
+        "project_shape": project_shape,
+        "manifest_supported": project_shape in supported_shapes,
+        "supported_project_shapes": supported_shapes,
+        "safety_contract": list(capability.get("safety_contract") or []),
+        "verification_commands": list(capability.get("verification_commands") or []),
+        "requires_approval": bool(capability.get("requires_approval", False)),
+        "mutates_project": bool(capability.get("mutates_project", False)),
+    }
+
+
+def _validate_recovery_plan_capability(plan: dict[str, Any]) -> None:
+    capability_id = str(plan.get("capability_id", "") or "")
+    project_shape = str(plan.get("project_shape", "") or "")
+    if not capability_id or not project_shape:
+        raise ValueError("recovery plan is missing manifest capability metadata")
+    capability = capability_config(capability_id)
+    supported_shapes = list(capability.get("supports_project_shapes") or [])
+    if project_shape not in supported_shapes:
+        raise ValueError(
+            f"recovery capability {capability_id} does not support project_shape={project_shape}"
+        )
 
 
 def _snapshot_paths(project: Path, diagnosis: dict[str, Any]) -> list[str]:
@@ -855,6 +910,7 @@ def execute_project(
     plan = plan_project(project)
     if not plan.get("can_execute_after_snapshot"):
         raise ValueError(f"plan is not executable: {plan.get('plan_status')}")
+    _validate_recovery_plan_capability(plan)
 
     snapshot = _create_snapshot(project, plan)
     run_dir = Path(snapshot["run_dir"])
@@ -908,6 +964,7 @@ def resume_project(run_dir: Path | str) -> dict[str, Any]:
 
     result = json.loads(manifest_path.read_text(encoding="utf-8"))
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    _validate_recovery_plan_capability(plan)
     project = Path(result["project_dir"]).resolve()
     snapshot = result.get("snapshot")
     if not isinstance(snapshot, dict):
@@ -992,11 +1049,17 @@ def plan_project(project_dir: Path | str) -> dict[str, Any]:
     diagnosis = diagnose_project(project)
     route = diagnosis["recovery_route"]
     can_plan = bool(diagnosis["can_plan_recovery"])
+    project_shape = _recovery_project_shape(route)
+    capability = _recovery_capability_contract(project_shape)
 
     operations: list[dict[str, Any]] = []
     blocked = _blocked_actions(diagnosis)
 
-    if can_plan and route == "stabilize-without-migration":
+    if (
+        can_plan
+        and route == "stabilize-without-migration"
+        and capability["manifest_supported"]
+    ):
         operations.extend(_state_operations(project, diagnosis))
         operations.extend(_pending_prompt_operations(diagnosis))
 
@@ -1006,6 +1069,9 @@ def plan_project(project_dir: Path | str) -> dict[str, Any]:
     elif can_plan and operations:
         plan_status = "planned"
         next_step = "Create the required snapshot, review the manifest, then execute with approval."
+    elif can_plan and not capability["manifest_supported"]:
+        plan_status = "manual-review"
+        next_step = "Recovery route is recognized, but the manifest capability does not support it."
     elif can_plan:
         plan_status = "manual-review"
         next_step = "Recovery is recognized, but this route has no executable operations yet."
@@ -1024,6 +1090,12 @@ def plan_project(project_dir: Path | str) -> dict[str, Any]:
         "project_dir": str(project),
         "plan_status": plan_status,
         "recovery_route": route,
+        "capability_id": capability["capability_id"],
+        "project_shape": project_shape,
+        "manifest_supported": capability["manifest_supported"],
+        "supported_project_shapes": capability["supported_project_shapes"],
+        "safety_contract": capability["safety_contract"],
+        "verification_commands": capability["verification_commands"],
         "mutating_actions_allowed": False,
         "execute_requires_approval": True,
         "requires_snapshot_before_execute": can_plan,
@@ -1216,49 +1288,33 @@ def guard_project(project_dir: Path | str) -> dict[str, Any]:
     product_base_exists = bool(characterization.get("product_base_exists"))
     standard_product_dir_exists = (project / ".sweetclaude" / "product").is_dir()
     old_prefix_count = _old_prefix_count(characterization)
+    prefix_counts = characterization.get("counts", {}).get("prefixes", {})
+    flat_bl_count = int(prefix_counts.get("BL", 0) or 0) if isinstance(prefix_counts, dict) else 0
+    has_typed_backlog_dirs = bool(
+        characterization.get("layout", {}).get("has_typed_backlog_dirs")
+    )
     accepted_legacy_layout = _taxonomy_recovery_accepts_legacy_layout(state)
     route = diagnosis.get("recovery_route")
 
     if route == "stabilize-without-migration":
-        status = "run-recover"
-        migrate_allowed = False
-        message = (
-            "This project is in a recoverable SweetClaude migration/update state. "
-            "Run /sweetclaude:recover before any taxonomy migration."
-        )
+        project_shape = "recovery_required"
     elif route == "manual-escalation":
-        status = "manual-review"
-        migrate_allowed = False
-        message = (
-            "This project needs manual SweetClaude recovery review before migration "
-            "or other maintenance commands."
-        )
+        project_shape = "manual_escalation"
     elif accepted_legacy_layout:
-        status = "compatibility-mode"
-        migrate_allowed = False
-        message = (
-            "This project has an accepted legacy taxonomy layout. Do not run "
-            "/sweetclaude:migrate unless a future layout-specific migration plan "
-            "explicitly allows it."
-        )
+        project_shape = "accepted_legacy_taxonomy"
+    elif old_prefix_count and flat_bl_count and not has_typed_backlog_dirs:
+        project_shape = "flat_bl_backlog"
     elif old_prefix_count:
-        status = "migration-may-be-needed"
-        migrate_allowed = True
-        message = (
-            "Old-format work items were found and no recovery-only state was "
-            "detected. Review /sweetclaude:migrate before executing it."
-        )
+        project_shape = "manual_escalation"
     elif not product_base_exists:
-        status = "missing-product-base"
-        migrate_allowed = False
-        message = (
-            "SweetClaude product artifacts were not found. Run /sweetclaude:doctor "
-            "or /sweetclaude:setup instead of migration."
-        )
+        project_shape = "missing_product_base"
     else:
-        status = "ok"
-        migrate_allowed = False
-        message = "No SweetClaude migration or recovery guard is currently active."
+        project_shape = "current_layout"
+
+    shape_config = project_shape_config(project_shape)
+    status = str(shape_config.get("guard_status", "") or "")
+    migrate_allowed = bool(shape_config.get("migrate_allowed", False))
+    message = str(shape_config.get("message", "") or "")
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -1266,6 +1322,7 @@ def guard_project(project_dir: Path | str) -> dict[str, Any]:
         "project_dir": str(project),
         "status": status,
         "message": message,
+        "project_shape": project_shape,
         "recovery_route": route,
         "migrate_allowed": migrate_allowed,
         "standard_product_dir_exists": standard_product_dir_exists,

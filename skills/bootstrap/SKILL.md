@@ -38,12 +38,16 @@ except Exception:
   if [ -n "$IP" ] && [ -d "$IP/scripts" ]; then
     mkdir -p ~/.claude/scripts/sweetclaude
     rsync -a "$IP/scripts/" ~/.claude/scripts/sweetclaude/ 2>/dev/null || true
+    if [ -d "$IP/config" ]; then
+      mkdir -p ~/.claude/config/sweetclaude
+      rsync -a "$IP/config/" ~/.claude/config/sweetclaude/ 2>/dev/null || true
+    fi
   fi
 fi
 eval "$(bash ~/.claude/scripts/sweetclaude/preflight.sh 2>/dev/null)"
 ```
 
-`RUNNER` is now set (empty if not found). `SELF_HEAL=true` if the versionless path was just populated. `VERSION_DIR_HEALED=true` if the install directory was just repaired to a version-named path.
+`RUNNER` is now set (empty if not found). `SELF_HEAL=true` if the versionless path was just populated. `CONFIG_SYNCED=true` if versionless framework config was synced. `VERSION_DIR_HEALED=true` if the install directory was just repaired to a version-named path.
 
 If `VERSION_DIR_HEALED=true`, print exactly this before continuing:
 
