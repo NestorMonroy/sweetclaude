@@ -54,7 +54,13 @@ def write_frontmatter_file(path, frontmatter_dict, body=""):
     """Create a markdown file with YAML frontmatter at the given path."""
     path = os.fspath(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    fm_text = yaml.dump(frontmatter_dict, default_flow_style=False)
+    fm = dict(frontmatter_dict)
+    fm.setdefault("created", "2026-05-25")
+    if fm.get("type") == "milestone":
+        fm.setdefault("target_release", "test")
+    if fm.get("type") == "epic":
+        fm.setdefault("milestone", "MS-001")
+    fm_text = yaml.dump(fm, default_flow_style=False)
     content = f"---\n{fm_text}---\n{body}"
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
@@ -287,15 +293,15 @@ class TestArchivedFilesIncluded:
         base = str(tmp_path / ".sweetclaude" / "product")
 
         write_frontmatter_file(
-            os.path.join(base, "backlog", "archived", "I-021-spike.md"),
-            {"id": "I-021", "type": "spike", "title": "Old spike", "status": "done"},
+            os.path.join(base, "backlog", "archived", "ISSUE-021-spike.md"),
+            {"id": "ISSUE-021", "type": "spike", "title": "Old spike", "status": "done"},
         )
 
         rebuild(project_dir)
         items = get_all_items(project_dir)
 
         assert len(items) == 1
-        assert items[0]["id"] == "I-021"
+        assert items[0]["id"] == "ISSUE-021"
         assert items[0]["type"] == "spike"
 
 
@@ -846,7 +852,7 @@ class TestEpicDependsOnStoredInDependenciesTable:
         write_frontmatter_file(
             os.path.join(base, "roadmap", "epics", "EP-002-next.md"),
             {"id": "EP-002", "type": "epic", "title": "Next",
-             "status": "planned", "depends_on": ["EP-001"]},
+             "status": "active", "depends_on": ["EP-001"]},
         )
 
         rebuild(project_dir)

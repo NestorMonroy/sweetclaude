@@ -38,7 +38,13 @@ def write_frontmatter_file(path, frontmatter_dict, body=""):
     """Create a markdown file with YAML frontmatter at the given path."""
     path = os.fspath(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    fm_text = yaml.dump(frontmatter_dict, default_flow_style=False)
+    fm = dict(frontmatter_dict)
+    fm.setdefault("created", "2026-05-25")
+    if fm.get("type") == "milestone":
+        fm.setdefault("target_release", "test")
+    if fm.get("type") == "epic":
+        fm.setdefault("milestone", "MS-001")
+    fm_text = yaml.dump(fm, default_flow_style=False)
     content = f"---\n{fm_text}---\n{body}"
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)

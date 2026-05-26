@@ -40,7 +40,10 @@ def dashboard_server():
 
     DashboardHandler.project_dir = PROJECT_DIR
 
-    server = http.server.HTTPServer(("127.0.0.1", TEST_PORT), DashboardHandler)
+    try:
+        server = http.server.HTTPServer(("127.0.0.1", TEST_PORT), DashboardHandler)
+    except PermissionError as exc:
+        pytest.skip(f"localhost bind blocked by test sandbox: {exc}")
     server.allow_reuse_address = True
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
