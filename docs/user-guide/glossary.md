@@ -75,3 +75,23 @@ The atomic unit of work. Describes something a user or the system needs, with en
 
 **`.sweetclaude/` directory**
 Where SweetClaude keeps all its own artifacts — state, product docs, design docs, plans. Intentionally separate from your distributable codebase so SweetClaude's work never mingles with the code you ship. Commit this directory to git — it's project history, not scratch.
+
+## Doctor
+
+The SweetClaude diagnostic and maintenance front door. `/sweetclaude:doctor` scans state, hooks, storage, migration, config, files, onboarding, and environment, then routes repair, recovery, or supported migration through safety checks.
+
+## Recover
+
+The safety flow for projects left in bad update, doctor, repair, or unsafe migration states. `/sweetclaude:recover` diagnoses first, plans, snapshots before mutation, asks before execution, verifies, and reports rollback instructions.
+
+## Compatibility Mode
+
+A 4.x beta maintenance state where recovery has accepted a legacy taxonomy layout without moving product artifacts. Doctor collapses accepted legacy taxonomy noise and does not present a migration prompt.
+
+## Stable 3.x Channel
+
+The recommended SweetClaude plugin channel for normal active project work. Installed with `carson-sweet/sweetclaude@stable-3.x` and `sweetclaude@sweetclaude-stable`.
+
+## 4.x Beta Channel
+
+The explicit opt-in beta channel for newer project maintenance and taxonomy behavior. Installed with `carson-sweet/sweetclaude@beta-4.x` and `sweetclaude@sweetclaude-beta`.

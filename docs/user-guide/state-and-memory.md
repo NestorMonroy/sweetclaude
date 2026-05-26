@@ -1,7 +1,7 @@
 # State and Memory
 
-**Version:** 2.0
-**Date:** 2026-05-03
+**Version:** 2.1
+**Date:** 2026-05-25
 
 SweetClaude persists project context across sessions in `.sweetclaude/`. Commit this directory to git. It is project-critical data, not cache. Decision history, assumptions, scope changes, and progress live here — and they need to travel with the repo.
 
@@ -21,7 +21,10 @@ This page is reference. For why state is structured the way it is, read [How It 
 │   ├── assumption-register.md  ← Assumptions worth checking later
 │   ├── improvement-register.md ← Feedback and learnings from each phase
 │   ├── scope-changes.md        ← Scope additions and removals with justification
-│   └── backups/                ← Pre-migration state snapshots (created by /sweetclaude:update)
+│   ├── backups/                ← Migration backups created by guarded migration flows
+│   ├── doctor-runs/            ← Doctor repair archives and manifests
+│   └── recovery-runs/          ← Recovery snapshots and rollback manifests (do not commit)
+├── product/                    ← 4.x beta product artifacts: backlog, roadmap, issues
 ├── plans/                      ← Claude Code plan files (.sweetclaude/plans is set as plansDirectory)
 │   └── archive/                ← Plans archived at ship time, organized by milestone/sprint
 ├── traceability/               ← Story → requirement → test → code traceability maps
@@ -29,6 +32,12 @@ This page is reference. For why state is structured the way it is, read [How It 
 ```
 
 Skills create additional state files as they run — `state/discovery.yaml`, `state/personas.yaml`, `state/brief.yaml`, etc. Treat the schema as extensible.
+
+Version note: stable 3.x and 4.x beta share the same state principle but differ
+in operational details. In 4.x beta, project maintenance data may include
+`.sweetclaude/state/doctor-runs/`, `.sweetclaude/state/recovery-runs/`, and
+`.sweetclaude/product/`. Recovery run directories can contain snapshots of state
+and product artifacts and should stay out of source control.
 
 ---
 
@@ -96,11 +105,11 @@ framework:
 | `project.safety_snapshot` | The git branch created during onboarding (`pre-sweetclaude`). Your insurance. |
 | `work.last_item_id` | Monotonic counter. Persists across work item completions so IDs do not repeat. |
 | `work.active` | The work in flight right now. Fast-moving. Type, workflow, phase, title, start date, entry category. |
-| `features.*` | Per-feature activation state. `not_configured` → `active` or `declined`. Configured at setup and reviewable via fix-sweetclaude or update. |
+| `features.*` | Per-feature activation state. `not_configured` -> `active` or `declined`. Configured at setup and reviewable through the owning skill or doctor/update reporting. |
 | `framework.consistency` | Last drift-check result. Updated by the health hook. |
 | `framework.update` | Whether a newer version is available. Updated by the health hook. |
 
-**Migration from v2.x:** If your project has `phase.yaml` and `skills.yaml`, run `/sweetclaude` and the orchestrator will detect the old format and route to the migration flow automatically. The migration is non-destructive — originals are archived before any changes.
+**Migration from older state:** If your project has old SweetClaude state files, run `/sweetclaude:doctor` or `/sweetclaude:go` and follow the routed maintenance flow. In 4.x beta, `/sweetclaude:update` reports drift but does not run project-state or taxonomy migrations inline.
 
 ---
 

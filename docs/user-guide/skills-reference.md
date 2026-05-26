@@ -1,9 +1,9 @@
 # SweetClaude Skills Reference
 
-**Version:** 1.7
-**Date:** 2026-05-19
+**Version:** 1.8
+**Date:** 2026-05-25
 
-All 109 skills, organized by domain. Internal framework skills (_features, _health, _migrate, _route, bootstrap, master) are not user-invocable and have no table rows — they are referenced in section introductions only. One skill (`dashboard`) exists on disk but is not yet committed; it is excluded from this count. This page is reference — for narrative explanations of how skills fit together, read [Walkthroughs](walkthroughs.md) and [How It Works](how-it-works.md).
+The repo currently contains 113 skill directories, organized by domain. The list changes as framework maintenance skills are promoted or retired; use this page as the user-facing reference, not as a generated manifest. Internal framework skills are referenced only when they affect user-visible routing. For narrative explanations of how skills fit together, read [Walkthroughs](walkthroughs.md) and [How It Works](how-it-works.md).
 
 You rarely need to memorize commands. `/sweetclaude:go` is the single entry point — it routes automatically based on project state and what you describe in plain English. The list below is for when you know exactly what you want.
 
@@ -38,7 +38,7 @@ Session navigation and automatic routing. Most of these fire without being invok
 
 ---
 
-## System (18 skills)
+## System (20 skills)
 
 Framework management — setup, teardown, updates, audits, and guards. Always available regardless of version stage.
 
@@ -47,10 +47,12 @@ Framework management — setup, teardown, updates, audits, and guards. Always av
 | **Setup** | _(internal)_ | Activate on any project — new idea or existing codebase. Detects context, walks through setup, writes `sweetclaude.yaml`. Invoked automatically by `/sweetclaude` when no state file exists. |
 | **Init** | `/sweetclaude:init` | Bootstrap SweetClaude infrastructure only (no product discovery). Detects project type, creates `.sweetclaude/`, generates CLAUDE.md stub. For existing codebases with real history, use `/sweetclaude` (which routes to setup) instead. |
 | **Off** | `/sweetclaude:off` | Suspend SweetClaude for this project. Preserves all artifacts. Reactivate with `/sweetclaude:go`. |
-| **Update** | `/sweetclaude:update` | Fetch the latest version from GitHub and sync to all installed locations. Shows what changed. Migrates `phase.yaml`/`skills.yaml` from v2.x to `sweetclaude.yaml` format. On a v3→v4 upgrade, shows a major version warning before installing. |
-| **Migrate** | `/sweetclaude:migrate` | Migrate old-format backlog items (`BL-NNN`, `STORY-NNN`, `BUG-NNN`, etc.) to the unified `ISSUE-NNN` taxonomy under `.sweetclaude/product/backlog/`. Creates a safety backup, validates all files, shows a preview, executes the transform, verifies output, and offers to delete the old location. Run once per project after updating. |
-| **Migrate Diagnose** | _(internal)_ | Diagnoses v3 `BL-NNN` file problems before migration — missing fields, unknown statuses, duplicate IDs. Called by `sweetclaude:migrate` on failure and by bootstrap when v3 files are detected in a v4 install. Not user-invocable directly. |
-| **Fix SweetClaude** | `/sweetclaude:fix-sweetclaude` | Audit and repair configuration. Checks CLAUDE.md accuracy, phase state, file locations, `sweetclaude.yaml` consistency, empty registers, hook registrations. If `sweetclaude.yaml` is unparseable, offers repair options. Proposes fixes — does not change anything without asking. |
+| **Update** | `/sweetclaude:update` | Sync SweetClaude framework files inside the installed plugin channel. In 4.x beta it reports project drift but does not run project-state or taxonomy migrations inline. Update the Claude Code plugin package and restart Claude Code before running it. |
+| **Migrate** | `/sweetclaude:migrate` | 4.x beta taxonomy migration for supported flat v3 `BL-NNN` backlog layouts. Runs read-only preflight before locks or backups. Unsafe typed legacy layouts and duplicate IDs route to `/sweetclaude:recover` instead of blind migration. |
+| **Migrate Diagnose** | _(internal)_ | Diagnoses old `BL-NNN` migration input problems such as missing fields, unknown statuses, and duplicate IDs. Used by migration/recovery flows, not normally invoked directly. |
+| **Doctor** | `/sweetclaude:doctor` | Diagnostic scan and maintenance front door. Routes project repair, recovery, and supported migration through deterministic safety checks. |
+| **Recover** | `/sweetclaude:recover` | Recover or unblock projects left in bad update, doctor, repair, or unsafe migration states. Diagnoses first, plans, snapshots, asks before execution, verifies, and reports rollback instructions. |
+| **Fix SweetClaude** | `/sweetclaude:fix-sweetclaude` | Deprecated compatibility entry point. Redirects to `/sweetclaude:doctor`. |
 | **Purge** | `/sweetclaude:purge` | Delete all SweetClaude artifacts. Recommends a backup branch first. Requires typed confirmation. |
 | **Assess Mode** | `/sweetclaude:project-assess-shape` | Five-question interview to recommend and configure a project mode (Flow, Kanban, Shape Up, or Agile). Writes mode to `sweetclaude.yaml` and compiles `effective-gates.yaml`. Runs automatically at init; available on demand to re-assess. |
 | **Behavioral Regression** | `/sweetclaude:behavioral-regression` | Run the 15-contract behavioral test suite against the current model version. Tests phase dwelling, propose-not-ask, TDD enforcement claims, deference levels, detour recovery, improvement register triggers, and more. Run after any Claude model upgrade to detect silent behavioral drift. |

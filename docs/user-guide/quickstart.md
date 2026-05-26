@@ -1,6 +1,7 @@
 # Quick Start
 
-You have SweetClaude installed. Here is how to use it.
+You have SweetClaude installed. Here is how to use it. If you have not installed
+yet, choose the correct track first: [stable 3.x](3.x/index.md) or [4.x beta](4.x-beta/index.md).
 
 ---
 
@@ -26,6 +27,7 @@ Your daily driver. Detects where you are and routes automatically. Empty folder 
 
 ```
 /sweetclaude:off    # suspend — preserves all artifacts, reactivate with /sweetclaude:go
+/sweetclaude:doctor # diagnose and route repair/recovery/migration safely
 /sweetclaude:purge  # delete all artifacts — warns and requires typed confirmation first
 ```
 

@@ -4,7 +4,14 @@ All notable changes to SweetClaude are documented here.
 
 ---
 
-## [Unreleased] — targeting 4.1.0-beta
+## [Unreleased] — targeting next release
+
+### Changed
+
+- Documented the stable 3.x and 4.x beta guide split, including channel-safe install and update commands.
+- Documented the hardened 4.x maintenance path: plugin update first, restart Claude Code, run `/sweetclaude:update`, then route project repair/migration through `/sweetclaude:doctor`.
+- Documented recovery-first handling for unsafe legacy 3.x/4.0 layouts: typed backlog directories and duplicate IDs route to `/sweetclaude:recover`, not blind taxonomy migration.
+- Clarified that `/sweetclaude:fix-sweetclaude` is now a redirect to `/sweetclaude:doctor`.
 
 ---
 
@@ -72,7 +79,7 @@ Story storage moved from `.sweetclaude/product/backlog/BL-NNN.md` to `docs/produ
 
 ### Migration
 
-`/sweetclaude:migrate` runs once per project; a safety backup is created automatically. See [docs/user-guide/v4-migration.md](docs/user-guide/v4-migration.md) for the full migration walkthrough.
+Historical note: 4.0 introduced a migration path for the storage layout at that time. Current 4.x beta maintenance guidance is recovery-first and lives in [docs/user-guide/v4-migration.md](docs/user-guide/v4-migration.md).
 
 ### New features
 

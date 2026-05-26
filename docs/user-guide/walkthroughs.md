@@ -238,7 +238,7 @@ You have a planned feature. Specs exist. You want to run the rigorous version en
 /sweetclaude:code-feature thread reply feature
 ```
 
-SweetClaude looks for existing specs in this order: Gherkin `.feature` files, user stories in `.sweetclaude/stories/`, PRD in `docs/`. It finds Gherkin files for "thread reply" and skips the spec-writing step.
+SweetClaude looks for existing specs in this order: Gherkin `.feature` files, current issue/story artifacts in `.sweetclaude/product/`, and PRD material in `docs/`. It finds Gherkin files for "thread reply" and skips the spec-writing step.
 
 Now the **TDD Level 3** pipeline:
 

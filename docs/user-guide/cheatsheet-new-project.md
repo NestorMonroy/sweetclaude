@@ -6,8 +6,8 @@ You have an idea. Maybe it is well-formed, maybe it is a napkin sketch. SweetCla
 
 1. Install SweetClaude (if you have not already) — inside Claude Code run:
    ```
-   /plugin marketplace add https://github.com/carson-sweet/sweetclaude
-   /plugin install sweetclaude@sweetclaude
+   /plugin marketplace add carson-sweet/sweetclaude@stable-3.x
+   /plugin install sweetclaude@sweetclaude-stable
    ```
 2. Create an empty folder for your project and open Claude Code in it
 3. Run:
@@ -97,7 +97,7 @@ These are not part of the automatic flow. They are available anytime.
 - **Decision tracking** (`/sweetclaude:design-manage-decisions`) — record any decision with context and rationale, queryable later
 - **Positioning statement** (`/sweetclaude:product-positioning-statement`) — for/who/that/unlike framework
 - **Corpus pipeline and RAG search** (`/sweetclaude:document-corpus`) — organize messy files into canonical documents with full provenance (consolidate → triage → reconcile → promote), then index for semantic search. Presents a menu; pick the step you need or check status first.
-- **Update SweetClaude** (`/sweetclaude:update`) — fetch the latest version from GitHub and sync to all projects
+- **Update SweetClaude** — update the Claude Code plugin package, restart Claude Code, then run `/sweetclaude:update` to sync framework files inside the installed channel
 - **Version bumping** — run `scripts/bump-version.sh patch|minor|major` to bump version explicitly; no automatic bump on commit
 
 ## Tips

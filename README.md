@@ -2,7 +2,7 @@
 
 # SweetClaude
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.1.2--beta-blue)](https://github.com/carson-sweet/sweetclaude/releases/tag/v4.1.2-beta) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/behavioral-contracts.md)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Channels](https://img.shields.io/badge/channels-stable_3.x_%7C_beta_4.x-blue)](docs/user-guide/index.md) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/behavioral-contracts.md)
 
 ## TL;DR
 
@@ -13,8 +13,7 @@ Start Claude Code and run:
 /sweetclaude:help
 ```
 
-**Beta safety note:** beta releases before `v4.1.2-beta` have been withdrawn.
-Do not install older v4 beta tags on active projects.
+**Beta safety note:** use the current `beta-4.x` channel for beta testing. Do not install old 4.x beta tags on active projects. If an existing beta install is stuck or noisy, follow [4.x Beta Rescue](docs/user-guide/4.x-beta/beta-rescue.md).
 
 To intentionally install the 4.x beta channel, add and install the beta plugin channel explicitly. Do not use `/sweetclaude:update` to move a stable 3.x install onto beta.
 
@@ -63,6 +62,12 @@ For the 4.x beta channel, add and install the beta plugin channel explicitly. Do
 /plugin install sweetclaude@sweetclaude-beta
 ```
 
+For an existing beta install, update the plugin package first and restart Claude Code before running `/sweetclaude:update`:
+
+```
+/plugin update sweetclaude@sweetclaude-beta
+```
+
 Once install is complete, run:
 
 ```
@@ -82,12 +87,14 @@ A few other key commands to know about are:
 
 * `/sweetclaude:help` — the guided tour. Walks you through what SweetClaude is, how it works, and whether it's right for your project before touching a single file.
 * `/sweetclaude:status` — project dashboard. Active work item, phase, roadmap, backlog, recent commits at a glance.
-* `/sweetclaude:fix-sweetclaude` — if SweetClaude is behaving unexpectedly, run this. It audits configuration, checks for drift, and proposes fixes without changing anything until you confirm.
+* `/sweetclaude:doctor` — if SweetClaude is behaving unexpectedly, run this. It scans state, hooks, storage, migration, config, files, onboarding, and environment, then routes repair, recovery, or migration safely.
 
 
 We've tried to design SweetClaude to be intuitive, but additional documentation is available if needed or desired:
 
 → [Full install options, updating, uninstalling](docs/user-guide/install.md)
+
+→ [Stable 3.x and 4.x beta guide tracks](docs/user-guide/index.md#choose-your-track)
 
 → [First session walkthrough](docs/user-guide/quickstart.md)
 
@@ -164,8 +171,9 @@ You can invoke skills directly if you know what you want. These are the most com
 |---|---|
 | `/sweetclaude:off` | Suspend SweetClaude — preserves all artifacts, reactivate with `/sweetclaude:go` |
 | `/sweetclaude:purge` | Delete all SweetClaude artifacts — recommends a backup branch, shows all files, requires "I understand". **Taking a branch snapshot before is highly recommended.** |
-| `/sweetclaude:update` | Fetch latest SweetClaude from GitHub and sync to all projects |
-| `/sweetclaude:fix-sweetclaude` | Audit and repair SweetClaude configuration |
+| `/sweetclaude:update` | Sync SweetClaude framework files inside the installed channel |
+| `/sweetclaude:doctor` | Diagnostic scan and maintenance front door |
+| `/sweetclaude:recover` | Recover stuck update, doctor, repair, or unsafe migration states |
 | `/sweetclaude:hook-repair` | Restore broken installed hooks from backup. Uses Bash only — works when Write/Edit are blocked. See [hook-development.md](docs/user-guide/hook-development.md) for manual and emergency procedures. |
 
 ### Advanced
