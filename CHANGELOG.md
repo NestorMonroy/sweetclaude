@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to SweetClaude are documented here.
+All notable changes to SweetClaude are documented here. SweetClaude has separate stable 3.x and 4.x beta channels, so this changelog calls out channel-specific changes explicitly.
 
 ---
 
@@ -13,6 +13,43 @@ All notable changes to SweetClaude are documented here.
 - Updated the 4.x migration guide to route through `/sweetclaude:doctor`, `/sweetclaude:recover`, and guarded `/sweetclaude:migrate` instead of blanket migrate-first advice.
 
 ---
+
+## Stable 3.x Channel — current: 3.68.6
+
+The stable branch did not previously carry its own `CHANGELOG.md`, so this
+section summarizes the current stable-channel state from the `stable-3.x` branch.
+Stable 3.x is the recommended channel for normal active project work.
+
+### Changed
+
+- Added explicit stable-channel install and update guidance: install from
+  `carson-sweet/sweetclaude@stable-3.x`, update the Claude Code plugin package
+  with `/plugin update sweetclaude@sweetclaude-stable`, restart Claude Code, then
+  run `/sweetclaude:update` inside each project when framework files need
+  syncing.
+- Added a stable 3.x user-guide entry point and clarified that
+  `/sweetclaude:update` does not move stable installs onto 4.x beta.
+- Standardized docs and cheatsheets on `/sweetclaude:go` as the normal project
+  entry point after stable install.
+
+### Fixed
+
+- Hardened stable install/update discovery so stable installs preserve the
+  stable/beta channel boundary and do not prompt users into prerelease beta
+  updates by default.
+- Added deterministic plugin-state inspection for stable installs, including
+  update-source detection, recorded plugin metadata, and preflight reporting.
+- Aligned stable hook-maintenance and upgrade-path checks around
+  `/sweetclaude:fix-sweetclaude`, Bash-blocking behavior, and plugin-native hook
+  handling.
+
+### Stable vs Beta
+
+- Stable 3.x uses `/sweetclaude:fix-sweetclaude` for project repair.
+- 4.x beta uses the newer `/sweetclaude:doctor`, `/sweetclaude:recover`, and
+  guarded `/sweetclaude:migrate` maintenance front doors.
+- Channel switching is explicit: install `sweetclaude@sweetclaude-beta` from
+  `beta-4.x` if you intentionally want beta behavior.
 
 ## [4.1.12-beta] — 2026-05-25
 
