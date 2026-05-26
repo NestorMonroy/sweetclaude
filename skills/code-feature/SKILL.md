@@ -74,7 +74,7 @@ Run the full Level 3 pipeline from `sweetclaude:code-tdd`:
 
 1. **Spawn test writer subagent.** Receives: the `.feature` file, existing codebase for patterns. No knowledge of planned implementation. Writes failing tests that fully specify the Gherkin behavior.
 
-2. **QA Caucus** (implements the [caucus pattern](../../docs/internal/architecture-sweetclaude-v1-2026-04-13.md#subagent-patterns)). Spawn three parallel review subagents:
+2. **QA Caucus**. Spawn three parallel, independent review subagents:
    - `sweetclaude:qa-caucus-service` — service/API coverage
    - `sweetclaude:qa-caucus-component` — UI/component coverage (if applicable)
    - `sweetclaude:qa-caucus-integration` — cross-cutting concerns

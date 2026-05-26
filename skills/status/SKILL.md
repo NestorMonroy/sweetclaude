@@ -16,7 +16,6 @@ STOP. Before executing this skill, check: if pre-loaded state above shows STATE_
 
 Multi-view project orientation. One command, dynamic views. No background agents.
 
-Source spec: `docs/internal/specs/status-view-scopes.md` (v3.1, ISSUE-186/ISSUE-187)
 
 ## Step 1: Schema check
 
