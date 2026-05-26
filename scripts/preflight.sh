@@ -158,11 +158,11 @@ if [ ! -f "$PLUGIN_STATE_SCRIPT" ]; then
   PLUGIN_STATE_SCRIPT="$VERSIONLESS/maintenance/plugin-state.py"
 fi
 if [ -f "$PLUGIN_STATE_SCRIPT" ]; then
-  CURRENT_ROOT_ARGS=()
   if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    CURRENT_ROOT_ARGS=(--current-root "$CLAUDE_PLUGIN_ROOT")
+    PLUGIN_STATE_OUT=$(python3 "$PLUGIN_STATE_SCRIPT" --project-dir "${PROJECT_DIR:-$PWD}" inspect --current-root "$CLAUDE_PLUGIN_ROOT" --shell 2>/dev/null || true)
+  else
+    PLUGIN_STATE_OUT=$(python3 "$PLUGIN_STATE_SCRIPT" --project-dir "${PROJECT_DIR:-$PWD}" inspect --shell 2>/dev/null || true)
   fi
-  PLUGIN_STATE_OUT=$(python3 "$PLUGIN_STATE_SCRIPT" --project-dir "${PROJECT_DIR:-$PWD}" inspect "${CURRENT_ROOT_ARGS[@]}" --shell 2>/dev/null || true)
   [ -n "$PLUGIN_STATE_OUT" ] && eval "$PLUGIN_STATE_OUT"
 fi
 

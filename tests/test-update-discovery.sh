@@ -413,7 +413,12 @@ cat > "$PF_TMPDIR/.claude/plugins/installed_plugins.json" << JSON
 }
 JSON
 
-PF_OUT=$(cd "$PF_TMPDIR/project" && HOME="$PF_TMPDIR" bash "$PF_INSTALL/scripts/preflight.sh")
+PF_ERR="$PF_TMPDIR/preflight.err"
+PF_OUT=$(cd "$PF_TMPDIR/project" && HOME="$PF_TMPDIR" bash "$PF_INSTALL/scripts/preflight.sh" 2>"$PF_ERR")
+
+[ ! -s "$PF_ERR" ] \
+  && pass "preflight emits no stderr with no CLAUDE_PLUGIN_ROOT" \
+  || fail "preflight emitted stderr: $(cat "$PF_ERR")"
 
 echo "$PF_OUT" | grep -q '^SC_PLUGIN_CHANNEL=beta$' \
   && pass "preflight reports beta channel" \

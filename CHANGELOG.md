@@ -51,6 +51,15 @@ Stable 3.x is the recommended channel for normal active project work.
 - Channel switching is explicit: install `sweetclaude@sweetclaude-beta` from
   `beta-4.x` if you intentionally want beta behavior.
 
+## [4.1.14-beta] — 2026-05-26
+
+### Fixed
+
+- Fixed installed-consumer preflight behavior when `CLAUDE_PLUGIN_ROOT` is not
+  set, avoiding an empty optional argument expansion under `set -u`.
+- Added update-discovery regression coverage that fails if preflight emits
+  stderr in the no-`CLAUDE_PLUGIN_ROOT` consumer path.
+
 ## [4.1.13-beta] — 2026-05-26
 
 ### Fixed
