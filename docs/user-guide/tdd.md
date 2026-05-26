@@ -71,7 +71,7 @@ The right level depends on the work, not your preference. The framework picks ba
 
 **The discipline**:
 
-0. A story branch is created (`{ID}/{slug}`, e.g. `BL-046/git-branch-discipline`) to isolate the work from main.
+0. A story branch is created (`{ID}/{slug}`, e.g. `ISSUE-046/git-branch-discipline`) to isolate the work from main.
 1. Test writer agent writes failing tests in an isolated context.
 2. Tests are committed to git.
 3. Test-guardian hook activates — test files become immutable.

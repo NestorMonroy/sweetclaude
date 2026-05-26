@@ -79,7 +79,10 @@ These areas touch shared infrastructure and are higher-risk:
 
 | Area | Why it's complex |
 |---|---|
-| `skills/update/SKILL.md` | Touches migration logic, all state files, installed plugin metadata |
+| `skills/update/SKILL.md` | Syncs framework files and plugin metadata; must not run project-state migrations inline |
+| `skills/doctor/SKILL.md` and `scripts/doctor.py` | Diagnostic scan, repair menu, maintenance routing, prompted fixes |
+| `skills/recover/SKILL.md` and `scripts/recovery/` | Snapshot-backed recovery for bad update, migration, doctor, or repair states |
+| `skills/migrate/SKILL.md` and `scripts/migrate/` | Guarded taxonomy migration; must honor preflight and recovery routing |
 | `skills/on/SKILL.md` | Bootstraps the entire `.sweetclaude/` state directory |
 | `skills/master/SKILL.md` | Internal session orchestrator; pre-flight, routing, deference (invoked by the `/sweetclaude` front door in `skills/sweetclaude/SKILL.md`) |
 | `hooks/*.sh` | Deterministic enforcement; bugs here affect every session |

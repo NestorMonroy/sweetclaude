@@ -13,12 +13,9 @@ Start Claude Code and run:
 /sweetclaude:help
 ```
 
-**Beta safety note:** 4.x beta releases before `v4.1.9-beta` had known
-update/recovery risks. Do not install old beta tags on active projects. Use
-the current `beta-4.x` channel, and see [Beta rescue](docs/user-guide/beta-rescue.md)
-if an existing beta install reports `4.1.8-beta` or older.
+**Beta safety note:** 4.x beta releases before `v4.1.9-beta` had known update/recovery risks. Do not install old beta tags on active projects. Use the current `beta-4.x` channel, and see [4.x Beta Rescue](docs/user-guide/4.x-beta/beta-rescue.md) if an existing beta install reports `4.1.8-beta` or older.
 
-To intentionally install the 4.x beta channel:
+To intentionally install the 4.x beta channel, add and install the beta plugin channel explicitly. Do not use `/sweetclaude:update` to move a stable 3.x install onto beta.
 
 ```
 /plugin marketplace add carson-sweet/sweetclaude@beta-4.x
@@ -58,24 +55,17 @@ Start Claude Code in your project folder as you normally would, then inside Clau
 /plugin install sweetclaude@sweetclaude-stable
 ```
 
-For the 4.x beta channel, use:
+For the 4.x beta channel, add and install the beta plugin channel explicitly. Do not use `/sweetclaude:update` to move a stable 3.x install onto beta.
 
 ```
 /plugin marketplace add carson-sweet/sweetclaude@beta-4.x
 /plugin install sweetclaude@sweetclaude-beta
 ```
 
-To update an existing beta install safely, update the Claude Code plugin first:
+For an existing beta install, update the plugin package first and restart Claude Code before running `/sweetclaude:update`:
 
 ```
 /plugin update sweetclaude@sweetclaude-beta
-```
-
-If `/plugin list` shows the legacy key `sweetclaude@sweetclaude`, update that
-exact key instead:
-
-```
-/plugin update sweetclaude@sweetclaude
 ```
 
 Once install is complete, run:
@@ -97,12 +87,14 @@ A few other key commands to know about are:
 
 * `/sweetclaude:help` — the guided tour. Walks you through what SweetClaude is, how it works, and whether it's right for your project before touching a single file.
 * `/sweetclaude:status` — project dashboard. Active work item, phase, roadmap, backlog, recent commits at a glance.
-* `/sweetclaude:doctor` — if SweetClaude is behaving unexpectedly, run this. Diagnostic scan and repair across 8 categories: state integrity, hooks, storage, migration, config, files, onboarding, and environment. Proposes fixes without changing anything until you confirm.
+* `/sweetclaude:doctor` — if SweetClaude is behaving unexpectedly, run this. It scans state, hooks, storage, migration, config, files, onboarding, and environment, then routes repair, recovery, or migration safely.
 
 
 We've tried to design SweetClaude to be intuitive, but additional documentation is available if needed or desired:
 
 → [Full install options, updating, uninstalling](docs/user-guide/install.md)
+
+→ [Stable 3.x and 4.x beta guide tracks](docs/user-guide/index.md#choose-your-track)
 
 → [First session walkthrough](docs/user-guide/quickstart.md)
 
@@ -179,16 +171,15 @@ You can invoke skills directly if you know what you want. These are the most com
 |---|---|
 | `/sweetclaude:off` | Suspend SweetClaude — preserves all artifacts, reactivate with `/sweetclaude:go` |
 | `/sweetclaude:purge` | Delete all SweetClaude artifacts — recommends a backup branch, shows all files, requires "I understand". **Taking a branch snapshot before is highly recommended.** |
-| `/sweetclaude:update` | Fetch latest SweetClaude from GitHub and sync to all projects |
-| `/sweetclaude:doctor` | Diagnostic scan and repair across 8 categories — state integrity, hooks, storage, migration, config, files, onboarding, environment. Absorbed `fix-sweetclaude`, `migrate-diagnose`, and `claude-config-audit`. |
-| `/sweetclaude:recover` | Recover projects left in bad update, migration, doctor, or repair states. Snapshots first, requires approval, verifies safety, supports resume/rollback, and does not run unsafe taxonomy migration. |
+| `/sweetclaude:update` | Sync SweetClaude framework files inside the installed channel |
+| `/sweetclaude:doctor` | Diagnostic scan and maintenance front door |
+| `/sweetclaude:recover` | Recover stuck update, doctor, repair, or unsafe migration states |
 | `/sweetclaude:hook-repair` | Restore broken installed hooks from backup. Uses Bash only — works when Write/Edit are blocked. See [hook-development.md](docs/user-guide/hook-development.md) for manual and emergency procedures. |
-| `/sweetclaude:dashboard` | Launch a local web dashboard showing roadmap, releases, epics, backlog, dependencies, git history, and skill activity. |
 
 ### Advanced
 | Command | What it does |
 |---|---|
-| `/sweetclaude:behavioral-regression` | Run the 15-contract behavioral test suite — validates that the current model version honors SweetClaude's behavioral contracts. Run after any Claude model upgrade. **15/15 passing on claude-sonnet-4-6 (2026-05-01).** [Contract status by model version →](docs/user-guide/behavioral-contracts.md) |
+| `/sweetclaude:behavioral-regression` | Run the 15-contract behavioral test suite — validates that the current model version honors SweetClaude's behavioral contracts. Run after any Claude model upgrade. **15/15 passing on claude-sonnet-4-6 (2026-05-01).** [Contract status by model version →](docs/user-guide/behavioral-contracts.md) · [Full contract list →](skills/behavioral-regression/SKILL.md) |
 | `/sweetclaude:guardian-on` | Enable Protocol Guardian — enforces skill invocations and protocol steps for the session |
 | `/sweetclaude:guardian-off` | Disable Protocol Guardian |
 | `/sweetclaude:session-export` | Export a Claude.ai session as a structured document |

@@ -24,6 +24,7 @@ That is it. SweetClaude takes over from here and walks you through each step.
 SweetClaude creates:
 - A git repository (if you want one)
 - A `.sweetclaude/` folder that tracks your progress, decisions, and configuration
+- A `strategy/` folder for strategic documents
 - A `CLAUDE.md` file that teaches future AI sessions about your project
 
 ### Step 2: Concept Articulation
@@ -39,7 +40,7 @@ SweetClaude runs `/sweetclaude:product-discovery` to establish what is being bui
 
 At any depth, SweetClaude can analyze competitors via `/sweetclaude:product-competition` and define user personas via `/sweetclaude:user-personas`.
 
-**Output:** Discovery artifacts in `.sweetclaude/state/` — depth depends on level chosen
+**Output:** Discovery artifacts in `strategy/` — depth depends on level chosen
 
 ### Step 4: Handoff
 
@@ -96,7 +97,7 @@ These are not part of the automatic flow. They are available anytime.
 - **Decision tracking** (`/sweetclaude:design-manage-decisions`) — record any decision with context and rationale, queryable later
 - **Positioning statement** (`/sweetclaude:product-positioning-statement`) — for/who/that/unlike framework
 - **Corpus pipeline and RAG search** (`/sweetclaude:document-corpus`) — organize messy files into canonical documents with full provenance (consolidate → triage → reconcile → promote), then index for semantic search. Presents a menu; pick the step you need or check status first.
-- **Update SweetClaude** (`/sweetclaude:update`) — fetch the latest version from GitHub and sync to all projects
+- **Update SweetClaude** — update the Claude Code plugin package, restart Claude Code, then run `/sweetclaude:update` to sync framework files inside the installed channel
 - **Version bumping** — run `scripts/bump-version.sh patch|minor|major` to bump version explicitly; no automatic bump on commit
 
 ## Tips

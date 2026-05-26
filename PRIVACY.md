@@ -1,7 +1,7 @@
 # Privacy Policy
 
 **SweetClaude**
-Last updated: 2026-05-06
+Last updated: 2026-05-25
 
 ## Summary
 
@@ -11,7 +11,7 @@ SweetClaude does not collect, transmit, or store any personal data. It runs enti
 
 SweetClaude is a Claude Code plugin. It installs skills, hooks, and configuration files onto your local filesystem and operates through Claude Code's standard AI session model.
 
-SweetClaude writes state files to a `.sweetclaude/` directory inside your project. These files contain project metadata you provide (work items, decisions, personas, backlog entries) and are stored only on your machine. They are never transmitted anywhere by SweetClaude.
+SweetClaude writes state files to a `.sweetclaude/` directory inside your project. These files contain project metadata you provide (work items, decisions, personas, backlog entries) and are stored only on your machine. Doctor and recovery flows may also create local snapshots and manifests under paths such as `.sweetclaude/state/doctor-runs/` and `.sweetclaude/state/recovery-runs/`; those snapshots can include SweetClaude state and product artifacts so rollback is possible. They are never transmitted anywhere by SweetClaude.
 
 ## What SweetClaude does not do
 

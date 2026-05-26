@@ -6,6 +6,12 @@ All notable changes to SweetClaude are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Added stable 3.x and 4.x beta user-guide tracks so beta users can follow channel-safe install, update, recovery, and migration guidance.
+- Moved beta rescue guidance into the 4.x beta track while keeping a compatibility link at `docs/user-guide/beta-rescue.md`.
+- Updated the 4.x migration guide to route through `/sweetclaude:doctor`, `/sweetclaude:recover`, and guarded `/sweetclaude:migrate` instead of blanket migrate-first advice.
+
 ---
 
 ## [4.1.12-beta] — 2026-05-25

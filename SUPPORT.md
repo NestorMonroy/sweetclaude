@@ -6,7 +6,7 @@ Use [GitHub Discussions](https://github.com/carson-sweet/sweetclaude/discussions
 
 ## Bugs
 
-[Open a GitHub issue](https://github.com/carson-sweet/sweetclaude/issues). Include: what you ran, what you expected, what happened instead. If there is a relevant state file (`.sweetclaude/state/sweetclaude.yaml`), include its contents.
+[Open a GitHub issue](https://github.com/carson-sweet/sweetclaude/issues). Include: what you ran, what you expected, what happened instead. If there is a relevant state file (`.sweetclaude/state/sweetclaude.yaml`), include its contents. If the problem involves update, migration, repair, or recovery, also include the visible output from `/sweetclaude:doctor` or `/sweetclaude:recover`; do not include recovery snapshot archives.
 
 ## Model compatibility
 

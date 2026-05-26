@@ -87,6 +87,12 @@ If you have an external deadline, set a milestone (`/sweetclaude:product-milesto
 
 ---
 
+## What is the difference between stable 3.x and 4.x beta?
+
+Stable 3.x is the recommended channel for normal active project work. 4.x beta is explicit opt-in and changes project maintenance behavior: update syncs framework files, doctor is the maintenance front door, recovery handles unsafe legacy layouts, and migration runs only after preflight says it is supported.
+
+Choose the channel through Claude Code plugin marketplace commands. Do not use `/sweetclaude:update` to move a stable 3.x install onto 4.x beta.
+
 ## Can I disable parts I don't want?
 
 Yes. The lever depends on what you want to disable.
@@ -122,6 +128,10 @@ Hard gates (⚠️) require explicit risk acceptance with the override logged. T
 If you find yourself overriding the same gate repeatedly, that is a signal worth investigating. Either the gate is wrong for your context (file an issue) or your work is consistently skipping a step that matters.
 
 ---
+
+## What should I run when update, migrate, or repair gets stuck?
+
+Run `/sweetclaude:doctor` first. Doctor scans the project and routes maintenance safely. If doctor reports recovery is available, run `/sweetclaude:recover`. Do not run `/sweetclaude:migrate` as the first response to an unknown 4.x beta project layout.
 
 ## What survives a session crash?
 

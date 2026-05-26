@@ -1,7 +1,7 @@
 # State and Memory
 
 **Version:** 2.1
-**Date:** 2026-05-24
+**Date:** 2026-05-25
 
 SweetClaude persists project context across sessions in `.sweetclaude/`. Commit this directory to git. It is project-critical data, not cache. Decision history, assumptions, scope changes, and progress live here — and they need to travel with the repo.
 
@@ -16,24 +16,28 @@ This page is reference. For why state is structured the way it is, read [How It 
 ├── state/
 │   ├── sweetclaude.yaml        ← Unified state: phase, work item, features, framework health
 │   ├── project.yaml            ← Language, framework, test runner, build commands
-│   ├── effective-gates.yaml    ← Compiled mode enforcement rules
 │   ├── active-plan.txt         ← Pointer to the current plan file + sprint/milestone context
 │   ├── decision-log.md         ← Architecture and design decisions with rationale
 │   ├── assumption-register.md  ← Assumptions worth checking later
 │   ├── improvement-register.md ← Feedback and learnings from each phase
 │   ├── scope-changes.md        ← Scope additions and removals with justification
-│   └── backups/                ← Pre-migration state snapshots (created by /sweetclaude:update)
-├── product/
-│   └── backlog/                ← All issues as ISSUE-NNN-slug.md files
-│       └── done/               ← Completed issues (moved here on close)
+│   ├── backups/                ← Migration backups created by guarded migration flows
+│   ├── doctor-runs/            ← Doctor repair archives and manifests
+│   └── recovery-runs/          ← Recovery snapshots and rollback manifests (do not commit)
+├── product/                    ← 4.x beta product artifacts: backlog, roadmap, issues
 ├── plans/                      ← Claude Code plan files (.sweetclaude/plans is set as plansDirectory)
 │   └── archive/                ← Plans archived at ship time, organized by milestone/sprint
 ├── traceability/               ← Story → requirement → test → code traceability maps
-├── metrics/                    ← Usage tracking data (optional, when enabled)
 └── disabled                    ← (optional) Presence disables SweetClaude for this project
 ```
 
 Skills create additional state files as they run — `state/discovery.yaml`, `state/personas.yaml`, `state/brief.yaml`, etc. Treat the schema as extensible.
+
+Version note: stable 3.x and 4.x beta share the same state principle but differ
+in operational details. In 4.x beta, project maintenance data may include
+`.sweetclaude/state/doctor-runs/`, `.sweetclaude/state/recovery-runs/`, and
+`.sweetclaude/product/`. Recovery run directories can contain snapshots of state
+and product artifacts and should stay out of source control.
 
 ---
 
@@ -42,7 +46,7 @@ Skills create additional state files as they run — `state/discovery.yaml`, `st
 The unified state file. Everything the framework needs to know about the project lives here — version stage, active work, feature activation, framework health.
 
 ```yaml
-schema_version: 2
+schema_version: 1
 project:
   name: my-project
   type: existing-code
@@ -54,21 +58,15 @@ session:
   default_action: null
 
 work:
-  last_item_id: ISSUE-042
+  last_item_id: WI-013
   active:
-    id: ISSUE-043
+    id: WI-014
     type: net-new-feature
     workflow: [DISCOVER, DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP]
     phase: IMPLEMENT
     title: "OAuth login flow"
     started: 2026-04-29T14:00:00+00:00
     entry_category: mid-project-planned
-
-work_history:
-  - id: ISSUE-042
-    title: "Database connection pooling"
-    outcome: done
-    completed: "2026-04-28"
 
 features:
   product_milestones:
@@ -84,18 +82,18 @@ features:
   # ... other features
 
 framework:
-  installed_version: 4.1.3-beta
+  installed_version: 3.44.4
   setup_complete: true
-  hook_last_ran: 2026-05-24T14:00:00+00:00
+  hook_last_ran: 2026-05-03T14:00:00+00:00
   consistency:
-    last_checked: 2026-05-24T14:00:00+00:00
+    last_checked: 2026-05-03T14:00:00+00:00
     status: ok
     drift: []
     check_error: null
   update:
     available: null
-    last_checked: 2026-05-24T14:00:00+00:00
-    declined: null
+    last_checked: 2026-05-03T14:00:00+00:00
+    declined: false
     check_error: null
 ```
 
@@ -105,14 +103,13 @@ framework:
 | `session.deference_level` | `collaborative`, `guided`, or `autonomous`. Changeable mid-session. |
 | `project.type` | `cold-start` or `existing-code`. Set at activation. |
 | `project.safety_snapshot` | The git branch created during onboarding (`pre-sweetclaude`). Your insurance. |
-| `work.last_item_id` | Monotonic counter. Persists across work item completions so IDs do not repeat. Uses `ISSUE-NNN` format. |
+| `work.last_item_id` | Monotonic counter. Persists across work item completions so IDs do not repeat. |
 | `work.active` | The work in flight right now. Fast-moving. Type, workflow, phase, title, start date, entry category. |
-| `work_history` | Recent completed work items with id, title, outcome, and completion date. Used by bootstrap to show last-completed context at session start. |
-| `features.*` | Per-feature activation state. `not_configured` → `active` or `declined`. Configured at setup and reviewable via `doctor` or `update`. |
+| `features.*` | Per-feature activation state. `not_configured` -> `active` or `declined`. Configured at setup and reviewable through the owning skill or doctor/update reporting. |
 | `framework.consistency` | Last drift-check result. Updated by the health hook. |
 | `framework.update` | Whether a newer version is available. Updated by the health hook. |
 
-**Migration from earlier versions:** If your project has old-format files (`phase.yaml`, `skills.yaml`, `BL-NNN`, `STORY-NNN`), run `/sweetclaude` and the orchestrator will detect the old format and route to the migration flow automatically. The migration is non-destructive — originals are archived before any changes. See [v4-migration.md](v4-migration.md) for the full walkthrough.
+**Migration from older state:** If your project has old SweetClaude state files, run `/sweetclaude:doctor` or `/sweetclaude:go` and follow the routed maintenance flow. In 4.x beta, `/sweetclaude:update` reports drift but does not run project-state or taxonomy migrations inline.
 
 ---
 
@@ -154,7 +151,7 @@ Format per entry:
 **Date:** 2026-04-22
 **Status:** Accepted
 **Phase:** DESIGN
-**Work Item:** ISSUE-008
+**Work Item:** WI-008
 
 **Context:** Need a primary data store for user accounts and feedback threads.
 The team is comfortable with relational databases but the deployment target
@@ -242,8 +239,8 @@ Example entry:
 **Decided by:** Carson
 **Reason:** Customer interview revealed three of five target customers
 require SAML for procurement. Without it, the deal is dead.
-**Affected work items:** ISSUE-014 (OAuth login flow) gets a sibling work item
-ISSUE-015 for SAML.
+**Affected work items:** WI-014 (OAuth login flow) gets a sibling work item
+WI-015 for SAML.
 **Original scope reference:** Brief section 4 (Authentication) explicitly
 listed OAuth as the only auth method.
 ```

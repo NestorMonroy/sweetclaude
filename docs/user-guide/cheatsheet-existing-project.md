@@ -60,6 +60,7 @@ You confirm or adjust. SweetClaude does not assume it knows better than you.
 
 SweetClaude creates:
 - `.sweetclaude/` folder with state tracking, decision log, and traceability
+- `strategy/` folder structure (empty, ready for strategic work if you want it)
 - Updates to CLAUDE.md if needed
 
 ### Step 6: First Action
@@ -85,23 +86,11 @@ If you are in the middle of implementation, these are your daily tools:
 
 If SweetClaude detected mismatches between its configuration and your actual project state:
 
-```
+```text
 /sweetclaude:doctor
 ```
 
-Diagnostic scan and repair across 8 categories: state integrity, hooks, storage, migration, config, files, onboarding, environment. Proposes fixes for your approval — it does not change anything without asking.
-
-If a beta update, migration, doctor, or repair flow left the project stuck or
-confused:
-
-```
-/sweetclaude:recover
-```
-
-Recovery diagnoses first, shows the exact plan, snapshots affected
-SweetClaude state and product artifacts, then requires approval before any
-write. For unsupported legacy layouts it stabilizes the project without
-running taxonomy migration.
+Doctor scans state, hooks, storage, migration, config, files, onboarding, and environment. It proposes fixes, routes unsafe beta migration states to `/sweetclaude:recover`, and does not mutate files until the relevant safety flow confirms the action.
 
 ### Add Strategic Foundation (Even Mid-Project)
 
@@ -205,5 +194,5 @@ You can change this mid-session.
 - **Strategic work on existing projects is valuable.** Many projects have implicit strategy that was never documented. Making it explicit helps you prioritize, communicate with stakeholders, and make better decisions.
 - **SweetClaude does not judge your code.** When adopting a project, it treats your codebase like an archaeologist treats a dig site — understanding before changing, respecting what is already there.
 - **Status fires automatically at session start.** For active projects, SweetClaude shows status without being asked. Run `/sweetclaude` to immediately pick up where you left off.
-- **Keep SweetClaude updated.** Run `/sweetclaude:update` periodically to get the latest skills, hooks, and fixes.
+- **Keep SweetClaude updated.** Update the Claude Code plugin package, restart Claude Code, then run `/sweetclaude:update` to sync framework files inside the installed channel.
 - **Version bumping is explicit.** Run `scripts/bump-version.sh patch|minor|major` to bump the version in `package.json` and `CHANGELOG.md`. There is no automatic version bump on commit.

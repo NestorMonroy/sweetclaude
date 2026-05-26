@@ -139,7 +139,7 @@ When the test writer agent reads the user story, writes failing tests, and the i
 
 This is the same principle that produced double-blind clinical trials. Information that flows backward from outcome to design corrupts the design. SweetClaude prevents the flow.
 
-The test-writer/implementer pair is one of three named subagent patterns in the framework. The others are the caucus (parallel isolated agents that synthesize findings) and the John Wick escalation pattern (a privileged agent for enforcement tasks). All three are defined in the architecture document under [Subagent Patterns](../internal/architecture-sweetclaude-v1-2026-04-13.md#subagent-patterns).
+The test-writer/implementer pair is one of three named subagent patterns in the framework. The others are the caucus (parallel isolated agents that synthesize findings) and the John Wick escalation pattern (a privileged agent for enforcement tasks). The active agent definitions live in the `agents/` directory; the user-facing behavior is summarized here and in the skills reference.
 
 ---
 

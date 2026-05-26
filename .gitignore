@@ -47,3 +47,5 @@ scripts/migration-report.md
 # Python cache
 __pycache__/
 *.pyc
+# macOS metadata after docs whitelist
+**/.DS_Store

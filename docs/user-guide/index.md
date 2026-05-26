@@ -1,7 +1,7 @@
 # SweetClaude User Guide
 
-**Version:** 1.0
-**Date:** 2026-05-06
+**Version:** 1.1
+**Date:** 2026-05-25
 
 SweetClaude is a software development partner for the full project lifecycle — from the first idea through design, implementation, testing, and ship.
 
@@ -12,6 +12,20 @@ SweetClaude was built for software development, but has also been used successfu
 This guide is the long form. The README on the front page sells the idea; these pages explain how it actually fits together when you sit down to use it.
 
 > **New to SweetClaude?** Don't start here. Run `/sweetclaude:help` in Claude Code — it teaches itself through conversation and will get you oriented faster than any written doc. Come back to this guide when you need a specific reference.
+
+---
+
+## Choose Your Track
+
+SweetClaude currently has two user-facing install tracks:
+
+| Track | Use it when | Start here |
+|---|---|---|
+| Stable 3.x | You want the recommended stable channel for active project work. | [3.x Stable User Guide](3.x/index.md) |
+| 4.x beta | You intentionally opted into beta project maintenance and taxonomy changes. | [4.x Beta User Guide](4.x-beta/index.md) |
+
+The conceptual docs below are shared. Operational docs such as install, update,
+migration, recovery, and state layout are version-sensitive.
 
 ---
 
@@ -33,8 +47,9 @@ If you are deciding whether SweetClaude is the right tool for what you are doing
 
 | Page | What it is |
 |---|---|
+| [3.x Stable User Guide](3.x/index.md) | Stable install/update entry point for normal project work. |
+| [4.x Beta User Guide](4.x-beta/index.md) | Beta install/update, migration, recovery, and compatibility-mode entry point. |
 | [Getting Started](getting-started.md) | A tutorial. Install through your first feature. Includes sample interactions so you can recognize the rhythm. |
-| [Beta Rescue](beta-rescue.md) | Recovery path for 4.x beta installs stuck after update, doctor, migrate, or repair failures. |
 | [How It Works](how-it-works.md) | The mental model. Why two-dimensional state, why phase dwelling, why deference levels, what survives a crash. |
 | [Walkthroughs](walkthroughs.md) | Six concrete scenarios end-to-end. New product from a napkin sketch, hotfix, doc pile, course correction, existing repo, building one feature with full TDD. |
 | [Phases and Workflows](phases-and-workflows.md) | Reference for the 7 phases, 6 workflow shapes, 19 work types, hard and soft gates, progressive disclosure by version stage. |

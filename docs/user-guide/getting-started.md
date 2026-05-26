@@ -1,7 +1,7 @@
 # Getting Started
 
-**Version:** 1.0
-**Date:** 2026-05-01
+**Version:** 1.1
+**Date:** 2026-05-25
 
 This page takes you from "I have not installed anything" to "I have a feature scaffolded, tested, and committed." Reading time is fifteen minutes. Doing it takes about an hour because the interactive parts depend on you typing things.
 
@@ -24,14 +24,21 @@ If `gh` is not authenticated yet, run `gh auth login` once.
 
 ## Install
 
-Inside Claude Code, run:
+Inside Claude Code, install the stable 3.x channel:
 
-```
+```text
 /plugin marketplace add carson-sweet/sweetclaude@stable-3.x
 /plugin install sweetclaude@sweetclaude-stable
 ```
 
-After install, every Claude Code session — in any project folder — has over 100 SweetClaude skills available as `/sweetclaude:something` commands.
+For 4.x beta testing, use the explicit beta track instead:
+
+```text
+/plugin marketplace add carson-sweet/sweetclaude@beta-4.x
+/plugin install sweetclaude@sweetclaude-beta
+```
+
+Do not use `/sweetclaude:update` to move between stable and beta. See [Installing SweetClaude](install.md) for channel-specific update instructions. After install, every Claude Code session in any project folder has SweetClaude skills available as `/sweetclaude:something` commands.
 
 ---
 
@@ -54,7 +61,7 @@ Then in Claude Code:
 /sweetclaude:go
 ```
 
-SweetClaude detects the empty folder and routes to setup. It asks if you want a git repo (say yes), creates `.sweetclaude/` and a `CLAUDE.md`. Then it asks how collaborative you want to be this session — pick **Collaborative** for your first run so you can see every step.
+SweetClaude detects the empty folder and routes to setup. It asks if you want a git repo (say yes), creates `.sweetclaude/`, `strategy/`, and a `CLAUDE.md`. Then it asks how collaborative you want to be this session — pick **Collaborative** for your first run so you can see every step.
 
 Then it asks you to describe the idea.
 
@@ -134,9 +141,11 @@ your-project/
 │   │   ├── decision-log.md         ← any decisions you made with rationale
 │   │   ├── assumption-register.md  ← assumptions worth checking later
 │   │   └── improvement-register.md ← anything you told SweetClaude to do differently
-│   ├── product/
-│   │   └── backlog/                ← issues as ISSUE-NNN-slug.md files
 │   └── traceability/
+├── strategy/
+│   ├── concept.md                  ← the framing you settled on
+│   ├── discovery.md                ← who is this for, why does it matter
+│   └── personas/
 └── CLAUDE.md                       ← teaches future sessions about this project
 ```
 
@@ -180,7 +189,7 @@ These cost nothing and surface capabilities that are not obvious from the comman
 
 **Status fired automatically and you did not want it.** Touch `.sweetclaude/disabled` in the project root. The session-start check will not fire until you run `/sweetclaude` again.
 
-**Want to keep SweetClaude updated.** Run `/sweetclaude:update` from any project. Fetches the latest from GitHub, shows what changed, syncs everywhere.
+**Want to keep SweetClaude updated.** Update the Claude Code plugin package first (`/plugin update sweetclaude@sweetclaude-stable` or `/plugin update sweetclaude@sweetclaude-beta`), restart Claude Code, then run `/sweetclaude:update` to sync framework files. In 4.x beta, project repair and migration route through `/sweetclaude:doctor`.
 
 ---
 
