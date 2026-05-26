@@ -16,6 +16,11 @@ execution, verification, resume, rollback, and report generation are handled by
 `scripts/recovery/recover_project.py`. Do not manually edit project files from
 this skill.
 
+Default user entrypoint: `/sweetclaude:recover`. No argument is required.
+Always diagnose first, then show the plan, then ask before executing. The
+explicit script subcommands (`diagnose`, `plan`, `execute`, `resume`,
+`rollback`) are implementation and automation details, not normal user UX.
+
 ## Step 1: Locate The Recovery Script
 
 ```bash
@@ -49,7 +54,7 @@ python3 "$SCRIPT" rollback --run-dir "<run-dir>" --pretty
 Summarize `status`, `report_path`, and any failed verification checks. Stop
 after resume or rollback unless the user asks for another action.
 
-## Step 3: Diagnose
+## Step 3: Diagnose First
 
 ```bash
 python3 "$SCRIPT" diagnose --project-dir . --pretty
@@ -58,7 +63,7 @@ python3 "$SCRIPT" diagnose --project-dir . --pretty
 Parse the JSON output.
 
 If diagnosis fails or is not JSON, print:
-> Recovery diagnosis failed. Run `python3 "$SCRIPT" diagnose --project-dir . --pretty` manually to see the error.
+> Recovery diagnosis failed. The project was not changed. Run `/sweetclaude:doctor` for read-only triage or retry `/sweetclaude:recover` after updating SweetClaude.
 
 Stop.
 

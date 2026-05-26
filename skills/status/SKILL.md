@@ -16,7 +16,6 @@ STOP. Before executing this skill, check: if pre-loaded state above shows STATE_
 
 Multi-view project orientation. One command, dynamic views. No background agents.
 
-Source spec: `docs/internal/specs/status-view-scopes.md` (v3.1, ISSUE-186/ISSUE-187)
 
 ## Step 1: Schema check
 
@@ -24,21 +23,55 @@ Use `phase_schema_version` from pre-loaded session state:
 - If absent or `1`: warn — "Your config is on schema v1. Run `/sweetclaude:update` to upgrade." Stop.
 - If `2`: proceed.
 
-## Step 2: Migration guard
+## Step 2: Recovery/migration guard
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py guard --project-dir . --pretty 2>/dev/null
+SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+if [ ! -f "$SCRIPT" ]; then
+  SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+fi
+if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
+  python3 "$SCRIPT" guard --project-dir . --pretty
+else
+  echo '{"status":"guard-unavailable","message":"Recovery guard unavailable. Run /sweetclaude:update before migration."}'
+fi
 ```
 
-If the guard status is `run-recover`: output "Run /sweetclaude:recover" and "Do not run /sweetclaude:migrate yet." Stop.
+Parse the JSON output.
 
-If the guard status is `manual-review`: output the guard message and stop.
+- If `status` is `run-recover`: output the guard `message`, then output
+  `Run /sweetclaude:recover to create a snapshot-backed recovery plan. Do not run /sweetclaude:migrate yet.` Stop.
+- If `status` is `manual-review`: output the guard `message`, summarize
+  `blocking_factor_codes`, and stop. Do not recommend migration.
+- If `status` is `compatibility-mode`: render the compatibility status below
+  and stop. Do not recommend migration.
+- If `status` is `missing-product-base` or `guard-unavailable`: output the
+  guard `message` and stop. Do not recommend migration.
+- If `standard_product_dir_exists` is false and `product_base` is not
+  `.sweetclaude/product`, render the compatibility status below and stop.
+- If `status` is `migration-may-be-needed`: output
+  `Old-format work items were found. This appears to be a simple migration candidate, but review /sweetclaude:migrate before executing it; for any duplicate IDs, typed backlog folders, pending doctor prompt, or stale migration state, run /sweetclaude:recover instead.`
+  Stop.
+- If `status` is `ok`: proceed.
 
-If the guard status is `compatibility-mode`: continue; the project has accepted legacy taxonomy state.
+Compatibility status is intentionally limited to session state and git so that
+legacy or external product layouts are not forced through unsafe taxonomy
+migration:
 
-If `.sweetclaude/product/` is missing because migration has not been run, run /sweetclaude:migrate only when the guard reports `migrate_allowed: true`; otherwise follow the recovery route above.
+```bash
+git log --oneline -3 2>/dev/null || echo "NO_GIT"
+git status --short 2>/dev/null | wc -l | tr -d ' '
+git branch --show-current 2>/dev/null || echo ""
+tail -10 .sweetclaude/state/checkpoint.md 2>/dev/null || echo "NO_CHECKPOINT"
+```
 
-If the guard status is `missing-product-base`: output the guard message and stop.
+Output the normal 5-7 line session view from Step 4c using the pre-loaded
+session state and git output, then append:
+
+> Full roadmap/backlog drill-downs require a fully supported v4 product cache.
+> This project's current product layout is being treated as compatibility mode.
+> Do not run `/sweetclaude:migrate` unless `/sweetclaude:recover` or a future
+> layout-specific migration plan explicitly says it is safe.
 
 ## Step 3: Parse argument
 

@@ -10,11 +10,11 @@ import yaml
 from recovery.recover_project import execute_project, resume_project, rollback_project
 
 
-FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "typed-product-layout"
+FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "syncog-layout"
 SCRIPT_PATH = Path(__file__).parents[1] / "scripts" / "recovery" / "recover_project.py"
 
 
-def _copy_typed_product_fixture(tmp_path: Path) -> Path:
+def _copy_syncog_fixture(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     shutil.copytree(FIXTURE_ROOT, project)
 
@@ -60,14 +60,14 @@ def _state(project: Path) -> dict:
 
 
 def test_execute_requires_explicit_approval(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path)
+    project = _copy_syncog_fixture(tmp_path)
 
     with pytest.raises(PermissionError, match="--approve"):
         execute_project(project)
 
 
 def test_execute_snapshots_applies_manifest_and_verifies_without_product_changes(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path)
+    project = _copy_syncog_fixture(tmp_path)
     pending = project / ".sweetclaude" / "state" / "doctor-prompt-pending.json"
     pending.write_text(
         json.dumps({"category": "migration_currency", "recommendation": "migrate"}),
@@ -107,7 +107,7 @@ def test_execute_snapshots_applies_manifest_and_verifies_without_product_changes
 
 
 def test_rollback_restores_snapshot_after_execute(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path)
+    project = _copy_syncog_fixture(tmp_path)
     pending = project / ".sweetclaude" / "state" / "doctor-prompt-pending.json"
     pending.write_text('{"recommendation":"migrate"}\n', encoding="utf-8")
     original_state = (project / ".sweetclaude" / "state" / "sweetclaude.yaml").read_text(
@@ -130,7 +130,7 @@ def test_rollback_restores_snapshot_after_execute(tmp_path):
 
 
 def test_resume_continues_interrupted_run_from_manifest(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path)
+    project = _copy_syncog_fixture(tmp_path)
     pending = project / ".sweetclaude" / "state" / "doctor-prompt-pending.json"
     pending.write_text(
         json.dumps({"category": "migration_currency", "recommendation": "migrate"}),
@@ -168,7 +168,7 @@ def test_resume_continues_interrupted_run_from_manifest(tmp_path):
 
 
 def test_resume_refuses_interrupted_run_when_snapshot_is_missing(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path)
+    project = _copy_syncog_fixture(tmp_path)
 
     with pytest.raises(RuntimeError, match="injected failure"):
         execute_project(project, approve=True, fail_after_operations=1)
@@ -184,7 +184,7 @@ def test_resume_refuses_interrupted_run_when_snapshot_is_missing(tmp_path):
 
 
 def test_recover_project_cli_execute_requires_approval(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path)
+    project = _copy_syncog_fixture(tmp_path)
 
     completed = subprocess.run(
         [
@@ -204,7 +204,7 @@ def test_recover_project_cli_execute_requires_approval(tmp_path):
 
 
 def test_recover_project_cli_execute_and_rollback(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path)
+    project = _copy_syncog_fixture(tmp_path)
     execute = subprocess.run(
         [
             sys.executable,
@@ -246,7 +246,7 @@ def test_recover_project_cli_execute_and_rollback(tmp_path):
 
 
 def test_recover_project_cli_resume_is_idempotent_after_success(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path)
+    project = _copy_syncog_fixture(tmp_path)
     executed = execute_project(project, approve=True)
 
     completed = subprocess.run(

@@ -41,13 +41,51 @@ Do not call `gh`. Do not read backlog file contents for routing — the cache ou
 
 ## Step 1b: Migration guard
 
-Run the read-only recovery guard before interpreting an empty backlog as no work:
+If the backlog query returned zero items, check for unmigrated files:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py guard --project-dir . --pretty 2>/dev/null
+product_base=$(python3 -c "
+import yaml, sys
+d = yaml.safe_load(open('.sweetclaude/state/session-state.yaml')) or {}
+print(d.get('paths', {}).get('product_base', '.sweetclaude/product'))
+" 2>/dev/null || echo ".sweetclaude/product")
+
+find "$product_base/backlog" -maxdepth 2 -name 'BL-*.md' -o -name 'STORY-*.md' -o -name 'BUG-*.md' -o -name 'DEBT-*.md' -o -name 'CHORE-*.md' 2>/dev/null | head -5
 ```
 
-If the guard status is `run-recover`, stop and route to `/sweetclaude:recover`. If it is `manual-review`, stop and show the guard message. Do not run taxonomy migration from this skill.
+If old-format files are found, output:
+
+Run the recovery guard before recommending any migration:
+
+```bash
+SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+if [ ! -f "$SCRIPT" ]; then
+  SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+fi
+if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
+  python3 "$SCRIPT" guard --project-dir . --pretty
+else
+  echo '{"status":"guard-unavailable","message":"Recovery guard unavailable. Run /sweetclaude:update before migration."}'
+fi
+```
+
+Parse the guard JSON:
+
+- `run-recover`: output
+  > Your project has old-format work items and recovery detected an unsafe migration/update state. Run `/sweetclaude:recover` before migration. Do not run `/sweetclaude:migrate` yet.
+  Then stop.
+- `manual-review` or `missing-product-base`: output the guard `message` and
+  stop. Do not recommend migration.
+- `compatibility-mode`: do not stop. Continue to Step 2 and use session-state
+  priority logic; old work items may be invisible to cache-backed backlog views,
+  but active work and checkpoint state are still usable. Do not recommend
+  migration.
+- `migration-may-be-needed`: output
+  > Your project has backlog items in the old format (BL-NNN / STORY-NNN / BUG-NNN). This appears to be a simple migration candidate. Review `/sweetclaude:migrate` before executing it; if there are duplicate IDs, typed backlog folders, stale migration state, or pending doctor prompts, run `/sweetclaude:recover` instead.
+  Then stop.
+- `guard-unavailable`: output the guard `message` and stop.
+
+If the guard did not return `compatibility-mode`, stop. Do not proceed to Step 3.
 
 ## Step 2: Apply improvement register
 
@@ -333,8 +371,19 @@ git ls-remote --heads origin {branch} | grep -q . \
 Report: `✓ origin/{branch} deleted` or `✓ origin/{branch} not present — skipped`
 
 **Step C5 — Move story to `done/` and update frontmatter**:
+
+Require a fresh completion evidence receipt for `{STORY-ID}` before closing.
+Use the receipt created by `/sweetclaude:code-verify`; do not self-generate a
+passing receipt from memory or old output. Validate it first:
+
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file "{issue_file_path}" --status done --actor go --project-dir .
+python3 ~/.claude/scripts/sweetclaude/evidence.py validate --receipt "{receipt_path}" --subject-id "{STORY-ID}"
+```
+
+If no valid receipt exists, stop and run `/sweetclaude:code-verify` first.
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file "{issue_file_path}" --status done --actor go --project-dir . --evidence-receipt "{receipt_path}"
 ```
 Report: `✓ {STORY-ID} → done/{filename}`
 

@@ -1471,177 +1471,246 @@ def _build_migration_recommendations(
 
 
 # ---------------------------------------------------------------------------
-# Maintenance route
+# Maintenance routing
 # ---------------------------------------------------------------------------
 
-def _run_migration_preflight(project_dir: Path) -> dict:
+def _migration_preflight(project_dir: Path) -> dict | None:
     script = _SCRIPTS_DIR / "migrate" / "migrate-v3-to-v4.py"
     if not script.exists():
-        return {
-            "status": "unavailable",
-            "migrate_allowed": False,
-            "blocking_factors": [{
-                "code": "migrator-not-found",
-                "severity": "cannot-plan",
-                "detail": str(script),
-            }],
-        }
+        return None
     try:
-        completed = subprocess.run(
+        result = subprocess.run(
             [sys.executable, str(script), "preflight", "--project-dir", str(project_dir)],
-            check=False,
             capture_output=True,
             text=True,
             timeout=15,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
         return {
-            "status": "unavailable",
+            "status": "error",
             "migrate_allowed": False,
-            "blocking_factors": [{
-                "code": "migrator-preflight-failed",
-                "severity": "cannot-plan",
-                "detail": str(exc),
-            }],
+            "error": result.stderr.strip() or result.stdout.strip(),
         }
     try:
-        payload = json.loads(completed.stdout) if completed.stdout.strip() else {}
-    except json.JSONDecodeError as exc:
-        payload = {
-            "status": "unavailable",
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {
+            "status": "error",
             "migrate_allowed": False,
-            "blocking_factors": [{
-                "code": "migrator-preflight-invalid-json",
-                "severity": "cannot-plan",
-                "detail": str(exc),
-            }],
+            "error": "migration preflight returned invalid JSON",
         }
-    if completed.returncode != 0:
-        payload.setdefault("status", "unavailable")
-        payload.setdefault("migrate_allowed", False)
-        payload.setdefault("blocking_factors", []).append({
-            "code": "migrator-preflight-nonzero",
-            "severity": "cannot-plan",
-            "detail": completed.stderr.strip(),
-        })
-    return payload
+    return data if isinstance(data, dict) else None
 
 
-def _run_recovery_guard(project_dir: Path) -> dict:
+def build_maintenance_route(state: ProjectState) -> dict:
+    """Classify the maintenance UX path Doctor should present.
+
+    Doctor remains the front door. The returned route names internal skills as
+    delegated capabilities, but labels are user-facing actions.
+    """
     try:
         from recovery.recover_project import guard_project
-
-        return guard_project(project_dir)
+        guard = guard_project(state.project_dir)
     except Exception as exc:
         return {
-            "status": "unknown",
-            "migrate_allowed": False,
-            "error": str(exc),
+            "status": "manual-review",
+            "doctor_front_door": True,
+            "message": f"Maintenance guard failed: {exc}",
+            "primary_action": None,
+            "secondary_actions": [],
+            "guard": {"status": "guard-error"},
         }
 
-
-def _primary_action(
-    label: str,
-    delegate_skill: str | None = None,
-    mutates_project: bool = False,
-    requires_approval: bool = False,
-) -> dict:
-    action = {
-        "label": label,
-        "mutates_project": mutates_project,
-        "requires_approval": requires_approval,
-    }
-    if delegate_skill:
-        action["delegate_skill"] = delegate_skill
-    return action
-
-
-def build_maintenance_route(project_state: ProjectState) -> dict:
-    """Return the read-only front-door routing decision for maintenance UX."""
-    preflight = _run_migration_preflight(project_state.project_dir)
-    guard = _run_recovery_guard(project_state.project_dir)
-    guard_status = guard.get("status")
-
-    if guard_status == "run-recover":
-        status = "recovery-available"
-        primary = _primary_action(
-            "Run safe recovery",
-            delegate_skill="sweetclaude:recover",
-            mutates_project=True,
-            requires_approval=True,
-        )
-    elif guard_status == "compatibility-mode":
-        status = "compatibility-mode"
-        primary = _primary_action("Continue in compatibility mode", mutates_project=False)
-    elif preflight.get("migrate_allowed"):
-        status = "supported-migration-available"
-        primary = _primary_action(
-            "Start supported migration",
-            delegate_skill="sweetclaude:migrate",
-            mutates_project=True,
-            requires_approval=True,
-        )
-    else:
-        status = "no-migration-recommended"
-        primary = _primary_action("No migration is recommended for this project", mutates_project=False)
-
-    return {
+    status = guard.get("status")
+    route: dict = {
+        "status": "no-maintenance-action",
         "doctor_front_door": True,
-        "status": status,
-        "primary_action": primary,
+        "message": guard.get("message", ""),
+        "primary_action": None,
+        "secondary_actions": [],
         "guard": guard,
-        "migration_preflight": preflight,
     }
 
+    if status == "run-recover":
+        route.update({
+            "status": "recovery-available",
+            "message": (
+                "Doctor found a recoverable SweetClaude maintenance state. "
+                "Run safe recovery from Doctor; recovery will diagnose, plan, "
+                "snapshot, request approval, verify, and keep rollback data."
+            ),
+            "primary_action": {
+                "id": "run-safe-recovery",
+                "label": "Run safe recovery",
+                "delegate_skill": "sweetclaude:recover",
+                "requires_approval": True,
+                "mutates_project": True,
+            },
+            "secondary_actions": [
+                {
+                    "id": "continue-without-maintenance",
+                    "label": "Continue without maintenance",
+                    "mutates_project": False,
+                },
+            ],
+        })
+        return route
 
-def _compatibility_adjustments_for_findings(
-    findings: list[dict],
-    route: dict,
-) -> tuple[list[dict], dict]:
-    if route.get("status") != "compatibility-mode":
-        return findings, {
-            "applied": False,
-            "collapsed_count": 0,
-            "collapsed_by_kind": {},
-        }
+    if status == "compatibility-mode":
+        route.update({
+            "status": "compatibility-mode",
+            "message": (
+                "Doctor found an accepted legacy taxonomy layout. No repair is "
+                "needed right now; continue safely in compatibility mode. "
+                "Migration remains blocked until a layout-specific plan exists."
+            ),
+            "primary_action": {
+                "id": "continue-compatibility-mode",
+                "label": "Continue in compatibility mode",
+                "mutates_project": False,
+            },
+        })
+        return route
 
-    kept: list[dict] = []
+    if status == "migration-may-be-needed":
+        preflight = _migration_preflight(state.project_dir)
+        route["migration_preflight"] = preflight
+        if preflight and preflight.get("migrate_allowed"):
+            route.update({
+                "status": "supported-migration-available",
+                "message": (
+                    "Doctor found a supported flat BL-NNN migration candidate. "
+                    "Start the migration flow from Doctor; migration will run "
+                    "its own preflight and safety steps before conversion."
+                ),
+                "primary_action": {
+                    "id": "start-supported-migration",
+                    "label": "Start supported migration",
+                    "delegate_skill": "sweetclaude:migrate",
+                    "requires_approval": True,
+                    "mutates_project": True,
+                },
+                "secondary_actions": [
+                    {
+                        "id": "continue-without-migration",
+                        "label": "Continue without migration",
+                        "mutates_project": False,
+                    },
+                ],
+            })
+        else:
+            route.update({
+                "status": "migration-blocked",
+                "message": (
+                    "Doctor found old-format work items, but the available "
+                    "migration capability did not prove this layout is safe. "
+                    "No files were changed."
+                ),
+                "primary_action": {
+                    "id": "continue-without-migration",
+                    "label": "Continue without migration",
+                    "mutates_project": False,
+                },
+            })
+        return route
+
+    if status in {"manual-review", "missing-product-base", "guard-unavailable"}:
+        route.update({
+            "status": "manual-review",
+            "primary_action": {
+                "id": "manual-review",
+                "label": "Manual review",
+                "mutates_project": False,
+            },
+        })
+        return route
+
+    return route
+
+
+def _legacy_value_from_summary(summary: str, label: str) -> str:
+    marker = f"invalid {label}: "
+    if marker not in summary:
+        return ""
+    value = summary.split(marker, 1)[1].strip()
+    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+        value = value[1:-1]
+    return value
+
+
+def _legacy_taxonomy_kind(finding: Finding) -> str | None:
+    """Return a compatibility-collapse kind for accepted legacy taxonomy noise."""
+    if finding.id == "migration-currency:taxonomy-drift:old-prefixes":
+        return "old-prefix-taxonomy-drift"
+
+    if finding.category != "file_diagnostics":
+        return None
+
+    if finding.id.startswith("file-diagnostics:invalid-id:"):
+        bad_id = _legacy_value_from_summary(finding.summary, "id")
+        if re.match(r"^(STORY|BUG|DEBT|CHORE|BL)-\d+\b", bad_id):
+            return "legacy-work-item-id"
+
+    if finding.id.startswith("file-diagnostics:invalid-milestone:"):
+        bad_milestone = _legacy_value_from_summary(finding.summary, "milestone")
+        if bad_milestone:
+            return "legacy-milestone-reference"
+
+    if finding.id.startswith("file-diagnostics:invalid-source:"):
+        return "legacy-source-reference"
+
+    return None
+
+
+def _apply_compatibility_mode_policy(
+    findings: list[Finding], maintenance_route: dict,
+) -> tuple[list[Finding], dict]:
+    """Collapse accepted legacy taxonomy noise after guard-approved recovery.
+
+    This does not suppress real integrity issues such as duplicate IDs,
+    frontmatter parse errors, missing frontmatter, date fixes, or prompted
+    config/status fixes. It only prevents accepted compatibility-mode taxonomy
+    artifacts from dominating Doctor's report.
+    """
+    if maintenance_route.get("status") != "compatibility-mode":
+        return findings, {"applied": False, "collapsed_count": 0}
+
+    visible: list[Finding] = []
     collapsed_by_kind: dict[str, int] = {}
 
-    def collapse(kind: str) -> None:
-        collapsed_by_kind[kind] = collapsed_by_kind.get(kind, 0) + 1
-
     for finding in findings:
-        finding_id = str(finding.get("id", ""))
-        if finding_id == "migration-currency:taxonomy-drift:old-prefixes":
-            collapse("legacy-work-item-id")
+        kind = _legacy_taxonomy_kind(finding)
+        if kind:
+            collapsed_by_kind[kind] = collapsed_by_kind.get(kind, 0) + 1
             continue
-        if finding_id.startswith("file-diagnostics:invalid-id:"):
-            collapse("legacy-work-item-id")
-            continue
-        kept.append(finding)
+        visible.append(finding)
 
     collapsed_count = sum(collapsed_by_kind.values())
     if collapsed_count:
-        kept.append(asdict(Finding(
+        visible.insert(0, Finding(
             id="compatibility-mode:accepted-legacy-taxonomy",
-            category="migration_currency",
+            category="compatibility_mode",
             severity="info",
             summary=(
-                f"Compatibility mode collapsed {collapsed_count} accepted "
-                "legacy taxonomy finding(s)"
+                f"{collapsed_count} accepted legacy taxonomy findings were "
+                "collapsed because compatibility mode is active"
             ),
             detail=(
-                "Accepted legacy taxonomy state is recorded in "
-                ".sweetclaude/state/sweetclaude.yaml recovery.taxonomy; "
-                "doctor will not prompt migration for those accepted files."
+                "compatibility-mode: accepted legacy taxonomy findings "
+                f"collapsed by kind: {collapsed_by_kind}"
             ),
             file_paths=[],
             fix_type="report-only",
-            fix_recipe={},
-        )))
+            fix_recipe={
+                "action": "compatibility_summary",
+                "collapsed_count": collapsed_count,
+                "collapsed_by_kind": collapsed_by_kind,
+            },
+        ))
 
-    return kept, {
+    return visible, {
         "applied": True,
         "collapsed_count": collapsed_count,
         "collapsed_by_kind": collapsed_by_kind,
@@ -1690,22 +1759,15 @@ def _scan(
         if f.id in resolved_ids:
             f.previously_suppressed = True
 
-    active = [f for f in all_findings if f.id not in suppressed_ids]
     maintenance_route = build_maintenance_route(project_state)
-
-    if maintenance_route.get("status") == "compatibility-mode":
-        migration_recs = []
-    else:
-        migration_recs = _build_migration_recommendations(active, project_state)
-
-    findings_payload = [asdict(f) for f in active]
-    findings_payload, compatibility_adjustments = _compatibility_adjustments_for_findings(
-        findings_payload,
-        maintenance_route,
+    active = [f for f in all_findings if f.id not in suppressed_ids]
+    active, compatibility_adjustments = _apply_compatibility_mode_policy(
+        active, maintenance_route,
     )
+    migration_recs = _build_migration_recommendations(active, project_state)
 
     result = {
-        "findings": findings_payload,
+        "findings": [asdict(f) for f in active],
         "skipped_categories": skipped,
         "suppressions_resolved": sorted(resolved_ids),
         "project_state_summary": build_state_summary(project_state),
@@ -2137,6 +2199,13 @@ def persist(
     auto_fixed = sum(1 for a in all_actions if a.get("action") == "auto-fix")
     user_fixed = sum(1 for a in all_actions if a.get("action") == "prompted-fix")
     skipped = sum(1 for a in all_actions if a.get("action") == "skip")
+    scan_findings = scan_findings or []
+    severity_counts = {
+        "errors": sum(1 for f in scan_findings if f.get("severity") == "error"),
+        "warnings": sum(1 for f in scan_findings if f.get("severity") == "warning"),
+        "info": sum(1 for f in scan_findings if f.get("severity") == "info"),
+        "total_findings": len(scan_findings),
+    }
 
     manifest = {
         "timestamp": _now_iso(),
@@ -2149,13 +2218,15 @@ def persist(
             "user_fixed": user_fixed,
             "skipped": skipped,
             "failed": errors,
+            **severity_counts,
         },
     }
     write_manifest(archive_path, manifest)
 
+    finding_limit = 100
     findings_summary = [
         {"id": f["id"], "severity": f["severity"], "summary": f["summary"]}
-        for f in (scan_findings or [])
+        for f in scan_findings[:finding_limit]
     ]
 
     last_run = {
@@ -2163,6 +2234,8 @@ def persist(
         "version": manifest["version"],
         "summary": manifest["summary"],
         "findings": findings_summary,
+        "findings_total": len(scan_findings),
+        "findings_truncated": max(0, len(scan_findings) - len(findings_summary)),
         "menu_preference": menu_preference,
     }
     last_run_path = project_dir / ".sweetclaude" / "state" / "last-doctor-run.json"

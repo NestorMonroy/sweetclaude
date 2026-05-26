@@ -20,7 +20,111 @@ Thin orchestrator — all scanning and file mutation happens in `scripts/doctor.
 
 ---
 
-## Step 1: Scan
+## Step 0: Plugin Update Guard
+
+Before any Doctor scan or maintenance routing, run the SweetClaude preflight
+helper to detect stale beta plugin installs:
+
+```bash
+if [ -f ~/.claude/scripts/sweetclaude/preflight.sh ]; then
+  eval "$(bash ~/.claude/scripts/sweetclaude/preflight.sh . 2>/dev/null)"
+fi
+```
+
+If `SC_PLUGIN_STALE_BETA=true`, print this message with the variables substituted, then stop before any project
+maintenance, migration, doctor, setup, or recovery routing:
+
+```
+SweetClaude beta plugin update required.
+──────────────────────────────────────
+Installed plugin: {SC_PLUGIN_KEY}
+Installed version: {SC_PLUGIN_VERSION}
+Minimum safe beta: {SC_PLUGIN_MIN_SAFE_BETA_VERSION}
+
+Run this Claude Code command:
+{SC_PLUGIN_UPDATE_COMMAND}
+
+Then restart Claude Code and run:
+/sweetclaude:update
+
+Stopping here because this installed beta is old enough to have unsafe
+update/recovery behavior. No project files were changed.
+```
+
+Do not invoke `/sweetclaude:update`, `/sweetclaude:doctor`,
+`/sweetclaude:recover`, `/sweetclaude:migrate`, `_migrate`, setup, purge, or
+any project-mutating skill from this stale-beta stop path.
+
+## Step 1a: Maintenance route preflight
+
+Run the compact maintenance route before the full scan. This is intentionally
+separate from the full scan because large projects can produce huge finding
+lists, and the user-facing maintenance decision must not get buried.
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/doctor.py maintenance-route --project-dir . 2>/dev/null
+```
+
+Parse the JSON output. Handle these cases:
+
+**Not configured:** If the output contains `"error": "not-configured"`, print:
+> SweetClaude is not configured for this project.
+
+Stop. Do not continue to Step 2.
+
+**Parse failure:** If the output is not valid JSON or the command exits
+non-zero, print:
+> Doctor route check failed. Run `python3 ~/.claude/scripts/sweetclaude/doctor.py maintenance-route --project-dir .` manually to see the error.
+
+Stop.
+
+**Success:** Store `maintenance_route`. Doctor is the maintenance front door;
+do not make the user choose among internal commands such as `recover`,
+`_migrate`, or taxonomy migration scripts.
+
+If `maintenance_route.status` is `recovery-available`, present
+**AskUserQuestion** before running the full scan:
+
+> Doctor found a recoverable SweetClaude maintenance state. Recovery will
+> diagnose, plan, snapshot, request approval, verify, and keep rollback data.
+
+Options:
+- **Run safe recovery** — "Use the snapshot-backed recovery flow"
+- **Continue without maintenance** — "Skip recovery for now and continue to non-migration fixes"
+
+On **Run safe recovery**: invoke `sweetclaude:recover`. Recovery owns the
+diagnose, plan, approval, execute, resume, verification, and rollback flow. When
+it completes, run the full scan and continue with the fresh findings.
+
+If `maintenance_route.status` is `supported-migration-available`, present
+**AskUserQuestion** before running the full scan:
+
+> Doctor found a supported flat BL-NNN migration candidate. Migration will run
+> its own preflight and safety steps before conversion.
+
+Options:
+- **Start supported migration** — "Open the migration flow for this supported layout"
+- **Continue without migration** — "Skip migration for now and continue to other fixes"
+
+On **Start supported migration**: invoke `sweetclaude:migrate`. Do not invoke
+`migrate_taxonomy.py` or any migration script directly from Doctor. After the
+migration flow completes, run the full scan and continue with fresh findings.
+
+If `maintenance_route.status` is `compatibility-mode`, print a visible
+maintenance route block before the full scan:
+
+> Maintenance route: {message}
+> No migration is recommended for this project.
+
+Then continue to Step 1b.
+
+If `maintenance_route.status` is `migration-blocked`, `manual-review`, or
+`no-maintenance-action`, print the route `message` when it is non-empty, then
+continue to Step 1b. Do not invoke any migration script.
+
+---
+
+## Step 1b: Scan
 
 ```bash
 python3 ~/.claude/scripts/sweetclaude/doctor.py scan --project-dir . 2>/dev/null
@@ -38,7 +142,12 @@ Stop. Do not continue to Step 2.
 
 Stop.
 
-**Success:** Store the parsed result. Extract `findings`, `skipped_categories`, `suppressions_resolved`, and `project_state_summary`. Count findings by severity (error/warning/info) for the summary line in Step 9.
+**Success:** Store the parsed result. Extract `findings`,
+`skipped_categories`, `suppressions_resolved`, `compatibility_adjustments`, and
+`project_state_summary`.
+Keep using the `maintenance_route` from Step 1a. Use the full scan's
+`maintenance_route` only as a fallback if Step 1a did not return one. Count
+findings by severity (error/warning/info) for the summary line in Step 9.
 
 ---
 
@@ -53,6 +162,13 @@ Check if `.sweetclaude/state/last-doctor-run.json` exists.
 Skip to Step 9 (persist the clean run).
 
 **Findings present:** Render the report.
+
+If `compatibility_adjustments.applied` is true and
+`compatibility_adjustments.collapsed_count` is greater than 0, print this before
+the severity groups:
+
+> Compatibility mode collapsed {collapsed_count} accepted legacy taxonomy
+> findings. These are not recommended fixes while compatibility mode is active.
 
 ### Summary tier (default)
 
@@ -103,39 +219,34 @@ If `suppressions_resolved` is non-empty, list each one:
 
 ---
 
-## Step 2b: Maintenance front door
+## Step 2b: Maintenance router guard
 
-Before showing migration prompts or the fix menu, read the deterministic route:
+Step 1 must already have handled and visibly rendered the maintenance route
+before the full findings report. Do not present a second maintenance prompt
+here. If Step 1 did not return a route but the full scan did, handle that route
+now using the same rules from Step 1a before continuing to Step 3.
 
-```bash
-python3 ~/.claude/scripts/sweetclaude/doctor.py maintenance-route --project-dir . 2>/dev/null
-```
-
-Store `maintenance_route`. Doctor is the maintenance front door; Step 1 must already have handled and visibly rendered the scan output before this route is used for menus. Do not `cat` or print
-`.sweetclaude/state/last-doctor-run.json`; use the scan JSON and the route JSON only.
-
-Handle route statuses:
-
-- `recovery-available`: offer **Run safe recovery** and delegate to `sweetclaude:recover`.
-- `supported-migration-available`: offer **Start supported migration** and delegate to `sweetclaude:migrate`.
-- `no-migration-recommended`: print **No migration is recommended for this project** and continue to the normal fix menu.
-- `compatibility-mode`: do not show a migration prompt; render the scan normally. If `compatibility_adjustments.applied` is true, include: `Compatibility mode collapsed {collapsed_count} accepted legacy taxonomy finding(s).`
-
-Do not invoke
-`migrate_taxonomy.py` from doctor. It may appear in findings for historical context, but doctor must route through `maintenance_route` and delegated skills. Do not use it to
+`migration_recommendations` is legacy diagnostic context. Do not use it to
 present a migration prompt unless `maintenance_route.status` is
 `supported-migration-available`.
 
-Use `menu_default` for skip-menu behavior. A stored default may preselect the Step 3 menu path, but doctor must not skip the menu by itself before Step 1 and this front-door route have been rendered.
-
-For internal commands such as `recover`,
-`_migrate`, or other maintenance helpers, keep routing explicit in the report instead of silently jumping to another command.
+---
 
 ## Step 3: Pre-fix menu
 
 If no findings have `fix_type` of `auto` or `prompted`, skip to Step 8.
 
-Check for a stored menu default. Read `.sweetclaude/state/last-doctor-run.json` and check `menu_preference`. If the user passed `--interactive`, ignore stored preference.
+Check for a stored menu default. Do not `cat` or print
+`.sweetclaude/state/last-doctor-run.json`; older runs can contain large stale
+finding lists. Read only the compact preference fields:
+
+```bash
+python3 -c "import json, os; p='.sweetclaude/state/last-doctor-run.json'; d=json.load(open(p)) if os.path.exists(p) else {}; print(json.dumps({'exists': bool(d), 'menu_default': d.get('menu_default'), 'menu_preference': d.get('menu_preference')}))" 2>/dev/null || echo '{"exists": false}'
+```
+
+Use `menu_default` for skip-menu behavior. `menu_preference` is only the last
+one-time choice and must not skip the menu by itself. If the user passed
+`--interactive`, ignore stored preferences.
 
 If a stored default of `proceed` exists and `--interactive` was not passed, skip the menu — print "Using stored preference: proceed" and go to Step 4.
 
@@ -343,13 +454,18 @@ echo '{"finding_id": "...", "action": "suppress", "reason": "...", "timestamp": 
 
 When a prompted fix involves migration or restoration:
 
-- **Schema migration** (`fix_recipe.script` = "runner.py"): Route through the maintenance front door and record the delegated result via `record-action`.
+- **Schema migration** (`fix_recipe.script` = "runner.py"): Invoke `sweetclaude:_migrate` skill. Record result via `record-action`.
 
-- **Taxonomy migration** (`fix_recipe.script` = "migrate_taxonomy.py"): Do not run this directly; route through `maintenance_route` and record the decision.
+- **Taxonomy migration** (`fix_recipe.script` = "migrate_taxonomy.py"): Block in this beta unless a future taxonomy
+  migration capability check proves the detected layout is supported. Do not
+  run this script directly from doctor. Record the blocked action and route the
+  user to `/sweetclaude:recover` or manual review based on the recovery guard.
 
-- **v3-to-v4 migration** (`fix_recipe.script` = "migrate-v3-to-v4.py"): Run the script. Record result.
+- **v3-to-v4 migration** (`fix_recipe.script` = "migrate-v3-to-v4.py"): Invoke `sweetclaude:migrate`, which runs its
+  read-only preflight before creating locks, backups, files, or migration maps.
+  Record result.
 
-- **Purge/re-onboard**: Record the route decision and let the owning recovery/removal skill handle any destructive work.
+- **Purge/re-onboard**: Invoke `sweetclaude:purge`. Record result.
 
 ---
 

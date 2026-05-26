@@ -8,13 +8,42 @@ description: "Structured backlog grooming session."
 
 ## MIGRATION GUARD
 
-Before any other work, run the read-only recovery guard:
+Before any other work, check for legacy migration/recovery risk:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py guard --project-dir . --pretty 2>/dev/null
+PRODUCT_BASE=$(python3 -c "
+import yaml, pathlib
+p = pathlib.Path('.sweetclaude/artifact-privacy.yaml')
+if p.exists():
+    d = yaml.safe_load(p.read_text()) or {}
+    base = d.get('categories', {}).get('product', {}).get('base_path', '')
+    if base:
+        print(base.rstrip('/'))
+        exit()
+print('.sweetclaude/product')
+" 2>/dev/null || echo '.sweetclaude/product')
+LEGACY_FILES=$(find "${PRODUCT_BASE}" -maxdepth 4 -type f \( -name 'BL-*.md' -o -name 'STORY-*.md' -o -name 'BUG-*.md' -o -name 'DEBT-*.md' -o -name 'CHORE-*.md' \) 2>/dev/null | wc -l | tr -d ' ')
+if [ "$LEGACY_FILES" -gt 0 ]; then
+  SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+  if [ ! -f "$SCRIPT" ]; then
+    SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+  fi
+  if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
+    python3 "$SCRIPT" guard --project-dir . --pretty
+  else
+    echo '{"status":"guard-unavailable","message":"Recovery guard unavailable. Run /sweetclaude:update before migration."}'
+  fi
+fi
 ```
 
-If the guard status is `run-recover`, stop and route to `/sweetclaude:recover`. If it is `manual-review`, stop and show the guard message. Do not run taxonomy migration from this skill.
+If the guard output has `status` `run-recover`, `manual-review`,
+`compatibility-mode`, `missing-product-base`, or `guard-unavailable`: print the
+guard `message`, tell the user to run `/sweetclaude:recover` when recovery is
+available, and stop. Do not recommend migration.
+
+If the guard output has `status` `migration-may-be-needed`: print the guard
+`message`, then stop and tell the user to review `/sweetclaude:migrate` before
+running it. Do not invoke migration from this skill.
 
 ```python
 import pathlib, yaml, re, datetime
@@ -166,8 +195,17 @@ python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {path} --sta
 
 On `done` (status → done, move to done/):
 
+Require a valid completion evidence receipt before marking done. Use the
+receipt created by `/sweetclaude:code-verify`, then validate it:
+
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {path} --status done --actor project-backlog-triage --project-dir .
+python3 ~/.claude/scripts/sweetclaude/evidence.py validate --receipt "{receipt_path}" --subject-id "{ID}"
+```
+
+If no valid receipt exists, stop and run `/sweetclaude:code-verify` first.
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {path} --status done --actor project-backlog-triage --project-dir . --evidence-receipt "{receipt_path}"
 ```
 
 `set-terminal` handles: status change, `closed_date`, file move, audit log, cache rebuild.

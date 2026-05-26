@@ -52,6 +52,8 @@ _make_302_fixture() {
   mkdir -p "$fake_repo/tests"
   mkdir -p "$fake_repo/hooks"
   mkdir -p "$fake_repo/skills"
+  mkdir -p "$fake_repo/skills/recover"
+  mkdir -p "$fake_repo/scripts/recovery"
   mkdir -p "$fake_repo/config"
 
   cp "$REPO_ROOT/scripts/sync-to-installed.sh" "$fake_repo/scripts/sync-to-installed.sh"
@@ -60,6 +62,8 @@ _make_302_fixture() {
   printf '#!/bin/bash\necho stub-hook\n' > "$fake_repo/hooks/stub-hook.sh"
   chmod +x "$fake_repo/hooks/stub-hook.sh"
 
+  printf 'recovery-script-marker\n' > "$fake_repo/scripts/recovery/recover_project.py"
+  printf 'recovery-skill-marker\n' > "$fake_repo/skills/recover/SKILL.md"
   printf '{"name":"sweetclaude","version":"0.0.0-test"}\n' > "$fake_repo/package.json"
 
   if [ "$tests_exit_code" -eq 0 ]; then
@@ -1144,6 +1148,30 @@ if [ -f "$FX35_INSTALL/hooks/stub-hook.sh" ]; then
   pass "stub-hook.sh from fake-repo/hooks/ is present at installed path"
 else
   fail "stub-hook.sh not found at installed path (sync did not copy repo hooks)"
+fi
+
+if [ -f "$FX35_INSTALL/scripts/recovery/recover_project.py" ]; then
+  pass "recovery script is present under installed plugin scripts/"
+else
+  fail "recovery script missing from installed plugin scripts/"
+fi
+
+if [ -f "$FX35_HOME/.claude/scripts/sweetclaude/recovery/recover_project.py" ]; then
+  pass "recovery script is present under versionless ~/.claude/scripts/sweetclaude/"
+else
+  fail "recovery script missing from versionless scripts mirror"
+fi
+
+if [ -f "$FX35_INSTALL/../0.0.0-test/scripts/recovery/recover_project.py" ]; then
+  pass "recovery script is present under versioned install directory"
+else
+  fail "recovery script missing from versioned install directory"
+fi
+
+if [ -f "$FX35_INSTALL/skills/recover/SKILL.md" ]; then
+  pass "recover skill is present under installed plugin skills/"
+else
+  fail "recover skill missing from installed plugin skills/"
 fi
 
 # ---------------------------------------------------------------------------

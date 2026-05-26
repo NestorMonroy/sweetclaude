@@ -366,7 +366,7 @@ def _blocked_actions(diagnosis: dict[str, Any]) -> list[dict[str, Any]]:
                 "layout-specific migration manifest. Stabilization must not "
                 "move or rename product artifacts."
             ),
-            "until": "A Syncog-layout taxonomy migrator passes dry-run, rollback, and verification drills.",
+            "until": "A SynCog-layout taxonomy migrator passes dry-run, rollback, and verification drills.",
         })
     return blocked
 
@@ -1339,12 +1339,11 @@ def main(argv: list[str] | None = None) -> int:
     resume_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
 
     args = parser.parse_args(argv)
-    if args.command is None:
-        parser.print_help(sys.stderr)
-        return 2
 
     try:
-        if args.command == "guard":
+        if args.command is None:
+            result = diagnose_project(Path("."))
+        elif args.command == "guard":
             result = guard_project(Path(args.project_dir))
         elif args.command == "diagnose":
             result = diagnose_project(Path(args.project_dir))
@@ -1366,7 +1365,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"error": str(exc)}, indent=2), file=sys.stderr)
         return 2
 
-    print(json.dumps(_cli_result(result), indent=2 if args.pretty else None, sort_keys=True))
+    pretty = bool(getattr(args, "pretty", False))
+    print(json.dumps(_cli_result(result), indent=2 if pretty else None, sort_keys=True))
     return 0
 
 

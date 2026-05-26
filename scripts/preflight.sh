@@ -17,7 +17,6 @@
 #   SELF_HEAL=true|false        Whether versionless path was just populated
 #   DECLINE_CLEARED=true|false  Whether update.declined was cleared
 #   RUNNER=<path>               Resolved runner.py (empty string if not found)
-#   SC_PLUGIN_*                 Resolved SweetClaude plugin metadata/channel state
 
 set -u
 
@@ -42,24 +41,14 @@ DECLINE_CLEARED=false
 
 # 1. Self-heal: populate versionless path if absent.
 #    Uses rsync for atomicity and dotfile safety (T11b fix).
-#    Filters installed_plugins.json to user-scoped beta entries, newest first (T11a fix).
+#    Filters installed_plugins.json by scope=user + most-recent lastUpdated (T11a fix).
 if [ ! -d "$VERSIONLESS" ]; then
   INSTALL_PATH=$(python3 -c "
 import json, os
 try:
     d = json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json')))
-    entries = []
-    for plugin_key, versions in d.get('plugins', {}).items():
-        if 'sweetclaude' not in str(plugin_key).lower() or not isinstance(versions, list):
-            continue
-        for e in versions:
-            if e.get('scope') != 'user':
-                continue
-            version = str(e.get('version') or '')
-            market = str(plugin_key).lower()
-            beta = 'beta' in market or '-' in version or version.lstrip('v').startswith('4.')
-            if beta:
-                entries.append(e)
+    entries = [e for versions in d.get('plugins', {}).values()
+               for e in versions if e.get('scope') == 'user']
     entries.sort(key=lambda e: e.get('lastUpdated', ''), reverse=True)
     for e in entries:
         ip = e.get('installPath', '')
@@ -92,17 +81,13 @@ except Exception:
     raise SystemExit(0)
 
 for k, versions in d.get('plugins', {}).items():
-    if 'sweetclaude' not in str(k).lower():
+    if 'sweetclaude' not in k.lower():
         continue
     for entry in versions:
         if entry.get('scope') != 'user':
             continue
-        version     = entry.get('version', '')
-        market      = str(k).lower()
-        beta        = 'beta' in market or '-' in str(version) or str(version).lstrip('v').startswith('4.')
-        if not beta:
-            continue
         install_path = entry.get('installPath', '').rstrip('/')
+        version     = entry.get('version', '')
         if not install_path or not version or not os.path.isdir(install_path):
             continue
         parent      = os.path.dirname(install_path)
@@ -161,7 +146,7 @@ if [ -f "$PLUGIN_STATE_SCRIPT" ]; then
   if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
     CURRENT_ROOT_ARGS=(--current-root "$CLAUDE_PLUGIN_ROOT")
   fi
-  PLUGIN_STATE_OUT=$(python3 "$PLUGIN_STATE_SCRIPT" --project-dir "${PROJECT_DIR:-$PWD}" inspect --prefer-channel beta "${CURRENT_ROOT_ARGS[@]}" --shell 2>/dev/null || true)
+  PLUGIN_STATE_OUT=$(python3 "$PLUGIN_STATE_SCRIPT" --project-dir "${PROJECT_DIR:-$PWD}" inspect "${CURRENT_ROOT_ARGS[@]}" --shell 2>/dev/null || true)
   [ -n "$PLUGIN_STATE_OUT" ] && eval "$PLUGIN_STATE_OUT"
 fi
 

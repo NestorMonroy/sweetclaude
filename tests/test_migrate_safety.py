@@ -7,12 +7,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "migrate" / "migrate-v3-to-v4.py"
-TYPED_PRODUCT_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "typed-product-layout"
+SYNCOG_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "syncog-layout"
 
 
-def _copy_typed_product_fixture(tmp_path: Path) -> Path:
-    project = tmp_path / "typed-product-layout"
-    shutil.copytree(TYPED_PRODUCT_FIXTURE, project)
+def _copy_syncog_fixture(tmp_path: Path) -> Path:
+    project = tmp_path / "syncog-layout"
+    shutil.copytree(SYNCOG_FIXTURE, project)
     state_dir = project / ".sweetclaude" / "state"
     state_dir.mkdir(parents=True)
     (project / ".sweetclaude" / "artifact-privacy.yaml").write_text(
@@ -54,7 +54,7 @@ def _blocking_codes(preflight: dict) -> set[str]:
 
 
 def test_migrate_preflight_blocks_unsupported_typed_layout_without_writes(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path)
+    project = _copy_syncog_fixture(tmp_path)
     before = _file_snapshot(project)
 
     result = _run_migrator(project, "preflight")
@@ -73,7 +73,7 @@ def test_migrate_preflight_blocks_unsupported_typed_layout_without_writes(tmp_pa
 
 
 def test_migrate_execute_blocks_unsupported_typed_layout_before_writes(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path)
+    project = _copy_syncog_fixture(tmp_path)
     before = _file_snapshot(project)
 
     result = _run_migrator(project, "execute", "--include-done")

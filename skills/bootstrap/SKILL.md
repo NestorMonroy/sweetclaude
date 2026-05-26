@@ -19,28 +19,13 @@ State pre-loaded above. One read. Make a decision. Delegate.
 Ensure the versionless framework path is populated, then run the pre-flight helper.
 
 ```bash
-PREFLIGHT="$HOME/.claude/scripts/sweetclaude/preflight.sh"
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "$CLAUDE_PLUGIN_ROOT/scripts/preflight.sh" ]; then
-  mkdir -p ~/.claude/scripts/sweetclaude
-  rsync -a "$CLAUDE_PLUGIN_ROOT/scripts/" ~/.claude/scripts/sweetclaude/ 2>/dev/null || true
-  PREFLIGHT="$CLAUDE_PLUGIN_ROOT/scripts/preflight.sh"
-elif [ ! -f "$PREFLIGHT" ]; then
+if [ ! -f ~/.claude/scripts/sweetclaude/preflight.sh ]; then
   IP=$(python3 -c "
 import json, os
 try:
     d = json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json')))
-    entries = []
-    for plugin_key, versions in d.get('plugins', {}).items():
-        if 'sweetclaude' not in str(plugin_key).lower() or not isinstance(versions, list):
-            continue
-        for e in versions:
-            if e.get('scope') != 'user':
-                continue
-            version = str(e.get('version') or '')
-            market = str(plugin_key).lower()
-            beta = 'beta' in market or '-' in version or version.lstrip('v').startswith('4.')
-            if beta:
-                entries.append(e)
+    entries = [e for versions in d.get('plugins', {}).values()
+               for e in versions if e.get('scope') == 'user']
     entries.sort(key=lambda e: e.get('lastUpdated', ''), reverse=True)
     for e in entries:
         ip = e.get('installPath', '')
@@ -55,9 +40,7 @@ except Exception:
     rsync -a "$IP/scripts/" ~/.claude/scripts/sweetclaude/ 2>/dev/null || true
   fi
 fi
-if [ -f "$PREFLIGHT" ]; then
-  eval "$(bash "$PREFLIGHT" 2>/dev/null)"
-fi
+eval "$(bash ~/.claude/scripts/sweetclaude/preflight.sh 2>/dev/null)"
 ```
 
 `RUNNER` is now set (empty if not found). `SELF_HEAL=true` if the versionless path was just populated. `VERSION_DIR_HEALED=true` if the install directory was just repaired to a version-named path.
@@ -73,6 +56,30 @@ be available in the next session.
 ```
 
 Then stop. Do not continue past Step 0 in this session — the restart is required for the repair to take effect.
+
+If `SC_PLUGIN_STALE_BETA=true`, print this message with the variables substituted, then stop before any project
+maintenance, migration, doctor, setup, or recovery routing:
+
+```
+SweetClaude beta plugin update required.
+──────────────────────────────────────
+Installed plugin: {SC_PLUGIN_KEY}
+Installed version: {SC_PLUGIN_VERSION}
+Minimum safe beta: {SC_PLUGIN_MIN_SAFE_BETA_VERSION}
+
+Run this Claude Code command:
+{SC_PLUGIN_UPDATE_COMMAND}
+
+Then restart Claude Code and run:
+/sweetclaude:update
+
+Stopping here because this installed beta is old enough to have unsafe
+update/recovery behavior. No project files were changed.
+```
+
+Do not invoke `/sweetclaude:update`, `/sweetclaude:doctor`,
+`/sweetclaude:recover`, `/sweetclaude:migrate`, `_migrate`, setup, purge, or
+any project-mutating skill from this stale-beta stop path.
 
 ---
 
@@ -140,14 +147,6 @@ If `false`:
 
 ## Step 5b: v4 hard stop — v3 artifacts present
 
-First classify the project with the read-only recovery guard:
-
-```bash
-python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py guard --project-dir . --pretty 2>/dev/null
-```
-
-If the guard says recovery is needed, run: /sweetclaude:recover. Run /sweetclaude:migrate only when the guard says `migrate_allowed: true`; for `run-recover`, `manual-review`, or `compatibility-mode`, do not recommend migration.
-
 After confirming setup is complete, check for v3 backlog files. The trigger is a v4 plugin running
 against a project that hasn't migrated yet — detected by comparing the plugin version (from
 `installed_plugins.json`) against the project's own `installed_version`. This is a one-time check
@@ -206,15 +205,26 @@ if $PLUGIN_IS_V4 && ( $PROJECT_NOT_V4 || [ "$V3_FILES" -gt 0 ] ); then
     echo "Found $V3_FILES v3 stories at ${PRODUCT_BASE}/backlog/."
   fi
   echo ""
-  echo "Migration creates a safety backup and moves items to .sweetclaude/product/. Your"
-  echo "current work is not affected. A clean git working tree is not required."
+  SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+  if [ ! -f "$SCRIPT" ]; then
+    SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+  fi
+  if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
+    python3 "$SCRIPT" guard --project-dir . --pretty
+  else
+    echo '{"status":"guard-unavailable","message":"Recovery guard unavailable. Run /sweetclaude:update before migration."}'
+  fi
   echo ""
-  echo "Run /sweetclaude:migrate only when the guard says migrate_allowed=true."
+  echo "If the guard says recovery is needed, run: /sweetclaude:recover"
+  echo "Run /sweetclaude:migrate only when the guard says this is a simple migration candidate."
   exit 1
 fi
 ```
 
-If the v4 hard stop fires: print the message above and exit. No further skill execution.
+If the v4 hard stop fires: print the message above and exit. If the guard
+returns `run-recover`, `manual-review`, `compatibility-mode`,
+`missing-product-base`, or `guard-unavailable`, do not recommend migration. No
+further skill execution.
 
 If it does not fire (project is already at 4.x and has no v3 BL files): continue to Step 5c.
 
@@ -313,7 +323,6 @@ Read `framework.update.available`, `framework.update.declined`, and `framework.i
 
 - `available` is null → no offer.
 - `available` is non-null:
-  - If `installed_version` is stable and `available` is a prerelease, ignore it. Stable 3.x users must opt into beta through the beta marketplace channel.
   - Compute `is_major_bump = major(available) > major(installed_version)`.
   - If `is_major_bump` is true → **always prompt**, regardless of `declined`.
   - Else (minor/patch within installed major):
@@ -338,8 +347,6 @@ def major(v):
     return int(m.group(1)) if m else None
 
 if not available:
-    print("DECISION=silent"); sys.exit()
-if '-' in str(available) and '-' not in str(installed):
     print("DECISION=silent"); sys.exit()
 inst_maj, avail_maj = major(installed), major(available)
 if inst_maj is None or avail_maj is None:

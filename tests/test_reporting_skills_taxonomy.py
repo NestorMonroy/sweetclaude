@@ -69,12 +69,15 @@ def read_skill(skill_name):
 def _has_product_guard(content):
     """
     Return True only if the file contains an explicit conditional guard that
-    checks for the .sweetclaude/product/ directory before proceeding.
+    checks for product layout health before proceeding.
 
-    A guard is a conditional check (if/test/-d/exists) specifically on
-    .sweetclaude/product/ used to detect whether migration has run.
-    Incidental mentions of .sweetclaude/product in path reads do NOT count.
+    The current guard may be delegated to recover_project.py because older
+    projects can have product artifacts outside .sweetclaude/product/ and must
+    not be blindly routed to taxonomy migration.
     """
+    if "guard --project-dir . --pretty" in content and "recover_project.py" in content:
+        return True
+
     guard_patterns = [
         # Bash: [ -d .sweetclaude/product/ ] or [[ -d .sweetclaude/product/ ]]
         r'\[\[?\s*-d\s+["\']?\.sweetclaude/product/',
@@ -120,11 +123,25 @@ class TestQuerySummaryMilestonesByStatus:
 
         write_frontmatter_file(
             os.path.join(base, "roadmap", "milestones", "MS-001-launch.md"),
-            {"id": "MS-001", "type": "milestone", "title": "Launch", "status": "active"},
+            {
+                "id": "MS-001",
+                "type": "milestone",
+                "title": "Launch",
+                "status": "active",
+                "created": "2026-05-25",
+                "target_release": "v1.0",
+            },
         )
         write_frontmatter_file(
             os.path.join(base, "roadmap", "milestones", "MS-002-done.md"),
-            {"id": "MS-002", "type": "milestone", "title": "Done Milestone", "status": "done"},
+            {
+                "id": "MS-002",
+                "type": "milestone",
+                "title": "Done Milestone",
+                "status": "done",
+                "created": "2026-05-25",
+                "target_release": "v1.0",
+            },
         )
 
         rebuild(project_dir)
@@ -143,11 +160,25 @@ class TestQuerySummaryMilestonesByStatus:
 
         write_frontmatter_file(
             os.path.join(base, "roadmap", "milestones", "MS-001-launch.md"),
-            {"id": "MS-001", "type": "milestone", "title": "Launch", "status": "active"},
+            {
+                "id": "MS-001",
+                "type": "milestone",
+                "title": "Launch",
+                "status": "active",
+                "created": "2026-05-25",
+                "target_release": "v1.0",
+            },
         )
         write_frontmatter_file(
             os.path.join(base, "roadmap", "milestones", "MS-002-done.md"),
-            {"id": "MS-002", "type": "milestone", "title": "Done Milestone", "status": "done"},
+            {
+                "id": "MS-002",
+                "type": "milestone",
+                "title": "Done Milestone",
+                "status": "done",
+                "created": "2026-05-25",
+                "target_release": "v1.0",
+            },
         )
 
         rebuild(project_dir)
@@ -380,48 +411,23 @@ class TestStatusReferencesCachePy:
 
 
 class TestStatusHasMigrationGuard:
-    """Scenario: status SKILL.md has migration guard"""
+    """Scenario: status SKILL.md has a safe recovery/migration guard"""
 
     def test_has_sweetclaude_product_existence_check(self):
         content = read_skill("status")
         assert _has_product_guard(content), (
-            "status SKILL.md must contain an explicit conditional guard that checks "
-            "for .sweetclaude/product/ existence before reading data — "
-            "incidental path reads do not count"
+            "status SKILL.md must contain a guard before reading product data. "
+            "The guard may delegate to recover_project.py so unsafe legacy layouts "
+            "route to /sweetclaude:recover instead of blind migration."
         )
 
-    def test_has_update_or_migrate_reference_in_guard_context(self):
+    def test_routes_unsafe_guard_context_to_recover(self):
         content = read_skill("status")
-        # The guard must direct the user to run migration when .sweetclaude/product/ is
-        # absent. The sweetclaude:update or migrate reference must appear within a short
-        # window (200 chars) of a "not found" or "not migrated" message that is itself
-        # adjacent to the .sweetclaude/product/ path check — not in an unrelated
-        # schema version check at the top of the file.
-        # We require the pattern: path-check → not-found message → update/migrate directive
-        # all within a contiguous block of ≤300 chars.
-        has_guard_with_migrate = bool(
-            re.search(
-                r'\.sweetclaude/product/'
-                r'[^#]{0,300}'
-                r'(not.*migrated|not.*configured|migration|has not been run|run.*migrate)',
-                content, re.DOTALL | re.IGNORECASE
-            )
-            and (
-                "sweetclaude:migrate" in content
-                or re.search(r'/sweetclaude:migrate\b', content)
-                or re.search(
-                    r'(not.*migrated|not.*configured|migration|has not been run)'
-                    r'[^#]{0,200}'
-                    r'(sweetclaude:update|migrate)',
-                    content, re.DOTALL | re.IGNORECASE
-                )
-            )
-        )
-        assert has_guard_with_migrate, (
-            "status SKILL.md must direct the user to run 'sweetclaude:update' or "
-            "'sweetclaude:migrate' when the .sweetclaude/product/ guard fails — "
-            "the update reference in the schema version check does not satisfy this"
-        )
+        assert "guard --project-dir . --pretty" in content
+        assert "/sweetclaude:recover" in content
+        assert "Do not run /sweetclaude:migrate yet" in content
+        assert "run `/sweetclaude:migrate` first" not in content
+        assert "`.sweetclaude/product/` not found" not in content
 
 
 class TestStatusCorrectTerminalStatuses:

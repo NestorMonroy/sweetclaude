@@ -1,13 +1,13 @@
 {
-  "name": "sweetclaude",
-  "description": "Legacy SweetClaude beta marketplace. Stable users should install the stable-3.x marketplace ref.",
+  "name": "sweetclaude-beta",
+  "description": "SweetClaude 4.x beta channel — pre-release features for active testing",
   "owner": {
     "name": "Carson Sweet"
   },
   "plugins": [
     {
       "name": "sweetclaude",
-      "description": "Legacy SweetClaude 4.x beta channel. Stable users should install sweetclaude@sweetclaude-stable.",
+      "description": "SweetClaude 4.x beta channel. Use only for beta testing; stable users should install sweetclaude-stable.",
       "source": {
         "source": "url",
         "url": "https://github.com/carson-sweet/sweetclaude.git",

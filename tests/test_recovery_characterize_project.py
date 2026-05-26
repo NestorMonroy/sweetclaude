@@ -8,7 +8,7 @@ import pytest
 from recovery.characterize_project import characterize_project
 
 
-FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "typed-product-layout"
+FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "syncog-layout"
 SCRIPT_PATH = Path(__file__).parents[1] / "scripts" / "recovery" / "characterize_project.py"
 
 
@@ -20,7 +20,7 @@ def _file_snapshot(root: Path) -> dict[str, bytes]:
     }
 
 
-def test_characterizes_typed_product_layout_without_writes():
+def test_characterizes_syncog_typed_layout_without_writes():
     before = _file_snapshot(FIXTURE_ROOT)
 
     result = characterize_project(FIXTURE_ROOT)
@@ -71,7 +71,7 @@ def test_characterizes_typed_product_layout_without_writes():
     }
 
 
-def test_cli_emits_json_for_typed_product_layout_fixture():
+def test_cli_emits_json_for_syncog_layout_fixture():
     completed = subprocess.run(
         [
             sys.executable,

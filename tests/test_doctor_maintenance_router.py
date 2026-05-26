@@ -7,13 +7,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parents[1]
 DOCTOR = REPO_ROOT / "scripts" / "doctor.py"
-TYPED_PRODUCT_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "typed-product-layout"
+SYNCOG_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "syncog-layout"
 MIGRATE_SMOKE = REPO_ROOT / "tests" / "fixtures" / "migrate-smoke"
 
 
-def _copy_typed_product_fixture(tmp_path: Path, migration_status: str = "complete") -> Path:
-    project = tmp_path / "typed-product"
-    shutil.copytree(TYPED_PRODUCT_FIXTURE, project)
+def _copy_syncog_fixture(tmp_path: Path, migration_status: str = "complete") -> Path:
+    project = tmp_path / "syncog"
+    shutil.copytree(SYNCOG_FIXTURE, project)
     state_dir = project / ".sweetclaude" / "state"
     state_dir.mkdir(parents=True)
     (project / ".sweetclaude" / "artifact-privacy.yaml").write_text(
@@ -90,7 +90,7 @@ def _doctor_route(project: Path) -> dict:
 
 
 def test_doctor_maintenance_route_command_emits_compact_route_without_writes(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path, migration_status="deferred")
+    project = _copy_syncog_fixture(tmp_path, migration_status="deferred")
     state_path = project / ".sweetclaude" / "state" / "sweetclaude.yaml"
     state_path.write_text(
         state_path.read_text(encoding="utf-8")
@@ -101,32 +101,6 @@ def test_doctor_maintenance_route_command_emits_compact_route_without_writes(tmp
         + "    blind_taxonomy_migration_allowed: false\n",
         encoding="utf-8",
     )
-    (project / "docs/product/backlog/bugs/BUG-001-example-bug.md").write_text(
-        "---\n"
-        "id: BUG-001\n"
-        "title: Example bug\n"
-        "type: bug\n"
-        "status: new\n"
-        "created: 2026-05-25T00:00:00+00:00\n"
-        "---\n\n"
-        "Legacy bug fixture.\n",
-        encoding="utf-8",
-    )
-    for path in [
-        project / "docs/product/backlog/debt/DEBT-001-first-debt.md",
-        project / "docs/product/backlog/debt/DEBT-001-duplicate-debt.md",
-    ]:
-        path.write_text(
-            "---\n"
-            "id: DEBT-001\n"
-            "title: Duplicate debt fixture\n"
-            "type: debt\n"
-            "status: new\n"
-            "created: 2026-05-25T00:00:00+00:00\n"
-            "---\n\n"
-            "Legacy debt fixture.\n",
-            encoding="utf-8",
-        )
     before = _file_snapshot(project)
 
     result = _doctor_route(project)
@@ -140,7 +114,7 @@ def test_doctor_maintenance_route_command_emits_compact_route_without_writes(tmp
 
 
 def test_doctor_routes_recoverable_project_to_safe_recovery_without_writes(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path)
+    project = _copy_syncog_fixture(tmp_path)
     before = _file_snapshot(project)
 
     scan = _doctor_scan(project)
@@ -156,7 +130,7 @@ def test_doctor_routes_recoverable_project_to_safe_recovery_without_writes(tmp_p
 
 
 def test_doctor_routes_accepted_legacy_layout_to_compatibility_mode(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path, migration_status="deferred")
+    project = _copy_syncog_fixture(tmp_path, migration_status="deferred")
     state_path = project / ".sweetclaude" / "state" / "sweetclaude.yaml"
     state_path.write_text(
         state_path.read_text(encoding="utf-8")
@@ -178,7 +152,7 @@ def test_doctor_routes_accepted_legacy_layout_to_compatibility_mode(tmp_path):
 
 
 def test_doctor_compatibility_mode_collapses_accepted_legacy_taxonomy_noise(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path, migration_status="deferred")
+    project = _copy_syncog_fixture(tmp_path, migration_status="deferred")
     state_path = project / ".sweetclaude" / "state" / "sweetclaude.yaml"
     state_path.write_text(
         state_path.read_text(encoding="utf-8")

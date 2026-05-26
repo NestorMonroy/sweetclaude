@@ -7,11 +7,11 @@ from pathlib import Path
 from recovery.recover_project import plan_project
 
 
-FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "typed-product-layout"
+FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "syncog-layout"
 SCRIPT_PATH = Path(__file__).parents[1] / "scripts" / "recovery" / "recover_project.py"
 
 
-def _copy_typed_product_fixture(tmp_path: Path, migration_status: str = "complete") -> Path:
+def _copy_syncog_fixture(tmp_path: Path, migration_status: str = "complete") -> Path:
     project = tmp_path / "project"
     shutil.copytree(FIXTURE_ROOT, project)
 
@@ -47,8 +47,8 @@ def _file_snapshot(root: Path) -> dict[str, bytes]:
     }
 
 
-def test_plan_stabilizes_typed_product_state_without_writes_or_product_moves(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path)
+def test_plan_stabilizes_syncog_state_without_writes_or_product_moves(tmp_path):
+    project = _copy_syncog_fixture(tmp_path)
     before = _file_snapshot(project)
 
     plan = plan_project(project)
@@ -96,7 +96,7 @@ def test_plan_stabilizes_typed_product_state_without_writes_or_product_moves(tmp
 
 
 def test_plan_deletes_pending_doctor_prompt_by_manifest(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path, migration_status="deferred")
+    project = _copy_syncog_fixture(tmp_path, migration_status="deferred")
     pending = project / ".sweetclaude" / "state" / "doctor-prompt-pending.json"
     pending.write_text(
         json.dumps({"category": "migration_currency", "recommendation": "migrate"}),
@@ -140,7 +140,7 @@ def test_plan_noops_for_simple_current_layout(tmp_path):
 
 
 def test_recover_project_cli_plan_emits_manifest_json(tmp_path):
-    project = _copy_typed_product_fixture(tmp_path)
+    project = _copy_syncog_fixture(tmp_path)
 
     completed = subprocess.run(
         [

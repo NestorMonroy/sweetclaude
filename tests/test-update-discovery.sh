@@ -195,8 +195,8 @@ schema_version: 2
 YAML
 
 # Exercise the runner's --report-drift-for-skill flag — the exact CLI the
-# SKILL's Step 6b invokes. This tests both the wire-format output and that
-# scan_drift+persist actually fires.
+# SKILL's Step 6b invokes. This tests the wire-format output used by update.
+# Update must stay read-only here; drift markers are not persisted from update.
 RUNNER="$REPO_ROOT/scripts/migrations/runner.py"
 REGISTRY="$REPO_ROOT/config/migration-registry.yaml"
 MIGRATIONS_DIR="$REPO_ROOT/scripts/migrations"
@@ -213,15 +213,15 @@ echo "$DRIFT_OUT" | grep -q "^FINDING|sweetclaude.yaml|v1->v2|chain=ok$" \
   && pass "Step 6b FINDING line is v1->v2 chain=ok" \
   || fail "finding wrong: $DRIFT_OUT"
 
-# Also confirm --persist side effect: drift was written to sweetclaude.yaml.
+# Confirm update remains read-only: drift was not written to sweetclaude.yaml.
 PERSIST_CHECK=$(python3 -c "
 import yaml
 d = yaml.safe_load(open('$UPD_TMPDIR/.sweetclaude/state/sweetclaude.yaml')) or {}
 print((d.get('framework') or {}).get('drift', {}).get('drift_count', 'missing'))
 ")
-[ "$PERSIST_CHECK" = "1" ] \
-  && pass "Step 6b --report-drift-for-skill also persists findings" \
-  || fail "persist side-effect missing: drift_count=$PERSIST_CHECK"
+[ "$PERSIST_CHECK" = "missing" ] \
+  && pass "Step 6b --report-drift-for-skill does not persist findings" \
+  || fail "update drift scan mutated project state: drift_count=$PERSIST_CHECK"
 
 # Now simulate the user picking "Migrate now" — invoke the runner the same
 # way _migrate does (single-file scope).
@@ -335,6 +335,77 @@ MTIME2=$(stat -f %m "$SH_TMPDIR/.claude/scripts/sweetclaude/migrations/runner.py
   && [ ! -s "$SH_TMPDIR/idempotent.out" ] \
   && pass "self-heal is idempotent (no copy on second run)" \
   || fail "self-heal not idempotent: mtime1=$MTIME1 mtime2=$MTIME2 out=$(cat $SH_TMPDIR/idempotent.out)"
+
+
+# ---------------------------------------------------------------------------
+# Test 8: preflight emits channel-safe plugin state for legacy beta install
+# ---------------------------------------------------------------------------
+
+echo "[8] preflight emits beta channel metadata for legacy beta install"
+
+PF_TMPDIR=$(mktemp -d)
+trap "rm -rf $PF_TMPDIR" EXIT
+PF_INSTALL="$PF_TMPDIR/.claude/plugins/cache/sweetclaude/sweetclaude/4.1.2-beta"
+mkdir -p "$PF_INSTALL/scripts/maintenance" "$PF_TMPDIR/.claude/plugins" "$PF_TMPDIR/project"
+cp "$REPO_ROOT/scripts/maintenance/plugin-state.py" "$PF_INSTALL/scripts/maintenance/plugin-state.py"
+cat > "$PF_TMPDIR/.claude/plugins/installed_plugins.json" << JSON
+{
+  "version": 2,
+  "plugins": {
+    "sweetclaude@sweetclaude": [
+      {
+        "scope": "user",
+        "installPath": "$PF_INSTALL",
+        "version": "4.1.2-beta",
+        "gitCommitSha": "d2ff161",
+        "lastUpdated": "2026-05-25T18:48:15Z"
+      }
+    ]
+  }
+}
+JSON
+
+PF_OUT=$(cd "$PF_TMPDIR/project" && HOME="$PF_TMPDIR" bash "$REPO_ROOT/scripts/preflight.sh")
+
+echo "$PF_OUT" | grep -q '^SC_PLUGIN_CHANNEL=beta$' \
+  && pass "preflight reports beta channel" \
+  || fail "preflight did not report beta channel: $PF_OUT"
+
+echo "$PF_OUT" | grep -q '^SC_PLUGIN_EXPECTED_REF=beta-4.x$' \
+  && pass "preflight reports beta-4.x expected ref" \
+  || fail "preflight did not report beta expected ref: $PF_OUT"
+
+echo "$PF_OUT" | grep -q '^SC_PLUGIN_LEGACY_MARKETPLACE=true$' \
+  && pass "preflight marks legacy marketplace" \
+  || fail "preflight did not mark legacy marketplace: $PF_OUT"
+
+echo "$PF_OUT" | grep -q '^SC_PLUGIN_STALE_BETA=true$' \
+  && pass "preflight marks stale beta install" \
+  || fail "preflight did not mark stale beta install: $PF_OUT"
+
+echo "$PF_OUT" | grep -q '^SC_PLUGIN_UPDATE_COMMAND=/plugin update sweetclaude@sweetclaude$' \
+  && pass "preflight emits exact plugin update command" \
+  || fail "preflight did not emit plugin update command: $PF_OUT"
+
+# ---------------------------------------------------------------------------
+# Test 9: update skill contains channel-preserving source and metadata rules
+# ---------------------------------------------------------------------------
+
+echo "[9] update skill guards channel source and metadata repair"
+
+UPDATE_SKILL="$REPO_ROOT/skills/update/SKILL.md"
+grep -q 'SC_PLUGIN_EXPECTED_REF' "$UPDATE_SKILL" \
+  && pass "update skill consumes expected channel ref" \
+  || fail "update skill does not consume SC_PLUGIN_EXPECTED_REF"
+
+grep -q 'branch .*does not match channel ref' "$UPDATE_SKILL" \
+  && pass "update skill blocks wrong-branch local repo source" \
+  || fail "update skill missing wrong-branch local repo guard"
+
+grep -q 'plugin-state.py' "$UPDATE_SKILL" \
+  && grep -q -- '--plugin-key "$PLUGIN_KEY"' "$UPDATE_SKILL" \
+  && pass "update skill repairs selected plugin metadata key" \
+  || fail "update skill missing deterministic metadata repair"
 
 # ---------------------------------------------------------------------------
 

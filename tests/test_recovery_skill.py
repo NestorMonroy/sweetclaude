@@ -7,6 +7,8 @@ def test_recover_skill_delegates_to_recovery_script_and_keeps_safety_gates():
     )
 
     assert "sweetclaude:recover" in skill
+    assert "Default user entrypoint: `/sweetclaude:recover`" in skill
+    assert "No argument is required" in skill
     assert "scripts/recovery/recover_project.py" in skill
     assert "diagnose --project-dir . --pretty" in skill
     assert "plan --project-dir . --pretty" in skill
@@ -152,3 +154,46 @@ def test_fix_sweetclaude_is_redirect_only():
     assert "rm " not in skill
     assert "mv " not in skill
     assert "migrate_taxonomy.py" not in skill
+
+
+def test_user_docs_route_to_no_arg_recover_not_diagnose_subcommand():
+    root = Path(__file__).parents[1]
+    docs = [
+        root / "README.md",
+        root / "docs" / "user-guide" / "install.md",
+        root / "docs" / "user-guide" / "beta-rescue.md",
+        root / "docs" / "user-guide" / "skills-reference.md",
+    ]
+
+    for path in docs:
+        text = path.read_text(encoding="utf-8")
+        assert "/sweetclaude:recover diagnose" not in text
+
+    rescue = (root / "docs" / "user-guide" / "beta-rescue.md").read_text(encoding="utf-8")
+    assert "/sweetclaude:recover" in rescue
+    assert "Recovery diagnoses first" in rescue
+
+
+def test_stale_beta_plugin_guard_is_front_door_for_update_bootstrap_and_doctor():
+    root = Path(__file__).parents[1]
+    for rel in [
+        "skills/update/SKILL.md",
+        "skills/bootstrap/SKILL.md",
+        "skills/doctor/SKILL.md",
+    ]:
+        text = (root / rel).read_text(encoding="utf-8")
+        assert "SC_PLUGIN_STALE_BETA=true" in text
+        assert "SweetClaude beta plugin update required" in text
+        assert "{SC_PLUGIN_UPDATE_COMMAND}" in text
+        assert "Then restart Claude Code and run:" in text
+        assert "/sweetclaude:update" in text
+        assert "No project files were changed" in text
+
+    doctor = (root / "skills/doctor/SKILL.md").read_text(encoding="utf-8")
+    assert doctor.index("Plugin Update Guard") < doctor.index("Maintenance route preflight")
+
+    bootstrap = (root / "skills/bootstrap/SKILL.md").read_text(encoding="utf-8")
+    assert bootstrap.index("SC_PLUGIN_STALE_BETA=true") < bootstrap.index("Handle missing or unparseable file")
+
+    update = (root / "skills/update/SKILL.md").read_text(encoding="utf-8")
+    assert update.index("SC_PLUGIN_STALE_BETA=true") < update.index("Read current install state")

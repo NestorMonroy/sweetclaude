@@ -1,5 +1,9 @@
 # SweetClaude 4.x Beta Rescue
 
-The beta rescue guide has moved into the 4.x beta track:
+This page has moved into the separate SweetClaude user-guide tracks. Choose the
+track that matches your installed plugin channel.
 
-- [SweetClaude 4.x Beta Rescue](4.x-beta/beta-rescue.md)
+- [4.x beta: SweetClaude 4.x Beta Rescue](4.x-beta/beta-rescue.md)
+
+Start from the [user-guide track chooser](index.md) if you are not sure which
+channel is installed.

@@ -269,10 +269,20 @@ Use AskUserQuestion:
 
 ### Step 2: Update completion criteria and close
 
+Require a fresh completion evidence receipt for `EP-{NNN}` before closing. Use
+the receipt created by `sweetclaude:code-verify` or by the
+release/verification flow that proved the epic criteria. Validate it first:
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/evidence.py validate --receipt "{receipt_path}" --subject-id "EP-{NNN}"
+```
+
+If no valid receipt exists, stop and run `/sweetclaude:code-verify` first.
+
 If proceeding, first update `completion_criteria_done` to match `completion_criteria` (all done) and write the file. Then close via the status CLI:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {epic_path} --status done --actor epics --project-dir .
+python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {epic_path} --status done --actor epics --project-dir . --evidence-receipt "{receipt_path}"
 ```
 
 `set-terminal` handles: status change, `closed_date`, `updated`, file move to `done/`, completion criteria gate, audit log, cache rebuild.

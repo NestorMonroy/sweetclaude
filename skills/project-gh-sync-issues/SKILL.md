@@ -8,13 +8,42 @@ description: "Bidirectional status sync between local issue files and GitHub Iss
 
 ## MIGRATION GUARD
 
-Before any other work, run the read-only recovery guard:
+Before any other work, check for legacy migration/recovery risk:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py guard --project-dir . --pretty 2>/dev/null
+PRODUCT_BASE=$(python3 -c "
+import yaml, pathlib
+p = pathlib.Path('.sweetclaude/artifact-privacy.yaml')
+if p.exists():
+    d = yaml.safe_load(p.read_text()) or {}
+    base = d.get('categories', {}).get('product', {}).get('base_path', '')
+    if base:
+        print(base.rstrip('/'))
+        exit()
+print('.sweetclaude/product')
+" 2>/dev/null || echo '.sweetclaude/product')
+LEGACY_FILES=$(find "${PRODUCT_BASE}" -maxdepth 4 -type f \( -name 'BL-*.md' -o -name 'STORY-*.md' -o -name 'BUG-*.md' -o -name 'DEBT-*.md' -o -name 'CHORE-*.md' \) 2>/dev/null | wc -l | tr -d ' ')
+if [ "$LEGACY_FILES" -gt 0 ]; then
+  SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+  if [ ! -f "$SCRIPT" ]; then
+    SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+  fi
+  if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
+    python3 "$SCRIPT" guard --project-dir . --pretty
+  else
+    echo '{"status":"guard-unavailable","message":"Recovery guard unavailable. Run /sweetclaude:update before migration."}'
+  fi
+fi
 ```
 
-If the guard status is `run-recover`, stop and route to `/sweetclaude:recover`. If it is `manual-review`, stop and show the guard message. Do not run taxonomy migration from this skill.
+If the guard output has `status` `run-recover`, `manual-review`,
+`compatibility-mode`, `missing-product-base`, or `guard-unavailable`: print the
+guard `message`, tell the user to run `/sweetclaude:recover` when recovery is
+available, and stop. Do not recommend migration.
+
+If the guard output has `status` `migration-may-be-needed`: print the guard
+`message`, then stop and tell the user to review `/sweetclaude:migrate` before
+running it. Do not invoke migration from this skill.
 
 ```python
 import pathlib, yaml, datetime, shutil
@@ -57,11 +86,26 @@ def find_issue_by_gh_number(gh_number):
 
 def close_issue_file(path):
     """Close via status CLI — handles status, closed_date, file move, audit log."""
-    import subprocess
+    import json, subprocess
     import os
+    fm, _body = read_issue_file(path)
+    issue_id = fm.get('id') or path.stem
+    gh_number = fm.get('github_issue_number')
+    receipt_result = subprocess.run([
+        'python3', os.path.expanduser('~/.claude/scripts/sweetclaude/evidence.py'), 'write',
+        '--project-dir', '.',
+        '--subject-id', issue_id,
+        '--receipt-type', 'external-close',
+        '--check', 'github-closed-state',
+        '--status', 'pass',
+        '--command', f'gh issue view {gh_number} --json state',
+        '--summary', f'GitHub issue {gh_number} is closed'
+    ], capture_output=True, text=True, check=True)
+    receipt = json.loads(receipt_result.stdout)['receipt']
     subprocess.run(['python3', os.path.expanduser('~/.claude/scripts/sweetclaude/status.py'), 'set-terminal',
         '--file', str(path), '--status', 'done',
-        '--actor', 'project-gh-sync-issues', '--project-dir', '.'])
+        '--actor', 'project-gh-sync-issues', '--project-dir', '.',
+        '--evidence-receipt', receipt])
 ```
 
 # GitHub Issues — Sync

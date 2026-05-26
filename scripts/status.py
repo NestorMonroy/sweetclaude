@@ -361,6 +361,21 @@ def _check_completion_criteria(fm: dict, filepath: str) -> None:
         )
 
 
+
+
+def _validate_completion_receipt(receipt_path: str | None, subject_id: str) -> None:
+    if not receipt_path:
+        raise ValueError(
+            "Cannot mark done without evidence. Run sweetclaude:code-verify "
+            "or provide --evidence-receipt PATH."
+        )
+    try:
+        from evidence import validate_receipt
+    except ImportError as exc:
+        raise ValueError("Evidence validator unavailable; cannot mark done safely") from exc
+    validate_receipt(receipt_path, subject_id=subject_id)
+
+
 def _dest_dir_for_terminal(filepath: Path) -> Path:
     parts = filepath.parts
     parent = filepath.parent
@@ -413,7 +428,16 @@ def _reopen_file(filepath: str) -> Path:
     return dest_path
 
 
-def set_terminal(filepath: str, status: str, actor: str, project_dir: str | None = None, source: str | None = None, _from_sync: bool = False) -> None:
+def set_terminal(
+    filepath: str,
+    status: str,
+    actor: str,
+    project_dir: str | None = None,
+    source: str | None = None,
+    _from_sync: bool = False,
+    evidence_receipt: str | None = None,
+    require_evidence: bool = False,
+) -> None:
     if status not in TERMINAL_STATUSES:
         raise ValueError(
             f"set_terminal() requires a terminal status; {status!r} is not terminal. "
@@ -442,6 +466,10 @@ def set_terminal(filepath: str, status: str, actor: str, project_dir: str | None
 
     old_status = fm_check["status"]
     validate_transition(old_status, status, "issue")
+
+    entity = fm.get("id", path.stem)
+    if require_evidence and status == "done" and source != "auto" and not _from_sync:
+        _validate_completion_receipt(evidence_receipt, str(entity))
 
     item_type = fm.get("type")
     if not _from_sync and item_type in ("epic", "milestone") and status == "done":
@@ -488,7 +516,6 @@ def set_terminal(filepath: str, status: str, actor: str, project_dir: str | None
         raise RuntimeError(f"Move failed; rolled back: {e}") from e
 
     pd = _resolve_project_dir(filepath, project_dir)
-    entity = fm.get("id", path.stem)
     try:
         file_rel = str(dest_path.relative_to(pd))
     except ValueError:
@@ -519,6 +546,13 @@ def main(argv: list[str] | None = None) -> int:
     p_terminal.add_argument("--actor", default=None)
     p_terminal.add_argument("--project-dir", default=None)
     p_terminal.add_argument("--source", choices=["manual", "auto"], default=None)
+    p_terminal.add_argument("--evidence-receipt", default=None)
+    p_terminal.add_argument(
+        "--allow-missing-evidence",
+        action="store_true",
+        default=False,
+        help="Bypass completion evidence requirement for non-done terminal statuses or explicit emergency use.",
+    )
 
     p_validate = sub.add_parser("validate")
     p_validate.add_argument("--status", required=True)
@@ -545,7 +579,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "set-terminal":
         try:
-            set_terminal(args.file, args.status, args.actor, project_dir=args.project_dir, source=args.source)
+            set_terminal(
+                args.file,
+                args.status,
+                args.actor,
+                project_dir=args.project_dir,
+                source=args.source,
+                evidence_receipt=args.evidence_receipt,
+                require_evidence=not args.allow_missing_evidence,
+            )
             print(json.dumps({"status": args.status, "file": args.file}))
             return 0
         except Exception as e:

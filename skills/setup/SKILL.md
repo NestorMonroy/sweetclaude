@@ -173,6 +173,17 @@ import pathlib, yaml, datetime, tempfile, os
 
 today = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
 
+# 0. Keep recovery snapshots and manifests out of source control
+gitignore_path = pathlib.Path('.gitignore')
+ignore_entry = '.sweetclaude/state/recovery-runs/'
+ignore_comment = '# SweetClaude recovery snapshots and manifests'
+existing_lines = gitignore_path.read_text().splitlines() if gitignore_path.exists() else []
+if ignore_entry not in existing_lines:
+    with gitignore_path.open('a', encoding='utf-8') as f:
+        if existing_lines and existing_lines[-1] != '':
+            f.write('\n')
+        f.write(f'{ignore_comment}\n{ignore_entry}\n')
+
 # 1. Write artifact-privacy.yaml with v4 base_path
 privacy_path = pathlib.Path('.sweetclaude/state/artifact-privacy.yaml')
 privacy_path.parent.mkdir(parents=True, exist_ok=True)

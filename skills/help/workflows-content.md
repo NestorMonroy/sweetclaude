@@ -6,7 +6,7 @@ SweetClaude has deep coverage across the full project lifecycle — from discove
 
 For those who want to go deeper, skills compose into dynamic, situation-driven workflows — a feature build, for example, chains spec generation, isolated test writing, a multi-angle QA review, and implementation into a single pipeline. Workflows adapt to the project rather than following a fixed script.
 
-The full inventory is in the skills reference: https://github.com/carson-sweet/sweetclaude/blob/main/docs/user-guide/skills-reference.md
+The full inventory is in the skills reference: https://github.com/carson-sweet/sweetclaude/blob/main/docs/user-guide/index.md
 
 ## Option 3a — View all skills by phase
 

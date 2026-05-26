@@ -21,28 +21,13 @@ Fetch the latest SweetClaude and sync it to all installed locations.
 Ensure the versionless framework path is populated, clear any previous update decline (running `/sweetclaude:update` is explicit re-engagement), and emit the runner path for later steps.
 
 ```bash
-PREFLIGHT="$HOME/.claude/scripts/sweetclaude/preflight.sh"
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "$CLAUDE_PLUGIN_ROOT/scripts/preflight.sh" ]; then
-  mkdir -p ~/.claude/scripts/sweetclaude
-  rsync -a "$CLAUDE_PLUGIN_ROOT/scripts/" ~/.claude/scripts/sweetclaude/ 2>/dev/null || true
-  PREFLIGHT="$CLAUDE_PLUGIN_ROOT/scripts/preflight.sh"
-elif [ ! -f "$PREFLIGHT" ]; then
+if [ ! -f ~/.claude/scripts/sweetclaude/preflight.sh ]; then
   IP=$(python3 -c "
 import json, os
 try:
     d = json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json')))
-    entries = []
-    for plugin_key, versions in d.get('plugins', {}).items():
-        if 'sweetclaude' not in str(plugin_key).lower() or not isinstance(versions, list):
-            continue
-        for e in versions:
-            if e.get('scope') != 'user':
-                continue
-            version = str(e.get('version') or '')
-            market = str(plugin_key).lower()
-            beta = 'beta' in market or '-' in version or version.lstrip('v').startswith('4.')
-            if beta:
-                entries.append(e)
+    entries = [e for versions in d.get('plugins', {}).values()
+               for e in versions if e.get('scope') == 'user']
     entries.sort(key=lambda e: e.get('lastUpdated', ''), reverse=True)
     for e in entries:
         ip = e.get('installPath', '')
@@ -57,12 +42,34 @@ except Exception:
     rsync -a "$IP/scripts/" ~/.claude/scripts/sweetclaude/ 2>/dev/null || true
   fi
 fi
-if [ -f "$PREFLIGHT" ]; then
-  eval "$(bash "$PREFLIGHT" --from-update 2>/dev/null)"
-fi
+eval "$(bash ~/.claude/scripts/sweetclaude/preflight.sh --from-update 2>/dev/null)"
 ```
 
 `DECLINE_CLEARED=true` if the project's `framework.update.declined` was cleared. `RUNNER` is set for use in Step 6b. `SC_PLUGIN_CHANNEL`, `SC_PLUGIN_EXPECTED_REF`, `SC_PLUGIN_KEY`, `SC_PLUGIN_INSTALL_PATH`, `SC_PLUGIN_VERSION`, and `SC_PLUGIN_GIT_SHA` are emitted by the deterministic plugin-state helper and are the source of truth for channel-safe update decisions. If the user picks "Not now" later, `declined` will be re-set to the specific version declined (per Gap #1's version-aware decline rule).
+
+If `SC_PLUGIN_STALE_BETA=true`, print this message with the variables substituted, then stop before any project
+maintenance, migration, doctor, setup, or recovery routing:
+
+```
+SweetClaude beta plugin update required.
+──────────────────────────────────────
+Installed plugin: {SC_PLUGIN_KEY}
+Installed version: {SC_PLUGIN_VERSION}
+Minimum safe beta: {SC_PLUGIN_MIN_SAFE_BETA_VERSION}
+
+Run this Claude Code command:
+{SC_PLUGIN_UPDATE_COMMAND}
+
+Then restart Claude Code and run:
+/sweetclaude:update
+
+Stopping here because this installed beta is old enough to have unsafe
+update/recovery behavior. No project files were changed.
+```
+
+Do not invoke `/sweetclaude:update`, `/sweetclaude:doctor`,
+`/sweetclaude:recover`, `/sweetclaude:migrate`, `_migrate`, setup, purge, or
+any project-mutating skill from this stale-beta stop path.
 
 ---
 
@@ -136,22 +143,21 @@ except: print('')
 " 2>/dev/null)
 ```
 
-If `REPO_PATH` is non-empty AND `$REPO_PATH/package.json` exists AND the repo has a remote matching the repository URL, fetch from origin. Use the local repo only when its current branch exactly matches `$EXPECTED_REF`. If the local repo is on any other branch, print a warning and ignore it for this update so beta users cannot be updated from main and stable users cannot be updated from beta:
+If `REPO_PATH` is non-empty AND `$REPO_PATH/package.json` exists AND the repo has a remote matching the repository URL, fetch from origin. Use the local repo only when its current branch exactly matches `$EXPECTED_REF`. If the local repo is on any other branch, print a warning and ignore it for this update so beta users cannot be updated from main or stable users from beta:
 
 ```bash
+git -C "$REPO_PATH" fetch origin
 LOCAL_BRANCH=$(git -C "$REPO_PATH" branch --show-current 2>/dev/null || true)
 if [ "$LOCAL_BRANCH" != "$EXPECTED_REF" ]; then
   echo "Ignoring local SweetClaude repo for update: branch $LOCAL_BRANCH does not match channel ref $EXPECTED_REF"
   REPO_PATH=""
-elif git -C "$REPO_PATH" fetch origin; then
-  git -C "$REPO_PATH" log --oneline -1
 else
-  echo "Could not reach GitHub to check for remote updates — proceeding with local repo state."
+  git -C "$REPO_PATH" log --oneline -1
 fi
 ```
 
-- If the local branch matches `$EXPECTED_REF`: use `$REPO_PATH` as SOURCE_DIR. The local repo may be ahead of GitHub on that channel branch — that is intentional and correct. Skip to Step 3.
-- If fetch fails (network error): proceed with the same branch-checked local repo state. Do not use a local repo from another branch.
+- If fetch succeeds and the local branch matches `$EXPECTED_REF`: use `$REPO_PATH` as SOURCE_DIR. The local repo may be ahead of GitHub on that channel branch — that is intentional and correct. Skip to Step 3.
+- If fetch fails (network error): warn ("Could not reach GitHub to check for remote updates — proceeding with local repo state.") and use `$REPO_PATH` as SOURCE_DIR. Skip to Step 3.
 
 ### 2b: GitHub (standard user workflow)
 
@@ -176,89 +182,6 @@ Use `$TMPDIR/sweetclaude` as SOURCE_DIR.
 
 ---
 
-## Step 2c: Prerelease check (STORY-050)
-
-Before comparing versions for the channel update, check if any prerelease tags are newer than the installed version. Stable installs ignore prereleases; beta installs can opt into newer prerelease tags.
-
-```bash
-INSTALLED_VERSION="$installed_version"
-
-# Read prerelease_declined from this project's sweetclaude.yaml (if present —
-# project-level declines persist across update runs in that project only).
-DECLINED_PRERELEASE=$(python3 -c "
-import yaml
-try:
-    d = yaml.safe_load(open('.sweetclaude/state/sweetclaude.yaml')) or {}
-    print((d.get('framework') or {}).get('update', {}).get('prerelease_declined', '') or '')
-except Exception:
-    pass
-" 2>/dev/null)
-
-PRERELEASE_OUT=$(python3 ~/.claude/scripts/sweetclaude/maintenance/check-prerelease.py \
-    --installed-version "$INSTALLED_VERSION" \
-    --declined "$DECLINED_PRERELEASE" \
-    --repo-dir "$SOURCE_DIR" 2>/dev/null)
-
-SHOULD_PROMPT=$(echo "$PRERELEASE_OUT" | python3 -c "import sys, json; print('true' if json.load(sys.stdin).get('should_prompt') else 'false')")
-PRERELEASE_TAG=$(echo "$PRERELEASE_OUT" | python3 -c "import sys, json; v=json.load(sys.stdin).get('prerelease_available'); print(v if v else '')")
-```
-
-If `SHOULD_PROMPT` is `true`, present **AskUserQuestion**:
-
-> ⚠ **SweetClaude {PRERELEASE_TAG} is available as a prerelease.**
->
-> Prereleases are not final. They may contain bugs that have not yet been caught and may change in incompatible ways before the final release. Real-world usage helps surface issues — but if you need stability for production work, wait for the final release.
->
-> - Currently installed: `{INSTALLED_VERSION}`
-> - Available prerelease: `{PRERELEASE_TAG}`
-
-Options:
-- **Install the prerelease** — pull and install from the `{PRERELEASE_TAG}` tag instead of the channel branch
-- **Wait for the final release** — record the decline and proceed with the normal channel update flow
-
-On **Install the prerelease**:
-```bash
-# Ensure TMPDIR is set — Step 2a (local repo path) doesn't create one, so we
-# need a fresh tempdir here regardless of which Step 2 path ran.
-TMPDIR="${TMPDIR:-$(mktemp -d)}"
-mkdir -p "$TMPDIR"
-rm -rf "$TMPDIR/sweetclaude"
-
-# Resolve the repo URL: prefer the source dir's remote, fall back to canonical GitHub URL.
-REPO_URL=$(git -C "$SOURCE_DIR" config --get remote.origin.url 2>/dev/null || echo "https://github.com/carson-sweet/sweetclaude.git")
-
-# Re-fetch source at the prerelease tag specifically (overrides Step 2a/2b result).
-git clone --branch "$PRERELEASE_TAG" --depth 1 "$REPO_URL" "$TMPDIR/sweetclaude"
-SOURCE_DIR="$TMPDIR/sweetclaude"
-PRERELEASE_INSTALL=true
-NEW_VERSION_LABEL="$PRERELEASE_TAG"
-```
-
-On **Wait for the final release**:
-```bash
-# Record the decline so this specific prerelease tag won't re-prompt every update.
-# A newer prerelease tag (e.g. v4.0.0-beta2) will still prompt.
-python3 -c "
-import yaml, os, tempfile
-p = '.sweetclaude/state/sweetclaude.yaml'
-if os.path.exists(p):
-    d = yaml.safe_load(open(p)) or {}
-    d.setdefault('framework', {}).setdefault('update', {})['prerelease_declined'] = '$PRERELEASE_TAG'
-    with tempfile.NamedTemporaryFile('w', dir=os.path.dirname(p), suffix='.tmp', delete=False) as t:
-        yaml.safe_dump(d, t, default_flow_style=False, sort_keys=False)
-        tn = t.name
-    os.replace(tn, p)
-"
-PRERELEASE_INSTALL=false
-```
-
-Set `PRERELEASE_INSTALL=false` if `SHOULD_PROMPT` was false (no prerelease available or already declined).
-
-After Step 2c: continue to Step 3.
-
----
-
-
 ## Step 3: Compare versions
 
 When SOURCE_DIR is the local repo (came from Step 2a), compare against `origin/$EXPECTED_REF` — not local `HEAD` and not `origin/HEAD` — so the current install channel is preserved and commits on the matching channel branch are detected. If origin is ahead of local HEAD, pull before syncing:
@@ -270,7 +193,7 @@ if [ "$SOURCE_DIR" = "$CONFIGURED_REPO" ]; then
   EFFECTIVE_SHA=$(git -C $SOURCE_DIR rev-parse "origin/$EXPECTED_REF")
   LOCAL_SHA=$(git -C $SOURCE_DIR rev-parse HEAD)
   if [ "$EFFECTIVE_SHA" != "$LOCAL_SHA" ]; then
-    git -C $SOURCE_DIR pull --ff-only origin "$EXPECTED_REF"
+    git -C $SOURCE_DIR pull --ff-only origin
   fi
 else
   EFFECTIVE_SHA=$(git -C $SOURCE_DIR rev-parse HEAD)
@@ -509,13 +432,18 @@ plugin-state helper. Do not hand-edit JSON and do not hard-code
 ```bash
 NEW_SHA=$(git -C "$SOURCE_DIR" rev-parse HEAD)
 NEW_VER=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$SOURCE_DIR/package.json")
-SYNC_TARGET="$installPath"
-python3 ~/.claude/scripts/sweetclaude/maintenance/plugin-state.py   --project-dir .   repair   --plugin-key "$PLUGIN_KEY"   --install-path "$SYNC_TARGET"   --version "$NEW_VER"   --sha "$NEW_SHA"
+SYNC_TARGET="${VERSION_DIR:-$installPath}"
+python3 ~/.claude/scripts/sweetclaude/maintenance/plugin-state.py \
+  --project-dir . \
+  repair \
+  --plugin-key "$PLUGIN_KEY" \
+  --install-path "$SYNC_TARGET" \
+  --version "$NEW_VER" \
+  --sha "$NEW_SHA"
 ```
 
 This repairs stale existing-user metadata: `lastUpdated`, `gitCommitSha`,
 `version`, and `installPath` all move to the just-synced channel version.
-
 
 ---
 
@@ -528,7 +456,7 @@ rm -rf "$TMPDIR"
 
 Run a final diff to confirm sync:
 ```bash
-SYNC_TARGET="${SYNC_TARGET:-$installPath}"
+SYNC_TARGET="${VERSION_DIR:-{installPath}}"
 diff -rq $SOURCE_DIR/skills/ "$SYNC_TARGET/skills/" 2>/dev/null
 diff -rq $SOURCE_DIR/skills/ ~/.claude/skills/sweetclaude/ 2>/dev/null
 diff -rq $SOURCE_DIR/scripts/ "$SYNC_TARGET/scripts/" 2>/dev/null
@@ -538,41 +466,69 @@ Continue to Step 6b. The user-facing success report is deferred until Step 6b co
 
 ---
 
-## Step 6b: Project-state drift detection
+## Step 6b: Project-state drift detection and safety routing
 
-Update does not run
-project-state migrations inline. Framework sync and project-state mutation are deliberately decoupled: update may report drift, but the owning doctor/recovery flow decides what to do next.
+This beta update path syncs framework files only. It does not run
+project-state migrations inline.
 
-Only run this scan if `.sweetclaude/state/sweetclaude.yaml` exists in the current project directory. Update can be run from any directory.
+Steps 6b, 6b1, and 6b2 are read-only project checks. If any project drift or
+legacy taxonomy state is detected, report it and route to `/sweetclaude:doctor`
+or `/sweetclaude:recover`. Do not invoke `_migrate`, `purge`, `adopt`, or any
+layout-specific migration from `/sweetclaude:update`.
+
+Only run if `.sweetclaude/state/sweetclaude.yaml` exists in the current project directory — skip silently otherwise. (Update can be run from any directory; this step only applies when run from inside a SweetClaude project.)
+
+After the framework sync, the registry on disk may declare schema versions newer
+than this project's state files. Surface that immediately, without persisting
+drift markers or mutating project state.
+
+Parse the runner's stdout directly. Do NOT read `pending-drift-decision.yaml` —
+that marker is written by `drift-gate.sh` at session start and represents
+pre-update state. The fresh stdout from the just-synced runner is authoritative
+for this step.
 
 ```bash
 DRIFT_COUNT=0
 if [ -f .sweetclaude/state/sweetclaude.yaml ] && [ -n "$RUNNER" ] && [ -f "$RUNNER" ]; then
-  DRIFT_JSON=$(python3 "$RUNNER" --project-dir . --scan-drift --persist 2>/dev/null || echo '[]')
-  DRIFT_COUNT=$(printf '%s
-' "$DRIFT_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); xs=d if isinstance(d,list) else d.get('findings',[]); print(sum(1 for x in xs if x.get('needs_migration')))" 2>/dev/null || echo 0)
+  DRIFT_OUTPUT=$(python3 "$RUNNER" --project-dir . --scan-drift 2>/dev/null)
+  DRIFT_COUNT=$(printf '%s\n' "$DRIFT_OUTPUT" | grep -c '\[DRIFT\]' | tr -d ' ')
 fi
 echo "DRIFT_COUNT=$DRIFT_COUNT"
 ```
 
-If `DRIFT_COUNT` is 0, print the success report with `✓ Project: clean`.
+If `DRIFT_COUNT` is 0: continue to Step 6b1. Do not remove or rewrite any
+project state marker from update.
 
-If `DRIFT_COUNT` is greater than 0, print:
+If `DRIFT_COUNT > 0`: do NOT print the success report. The framework files were
+synced, but this project needs a separate migration/recovery decision. Print
+the halt diagnostic:
 
 ```
-SweetClaude framework files were updated.
-Project-state migration is not run inline.
+SweetClaude update PARTIAL.
+═══════════════════════════
+
+✓ Version:    {old_version} → {new_version}  (framework synced)
+✗ Project:    {DRIFT_COUNT} state file(s) need migration review
+
 No project files were changed by update.
-Run /sweetclaude:doctor for the maintenance route.
+Run /sweetclaude:doctor for a read-only diagnostic, or /sweetclaude:recover if
+doctor/status reports a recoverable migration/update state.
+
+Drift details:
+  {Print the DRIFT lines from $DRIFT_OUTPUT}
+
+→ The framework is at v{new_version}. Project state was not migrated inline.
 ```
 
-Do not write `doctor-prompt-pending.json` from update. Do not execute its project skill-state migration from update.
+Stop. Do NOT continue to Step 7.
+
+---
 
 ## Step 6b1: Orphan file scan
 
 Only run if `.sweetclaude/state/sweetclaude.yaml` exists in the current project directory — skip silently otherwise.
 
-Scan for work item files that may have been lost, abandoned, or orphaned from previous SweetClaude versions — files in typed subdirectories (retired in 4.1.0), scratch/, or other locations the primary migration wouldn't find. Recovering them here means Step 6b2's taxonomy scan picks them up automatically.
+Scan for work item files that may have been lost, abandoned, or orphaned from previous SweetClaude versions — files in typed subdirectories (retired in 4.1.0), scratch/, or other locations the primary migration wouldn't find. This scan is report-only from update.
 
 ```bash
 ORPHAN_COUNT=0
@@ -658,7 +614,7 @@ Then continue to Step 6c. Do not write `doctor-prompt-pending.json`.
 
 ---
 
-## Step 6c: Success report (only reached when project state is verified clean)
+## Step 6c: Success report (only reached when read-only project checks are clean)
 
 ```
 SweetClaude updated.
@@ -668,17 +624,14 @@ SweetClaude updated.
 ✓ Commit:     {old_sha_short} → {new_sha_short}
 ✓ Files:      {total count} synced across skills, rules, hooks, config, agents
 ✓ Hooks:      {only include this line if Step 4b reported cleaned: entries}
-✓ Project:    {clean | clean (verified post-migrate)}
+✓ Project:    clean
 
 → Restart Claude Code to use this update — skills are loaded at session start
   and are not updated in the current session.
 ```
 
-The `✓ Project:` line wording depends on which Step 6b exit path was taken:
-- DRIFT_COUNT=0 on first check → `clean`
-- _migrate ran and POST_MIGRATE_COUNT=0 → `clean (verified post-migrate)`
-
-Print exactly one of those two; do not print the literal text `clean OR clean (verified post-migrate)`.
+Print exactly `✓ Project:    clean`. Do not print `clean (verified post-migrate)`
+because update does not run project migrations inline.
 
 If `NEW_SKILLS` (from Step 4) is non-empty, append this block after the success report — one line per new skill:
 
@@ -689,34 +642,48 @@ New skills added (not available until restart):
 
 Do not mention any `/sweetclaude:` command as something the user can run now. Do not ask "Want to run it?" or offer to invoke any skill. The current session does not have the updated skill set.
 
-Do not write `doctor-prompt-pending.json` from update. No project files were changed by update. Continue to Step 7.
+After printing the template (and the new-skills block if applicable), continue
+to Step 7. Do not write `doctor-prompt-pending.json` from update.
 
 ---
 
 ## Step 7: Surface capabilities
 
-Read [capability-surface.md](capability-surface.md) and execute it in full.
+Read [capability-surface.md](capability-surface.md) for the "What's new in this
+update" section only. Do not execute its project skill-state migration,
+bootstrap, or onboarding sections from update.
 
 
 ---
 
 ## Step 7b: Feature configuration check
 
-Skip feature configuration from update. Feature setup is project mutation and belongs to doctor/setup, not framework update.
+Skip feature configuration from update. Feature setup is project mutation and
+belongs in a separate doctor/setup flow with a plan and explicit approval.
+
+---
 
 ## Step 7c: Configure plan directory
 
-Skip plan-directory configuration from update. Plan directory repair is project mutation and belongs to doctor/setup, not framework update.
+Skip plan-directory configuration from update. Do not write project settings
+from update.
+
+---
 
 ## Step 8: Project-state migration is not run inline
 
-Project-state migration is not run inline by update. The framework may be synced while the current project still has drift; the success report must say so and point to `/sweetclaude:doctor`.
+The current project is not migrated inline after framework sync. Other projects
+the user opens must be classified by bootstrap/status/recover guards before any
+mutation-capable migration path runs.
 
-Disabled from update:
-- project-state migration commands
-- purge or re-onboarding commands
-- plan-directory configuration
-- feature configuration
+Rationale:
+
+- Framework sync and project-state mutation must stay operationally independent.
+- Update may report that project migration or recovery is needed, but must not
+  perform it inline.
+- Project mutation requires a dedicated safety path with diagnosis, plan,
+  snapshot, approval, execution manifest, verification, and rollback or
+  fail-closed behavior.
 
 ---
 
@@ -729,4 +696,6 @@ Disabled from update:
 - **Always clean up temp directories**, even on failure.
 - **Do not touch ~/.claude/settings.json.** Hook wiring is handled by install.sh.
 - **Do not modify ~/CLAUDE.md.** Also handled by install.sh.
-- **This does not affect per-project .sweetclaude/ directories.** Only the global framework.
+- **Do not mutate per-project `.sweetclaude/` directories from update except for
+  explicit user decline state in the major-version gate.** Framework sync is
+  global; project migration/recovery is separate.

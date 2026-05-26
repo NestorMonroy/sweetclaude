@@ -11,7 +11,7 @@ This skill is a thin orchestrator. The deterministic migration operations
 `tests/test-migrate-v3-to-v4.sh`. The skill owns: lock/backup, user prompts,
 preview rendering, failure handling.
 
-## Step 1: Lock & backup
+## Step 0: Read-only safety preflight
 
 ```bash
 SCRIPT=~/.claude/scripts/sweetclaude/migrate/migrate-v3-to-v4.py
@@ -23,6 +23,21 @@ if [ -z "$SCRIPT" ] || [ ! -f "$SCRIPT" ]; then
   exit 1
 fi
 
+PREFLIGHT_OUT=$(python3 "$SCRIPT" preflight --project-dir .)
+echo "$PREFLIGHT_OUT"
+MIGRATE_ALLOWED=$(echo "$PREFLIGHT_OUT" | python3 -c "import sys, json; print('true' if json.load(sys.stdin).get('migrate_allowed') else 'false')")
+if [ "$MIGRATE_ALLOWED" != "true" ]; then
+  echo "Migration is blocked for this project layout. Run /sweetclaude:recover or follow the preflight recommendation above."
+  exit 1
+fi
+```
+
+Do not create `migration.lock`, backups, copied files, or migration maps unless
+preflight returns `migrate_allowed: true`.
+
+## Step 1: Lock & backup
+
+```bash
 PRODUCT_BASE=$(python3 "$SCRIPT" resolve-base --project-dir . | python3 -c "import sys, json; print(json.load(sys.stdin)['product_base'])")
 V3_BACKLOG="${PRODUCT_BASE}/backlog"
 

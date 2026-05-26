@@ -16,7 +16,7 @@ from typing import Any
 
 PRERELEASE_RE = re.compile(r"-([A-Za-z]+)")
 VERSION_MAJOR_RE = re.compile(r"^v?(\d+)")
-MIN_SAFE_BETA_VERSION = "4.1.2-beta"
+MIN_SAFE_BETA_VERSION = "4.1.9-beta"
 
 
 def _plugins_path(home: Path) -> Path:
@@ -122,7 +122,7 @@ def _entry_matches_project(entry: dict[str, Any], project_dir: Path | None) -> b
 
 
 def _collect_entries(
-    data: dict[str, Any], *, project_dir: Path | None, current_root: Path | None, prefer_channel: str | None
+    data: dict[str, Any], *, project_dir: Path | None, current_root: Path | None
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for plugin_key, versions in data.get("plugins", {}).items():
@@ -152,8 +152,6 @@ def _collect_entries(
                         score += 1000
                 except OSError:
                     pass
-            if prefer_channel and row["channel"] == prefer_channel:
-                score += 500
             if entry.get("scope") == "user":
                 score += 100
             if entry.get("scope") == "local":
@@ -166,10 +164,10 @@ def _collect_entries(
     return rows
 
 
-def inspect_state(home: Path, project_dir: Path | None, current_root: Path | None, prefer_channel: str | None = None) -> dict[str, Any]:
+def inspect_state(home: Path, project_dir: Path | None, current_root: Path | None) -> dict[str, Any]:
     path = _plugins_path(home)
     data = _load(path)
-    rows = _collect_entries(data, project_dir=project_dir, current_root=current_root, prefer_channel=prefer_channel)
+    rows = _collect_entries(data, project_dir=project_dir, current_root=current_root)
     selected = rows[0] if rows else None
     if not selected:
         return {
@@ -298,7 +296,6 @@ def main(argv: list[str] | None = None) -> int:
 
     p_inspect = sub.add_parser("inspect")
     p_inspect.add_argument("--current-root", type=Path, default=None)
-    p_inspect.add_argument("--prefer-channel", choices=["stable", "beta"], default=None)
     p_inspect.add_argument("--shell", action="store_true")
 
     p_repair = sub.add_parser("repair")
@@ -310,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.cmd == "inspect":
-            result = inspect_state(args.home, args.project_dir, args.current_root, args.prefer_channel)
+            result = inspect_state(args.home, args.project_dir, args.current_root)
             if args.shell:
                 _emit_shell(result)
             else:
