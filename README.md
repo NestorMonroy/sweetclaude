@@ -2,7 +2,7 @@
 
 # SweetClaude
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.1.12--beta-blue)](https://github.com/carson-sweet/sweetclaude/releases/tag/v4.1.12-beta) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/behavioral-contracts.md)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.1.12--beta-blue)](https://github.com/carson-sweet/sweetclaude/releases/tag/v4.1.12-beta) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/4.x-beta/behavioral-contracts.md)
 
 ## TL;DR
 
@@ -26,7 +26,7 @@ To intentionally install the 4.x beta channel, add and install the beta plugin c
 
 A software development partner for the full project lifecycle — from the first idea through design, implementation, testing, and ship. SweetClaude teaches itself about your project and preferences through conversation, then applies those learnings to deal with the less-fun parts of the project.
 
-SweetClaude works well when structure, traceability, and product thinking is valued over raw coding speed. It's the wrong tool if you **just** want to go faster — we suggest [GStack](https://github.com/garry-tan/gstack) if speed is your primary goal. It was built for software development, but has also been used successfully for academic research, product marketing strategy, and other knowledge-intensive work. 
+SweetClaude works well when structure, traceability, and product thinking is valued over raw coding speed. It's the wrong tool if you **just** want to go faster — we suggest [GStack](https://github.com/garry-tan/gstack) if speed is your primary goal. It was built for software development, but has also been used successfully for academic research, product marketing strategy, and other knowledge-intensive work.
 
 *EXPERIMENTAL: If you want fast and disciplined, there is the experimental (and therefore potentially unpredictable) [John Wick mode](#operating-modes).*
 
@@ -83,7 +83,7 @@ Use `/sweetclaude:go` followed by what you want to do, in plain English — "sho
 
 You can use SweetClaude to start a new effort from scratch, or have it adopt an existing project. Just point to any documents you might have — backlog, roadmaps, design, etc. — it will assess and migrate what you have and then help you fill in the gaps.
 
-A few other key commands to know about are: 
+A few other key commands to know about are:
 
 * `/sweetclaude:help` — the guided tour. Walks you through what SweetClaude is, how it works, and whether it's right for your project before touching a single file.
 * `/sweetclaude:status` — project dashboard. Active work item, phase, roadmap, backlog, recent commits at a glance.
@@ -92,15 +92,15 @@ A few other key commands to know about are:
 
 We've tried to design SweetClaude to be intuitive, but additional documentation is available if needed or desired:
 
-→ [Full install options, updating, uninstalling](docs/user-guide/install.md)
+→ [Stable 3.x install, update, and uninstall](docs/user-guide/3.x/install.md)
 
-→ [Stable 3.x and 4.x beta guide tracks](docs/user-guide/index.md#choose-your-track)
+→ [4.x beta guide, update, migration, and rescue](docs/user-guide/4.x-beta/index.md)
 
-→ [First session walkthrough](docs/user-guide/quickstart.md)
+→ [Choose the right user-guide track](docs/user-guide/index.md)
 
-→ [Full user guide](docs/user-guide/index.md) 
+→ [First stable session walkthrough](docs/user-guide/3.x/quickstart.md)
 
-→ [Full skills reference](docs/user-guide/skills-reference.md) 
+→ [Full skills reference by track](docs/user-guide/index.md)
 
 
 
@@ -130,7 +130,7 @@ SweetClaude has four operating modes that support everything from vibe-coding ho
 
 Switch modes at any time with `/sweetclaude:project-mode`. SweetClaude snapshots your current state before any transition. It's also best to take a Git snapshot for belt-and-suspenders safety - SweetClaude can do that for you too, as well as roll things back if needed. Just tell SweetClaude what you need to do.
 
- 
+
 
 ## Major Features
 
@@ -151,13 +151,13 @@ SweetClaude is implemented as a Claude Code plugin. After install, all skills ar
 
 TDD hooks physically block test file modification during implementation and run tests automatically after every source edit. At higher TDD levels, test writer and implementer are separate AI agents — the implementer never sees the spec, only failing tests.
 
-→ [Full architecture and design decisions](docs/user-guide/how-it-works.md)
+→ [Full architecture and design decisions](docs/user-guide/index.md)
 
 
 
 ## Common Commands
 
-You can invoke skills directly if you know what you want. These are the most common. You can also refer to the [complete skills reference](docs/user-guide/skills-reference.md).
+You can invoke skills directly if you know what you want. These are the most common. You can also refer to the [complete skills reference](docs/user-guide/index.md).
 
 ### Primary
 | Command | What it does |
@@ -174,12 +174,12 @@ You can invoke skills directly if you know what you want. These are the most com
 | `/sweetclaude:update` | Sync SweetClaude framework files inside the installed channel |
 | `/sweetclaude:doctor` | Diagnostic scan and maintenance front door |
 | `/sweetclaude:recover` | Recover stuck update, doctor, repair, or unsafe migration states |
-| `/sweetclaude:hook-repair` | Restore broken installed hooks from backup. Uses Bash only — works when Write/Edit are blocked. See [hook-development.md](docs/user-guide/hook-development.md) for manual and emergency procedures. |
+| `/sweetclaude:hook-repair` | Restore broken installed hooks from backup. Uses Bash only — works when Write/Edit are blocked. See [hook-development.md](docs/user-guide/4.x-beta/hook-development.md) for manual and emergency procedures. |
 
 ### Advanced
 | Command | What it does |
 |---|---|
-| `/sweetclaude:behavioral-regression` | Run the 15-contract behavioral test suite — validates that the current model version honors SweetClaude's behavioral contracts. Run after any Claude model upgrade. **15/15 passing on claude-sonnet-4-6 (2026-05-01).** [Contract status by model version →](docs/user-guide/behavioral-contracts.md) · [Full contract list →](skills/behavioral-regression/SKILL.md) |
+| `/sweetclaude:behavioral-regression` | Run the 15-contract behavioral test suite — validates that the current model version honors SweetClaude's behavioral contracts. Run after any Claude model upgrade. **15/15 passing on claude-sonnet-4-6 (2026-05-01).** [Contract status by model version →](docs/user-guide/4.x-beta/behavioral-contracts.md) · [Full contract list →](skills/behavioral-regression/SKILL.md) |
 | `/sweetclaude:guardian-on` | Enable Protocol Guardian — enforces skill invocations and protocol steps for the session |
 | `/sweetclaude:guardian-off` | Disable Protocol Guardian |
 | `/sweetclaude:session-export` | Export a Claude.ai session as a structured document |
@@ -187,7 +187,7 @@ You can invoke skills directly if you know what you want. These are the most com
 
 Individual workflow skills (product, design, code, testing, corpus) are accessible directly if you know what you want, but `/sweetclaude:go` routes to all of them automatically.
 
-→ [All skills by category](docs/user-guide/skills-reference.md)
+→ [All skills by category](docs/user-guide/index.md)
 
 
 
@@ -197,7 +197,7 @@ Individual workflow skills (product, design, code, testing, corpus) are accessib
 |---|---|---|---|
 | [mcp-local-rag](https://www.npmjs.com/package/mcp-local-rag) | MIT | Optional | Local semantic search — per-project vector index, no external services |
 
-For dependency risk, failure modes, and contingency plans → [Platform Dependencies](docs/user-guide/platform-dependencies.md)
+For dependency risk, failure modes, and contingency plans → [Platform Dependencies](docs/user-guide/4.x-beta/platform-dependencies.md)
 
 
 
@@ -235,9 +235,9 @@ For skill improvements, documentation, walkthroughs, and examples — read [CONT
 
 ## Support
 
-If you're getting value from SweetClaude, consider [buying me a coffee](https://ko-fi.com/carsonsweet). 
+If you're getting value from SweetClaude, consider [buying me a coffee](https://ko-fi.com/carsonsweet).
 
-Which in reality means you're moving dollars from my coffee budget to [my dog Smushford's](http://instagram.com/smushford) treat budget. 
+Which in reality means you're moving dollars from my coffee budget to [my dog Smushford's](http://instagram.com/smushford) treat budget.
 
 Smushford thanks you.
 

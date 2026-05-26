@@ -1,35 +1,10 @@
 # SweetClaude 4.x Migration Guide
 
-This guide is for projects using the 4.x beta channel. If you are on stable 3.x,
-do not follow 4.x migration instructions unless you intentionally installed the
-4.x beta marketplace.
+This page has moved into the separate SweetClaude user-guide tracks. Choose the
+track that matches your installed plugin channel.
 
-The current full guide lives in the 4.x beta track:
+- [3.x stable: SweetClaude 4.x Migration Guide](3.x/v4-migration.md)
+- [4.x beta: SweetClaude 4.x Migration Guide](4.x-beta/v4-migration.md)
 
-- [4.x Migration and Recovery](4.x-beta/migration-and-recovery.md)
-- [4.x Beta Rescue](4.x-beta/beta-rescue.md)
-
-## Short Version
-
-Use this order:
-
-1. Update the Claude Code plugin package with `/plugin update`.
-2. Restart Claude Code.
-3. Run `/sweetclaude:update` to sync framework files.
-4. Run `/sweetclaude:doctor` in the project.
-5. Follow doctor's maintenance route.
-
-Do not start by running `/sweetclaude:migrate` on an unknown old project layout.
-
-## Routes
-
-| Doctor route | Next step |
-|---|---|
-| `recovery-available` | `/sweetclaude:recover` |
-| `supported-migration-available` | `/sweetclaude:migrate` |
-| `compatibility-mode` | Continue without migration prompt. |
-| `no-migration-recommended` | Continue normal work. |
-
-`/sweetclaude:migrate` is only for layouts that pass preflight. Unsafe typed
-legacy backlog directories and duplicate work-item IDs route to recovery instead
-of blind migration.
+Start from the [user-guide track chooser](index.md) if you are not sure which
+channel is installed.

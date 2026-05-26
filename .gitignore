@@ -24,8 +24,6 @@ restore-config.sh
 # docs/product/ contains real project backlog and roadmap data — never public
 /docs/product/
 
-# Internal strategy, plans, and design docs — never public
-/docs-internal/
 
 # Scratch, session artifacts, and personal setup docs
 /scratch/
