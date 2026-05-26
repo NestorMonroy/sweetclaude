@@ -51,6 +51,22 @@ Stable 3.x is the recommended channel for normal active project work.
 - Channel switching is explicit: install `sweetclaude@sweetclaude-beta` from
   `beta-4.x` if you intentionally want beta behavior.
 
+## [4.1.13-beta] — 2026-05-26
+
+### Fixed
+
+- Added a capability manifest as the central source for beta/stable channel
+  facts, release evidence requirements, supported project shapes, and guarded
+  maintenance capabilities.
+- Made update/preflight sync the manifest into the installed versionless
+  framework config and fail closed for beta installs when the manifest is
+  missing.
+- Routed Doctor, Recover, Migrate, and Release Gate through manifest-backed
+  capability checks so unsupported migrations remain report-only and mutation
+  commands require matching project shape, approval, and integrity evidence.
+- Hardened v3-to-v4 migration finalization and cleanup against forged completion
+  state by requiring execution manifests with file and migration-map hashes.
+
 ## [4.1.12-beta] — 2026-05-25
 
 ### Fixed
