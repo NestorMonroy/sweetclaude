@@ -48,6 +48,12 @@ user-personas:
   onboarded_at: ~
 YAML
 
+cat > "$TEST_TMPDIR/.sweetclaude/state/sweetclaude.yaml" << 'YAML'
+schema_version: 2
+framework:
+  installed_version: 3.68.6
+YAML
+
 # ---------------------------------------------------------------------------
 # Test 1: dry-run plan
 # ---------------------------------------------------------------------------

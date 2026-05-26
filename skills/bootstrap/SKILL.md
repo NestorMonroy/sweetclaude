@@ -19,13 +19,28 @@ State pre-loaded above. One read. Make a decision. Delegate.
 Ensure the versionless framework path is populated, then run the pre-flight helper.
 
 ```bash
-if [ ! -f ~/.claude/scripts/sweetclaude/preflight.sh ]; then
+PREFLIGHT="$HOME/.claude/scripts/sweetclaude/preflight.sh"
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "$CLAUDE_PLUGIN_ROOT/scripts/preflight.sh" ]; then
+  mkdir -p ~/.claude/scripts/sweetclaude
+  rsync -a "$CLAUDE_PLUGIN_ROOT/scripts/" ~/.claude/scripts/sweetclaude/ 2>/dev/null || true
+  PREFLIGHT="$CLAUDE_PLUGIN_ROOT/scripts/preflight.sh"
+elif [ ! -f "$PREFLIGHT" ]; then
   IP=$(python3 -c "
 import json, os
 try:
     d = json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json')))
-    entries = [e for versions in d.get('plugins', {}).values()
-               for e in versions if e.get('scope') == 'user']
+    entries = []
+    for plugin_key, versions in d.get('plugins', {}).items():
+        if 'sweetclaude' not in str(plugin_key).lower() or not isinstance(versions, list):
+            continue
+        for e in versions:
+            if e.get('scope') != 'user':
+                continue
+            version = str(e.get('version') or '')
+            market = str(plugin_key).lower()
+            beta = 'beta' in market or '-' in version or version.lstrip('v').startswith('4.')
+            if beta:
+                entries.append(e)
     entries.sort(key=lambda e: e.get('lastUpdated', ''), reverse=True)
     for e in entries:
         ip = e.get('installPath', '')
@@ -40,7 +55,9 @@ except Exception:
     rsync -a "$IP/scripts/" ~/.claude/scripts/sweetclaude/ 2>/dev/null || true
   fi
 fi
-eval "$(bash ~/.claude/scripts/sweetclaude/preflight.sh 2>/dev/null)"
+if [ -f "$PREFLIGHT" ]; then
+  eval "$(bash "$PREFLIGHT" 2>/dev/null)"
+fi
 ```
 
 `RUNNER` is now set (empty if not found). `SELF_HEAL=true` if the versionless path was just populated. `VERSION_DIR_HEALED=true` if the install directory was just repaired to a version-named path.
@@ -288,6 +305,7 @@ Read `framework.update.available`, `framework.update.declined`, and `framework.i
 
 - `available` is null → no offer.
 - `available` is non-null:
+  - If `installed_version` is stable and `available` is a prerelease, ignore it. Stable 3.x users must opt into beta through the beta marketplace channel.
   - Compute `is_major_bump = major(available) > major(installed_version)`.
   - If `is_major_bump` is true → **always prompt**, regardless of `declined`.
   - Else (minor/patch within installed major):
@@ -312,6 +330,8 @@ def major(v):
     return int(m.group(1)) if m else None
 
 if not available:
+    print("DECISION=silent"); sys.exit()
+if '-' in str(available) and '-' not in str(installed):
     print("DECISION=silent"); sys.exit()
 inst_maj, avail_maj = major(installed), major(available)
 if inst_maj is None or avail_maj is None:

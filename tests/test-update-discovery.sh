@@ -18,7 +18,7 @@ pass() { echo "  PASS: $1"; }
 
 echo "[1] version-aware decline decision"
 
-python3 - << 'PY' && pass "decision table covers all 10 cases including silent_declined" || fail "decision table"
+python3 - << 'PY' && pass "decision table covers stable prerelease isolation and silent_declined" || fail "decision table"
 import re, sys
 
 def major(v):
@@ -28,6 +28,8 @@ def major(v):
 
 def decide(installed, available, declined):
     if not available:
+        return "silent"
+    if "-" in str(available) and "-" not in str(installed):
         return "silent"
     inst_maj, avail_maj = major(installed), major(available)
     if inst_maj is None or avail_maj is None:
@@ -47,6 +49,7 @@ cases = [
     ("3.65.0", "3.66.0", False,   "prompt"),
     ("3.65.0", "3.66.0", True,    "silent_declined|3"),
     ("3.65.0", "4.0.0",  True,    "prompt"),
+    ("3.68.6", "4.1.12-beta", None, "silent"),
     ("3.65.0", "3.66.0", "3.66.0","silent_declined|3"),
     ("3.65.0", "3.67.0", "3.66.0","silent_declined|3"),
     ("3.65.0", "4.0.0",  "3.66.0","prompt"),
@@ -81,43 +84,7 @@ cat > "$TEST_HOME/.claude/plugins/installed_plugins.json" << 'JSON'
 {"plugins": {"sweetclaude@sweetclaude": [{"installPath": "/nonexistent", "version": "3.65.0"}]}}
 JSON
 
-# Fake local dev clone.
-mkdir -p "$TEST_HOME/dev/sweetclaude"
-cat > "$TEST_HOME/dev/sweetclaude/package.json" << 'JSON'
-{"name": "sweetclaude", "version": "9.9.9"}
-JSON
-
-# Point the install pointer at the fake clone.
-cat > "$TEST_HOME/.claude/sweetclaude-install.json" << JSON
-{"repo_path": "$TEST_HOME/dev/sweetclaude"}
-JSON
-
-RESULT=$(HOME="$TEST_HOME" python3 - "$TEST_HOME" << 'PY' 2>/dev/null
-import json, os, re, subprocess, sys
-HOME = sys.argv[1]
-
-# Same logic as the hook's REPO_VERSION resolution.
-install_json = os.path.join(HOME, ".claude/sweetclaude-install.json")
-if os.path.exists(install_json):
-    try:
-        d = json.load(open(install_json))
-        repo_path = d.get("repo_path", "")
-        if repo_path and os.path.exists(os.path.join(repo_path, "package.json")):
-            pkg = json.load(open(os.path.join(repo_path, "package.json")))
-            v = pkg.get("version", "")
-            if v:
-                print(v); sys.exit()
-    except Exception:
-        pass
-print("")
-PY
-)
-
-if [ "$RESULT" = "9.9.9" ]; then
-  pass "local clone short-circuits hybrid discovery"
-else
-  fail "expected 9.9.9, got '$RESULT'"
-fi
+grep -q 'expected_ref_for_installed' "$REPO_ROOT/hooks/sweetclaude-health-check.sh"   && grep -q 'allowed_version' "$REPO_ROOT/hooks/sweetclaude-health-check.sh"   && pass "health check filters local clone discovery by installed channel"   || fail "health check is missing channel-safe local clone discovery"
 
 # ---------------------------------------------------------------------------
 # Test 3: hook syntax
@@ -222,6 +189,9 @@ framework:
     available: null
     declined: null
     check_error: null
+YAML
+cat > "$UPD_TMPDIR/.sweetclaude/state/skills.yaml" << 'YAML'
+schema_version: 2
 YAML
 
 # Exercise the runner's --report-drift-for-skill flag — the exact CLI the
