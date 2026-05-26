@@ -1,7 +1,7 @@
 # How It Works
 
-**Version:** 1.3
-**Date:** 2026-05-05
+**Version:** 1.4
+**Date:** 2026-05-25
 
 This page is the mental model. It will not teach you any commands. It will explain why SweetClaude is shaped the way it is, so the rest of the docs make sense.
 
@@ -91,6 +91,32 @@ A bug fix does not need discovery. A data migration does not need user stories. 
 | `compressed` | DIAGNOSE → IMPLEMENT → SHIP → POST-MORTEM | Hotfixes |
 
 The work type determines the shape. You do not pick. When you describe the work to `/sweetclaude:find-skill` ("there is a bug in the auth flow"), the framework classifies it (`bug-fix`), reads the shape from config (`diagnostic`), and starts at DIAGNOSE. The diagnostic shape exists because you cannot fix what you cannot reproduce.
+
+---
+
+## 3.x Stable Operating Model
+
+3.x stable keeps the product model mostly in Markdown and YAML files under
+`.sweetclaude/`. The source of truth is the project state, decision log,
+assumption register, scope log, traceability files, and the product/project
+artifacts produced by the skills you use. There is no 4.x unified issue taxonomy
+and no derived SQLite roadmap cache in the stable guide.
+
+Framework update and project-state maintenance are still coupled more closely in
+3.x than in 4.x. The safe order is: update the Claude Code plugin package,
+restart Claude Code, then run `/sweetclaude:update` inside a SweetClaude project
+when framework files need syncing. Stable update can handle supported 3.x state
+migrations, including older `phase.yaml` and `skills.yaml` layouts.
+
+The main repair command in 3.x is `/sweetclaude:fix-sweetclaude`. It audits
+configuration, phase state, file locations, and empty registers, then proposes
+fixes. 3.x stable does not have the 4.x beta maintenance front door:
+`/sweetclaude:doctor`, `/sweetclaude:recover`, and `/sweetclaude:migrate` are
+beta-channel concepts in this documentation set.
+
+Channel switching is explicit. `/sweetclaude:update` does not move a stable
+install onto beta. To try beta, install `sweetclaude@sweetclaude-beta` from the
+`beta-4.x` marketplace channel and follow the 4.x beta guide.
 
 ---
 

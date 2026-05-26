@@ -1,7 +1,7 @@
 # How It Works
 
-**Version:** 1.3
-**Date:** 2026-05-05
+**Version:** 1.4
+**Date:** 2026-05-25
 
 This page is the mental model. It will not teach you any commands. It will explain why SweetClaude is shaped the way it is, so the rest of the docs make sense.
 
@@ -94,6 +94,42 @@ The work type determines the shape. You do not pick. When you describe the work 
 
 ---
 
+## 4.x Beta Operating Model
+
+4.x beta separates framework update, project repair, recovery, and taxonomy
+migration. `/sweetclaude:update` syncs framework files inside the installed beta
+channel and reports drift. It does not run project-state or taxonomy migrations
+inline. After plugin update and restart, project maintenance starts with
+`/sweetclaude:doctor`.
+
+Doctor is the beta maintenance front door. It runs deterministic checks over
+state, hooks, storage, migration readiness, config, files, onboarding, and
+environment, then chooses a route:
+
+| Route status | Meaning | Next command |
+|---|---|---|
+| `recovery-available` | The project is stuck or unsafe to migrate. | `/sweetclaude:recover` |
+| `supported-migration-available` | A supported flat v3 `BL-NNN` backlog layout passed preflight. | `/sweetclaude:migrate` |
+| `compatibility-mode` | Recovery accepted a legacy taxonomy layout without moving artifacts. | Continue normal work. |
+| `no-migration-recommended` | No supported migration is needed. | Continue normal work. |
+
+Migration is deliberately narrow. The supported migrator handles flat v3 backlog
+files such as `.sweetclaude/product/backlog/BL-001-example.md`. Unsafe typed
+legacy directories such as `stories/`, `bugs/`, `debt/`, and `chores/` route to
+recovery instead of blind migration. Recovery can stabilize those projects in
+compatibility mode so SweetClaude stops prompting migration until a layout-specific
+migrator exists.
+
+4.x also changes the product artifact model. Current issue files use unified
+`ISSUE-NNN` IDs, with `type` stored in frontmatter rather than encoded in the
+filename. Backlog, roadmap issues, epics, and milestones live under
+`.sweetclaude/product/`. Markdown remains the source of truth, but 4.x builds a
+derived SQLite cache at `.sweetclaude/cache/roadmap.db` so status, dashboard,
+backlog, and routing skills can query the project consistently. The cache is
+rebuildable and should not be treated as authoritative project history.
+
+---
+
 ## Project Modes
 
 SweetClaude has four project modes that calibrate structure and enforcement to where your project is. You pick a mode at init; enforcement is immediate. Think of it as a dial — Flow Mode is the lightweight end, Agile is the structured end, with Kanban and Shape Up in between.
@@ -159,11 +195,13 @@ The level is changeable mid-session by saying "switch to guided" or "go autonomo
 
 Claude Code sessions die. Context windows fill. Networks drop. SweetClaude is designed to survive this.
 
-The structured state files in `.sweetclaude/state/` are the source of truth — not conversation history. Skills re-read state files at every step rather than relying on what was said earlier. Decisions go to `decision-log.md`. Assumptions go to `assumption-register.md`. Scope changes go to `scope-changes.md`. Improvement feedback goes to `improvement-register.md`.
+The structured state files in `.sweetclaude/state/` and product artifacts in `.sweetclaude/product/` are the source of truth — not conversation history and not the derived SQLite cache. Skills re-read state and product files at every step rather than relying on what was said earlier. Decisions go to `decision-log.md`. Assumptions go to `assumption-register.md`. Scope changes go to `scope-changes.md`. Improvement feedback goes to `improvement-register.md`.
 
-When you resume a session, `/sweetclaude:go` reads state and re-orients. You do not have to remember what you were doing.
+When you resume a session, `/sweetclaude:go` reads state, rebuilds or reads the roadmap cache, and re-orients. You do not have to remember what you were doing.
 
-`.sweetclaude/` is intentionally separate from your distributable code — SweetClaude keeps its own artifacts there so they never mingle with the codebase you ship. This is why `.sweetclaude/` should be committed to git. The state is project history, not scratch. If you switch machines or someone else picks up the work, the context travels with the repo.
+Doctor and recovery write their own run artifacts under `.sweetclaude/state/doctor-runs/` and `.sweetclaude/state/recovery-runs/`. Those records explain what was scanned, what was changed, and how to roll back a recovery. Recovery snapshots can contain copies of project state and product artifacts, so they are operational records rather than source-control history.
+
+`.sweetclaude/` is intentionally separate from your distributable code — SweetClaude keeps its own artifacts there so they never mingle with the codebase you ship. Commit the durable project history: state, product artifacts, plans, and traceability. Keep derived caches and recovery snapshots out of source control.
 
 ---
 
@@ -185,12 +223,20 @@ your-project/.sweetclaude/          ← Per-project state
 │   ├── decision-log.md
 │   ├── assumption-register.md
 │   ├── improvement-register.md
-│   └── scope-changes.md
+│   ├── scope-changes.md
+│   ├── doctor-runs/                ← Doctor archives and manifests
+│   └── recovery-runs/              ← Recovery snapshots and rollback manifests
+├── product/
+│   ├── backlog/                    ← Unified ISSUE-NNN backlog items
+│   └── roadmap/                    ← Milestones, epics, and roadmap issues
+├── cache/
+│   └── roadmap.db                  ← Derived SQLite cache; rebuildable
+├── plans/                          ← Claude Code plan files
 ├── traceability/                   ← Story → requirement → test → code
 └── disabled                        ← Optional: presence disables SweetClaude
 ```
 
-The split is intentional. Global install is the framework. Per-project state is your work. They are committed separately. The framework can update without disturbing your project history.
+The split is intentional. Global install is the framework. Per-project state and product artifacts are your work. They are committed separately. The framework can update without disturbing project history, while doctor and recovery can inspect or stabilize a project without rewriting it blindly.
 
 ---
 
