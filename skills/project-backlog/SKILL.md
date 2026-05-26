@@ -8,29 +8,13 @@ description: "View and manage the unscheduled issue backlog."
 
 ## MIGRATION GUARD
 
-Before any other work, check for unmigrated v3 BL files:
+Before any other work, run the read-only recovery guard:
 
 ```bash
-PRODUCT_BASE=$(python3 -c "
-import yaml, pathlib
-p = pathlib.Path('.sweetclaude/artifact-privacy.yaml')
-if p.exists():
-    d = yaml.safe_load(p.read_text()) or {}
-    base = d.get('categories', {}).get('product', {}).get('base_path', '')
-    if base:
-        print(base.rstrip('/'))
-        exit()
-print('.sweetclaude/product')
-" 2>/dev/null || echo '.sweetclaude/product')
-V3_FILES=$(find "${PRODUCT_BASE}/backlog" -maxdepth 1 -name 'BL-*.md' 2>/dev/null | wc -l | tr -d ' ')
-if [ "$V3_FILES" -gt 0 ]; then
-  echo "This project has $V3_FILES v3 stories that need to be migrated first."
-  echo "Run: /sweetclaude:migrate"
-  exit 1
-fi
+python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py guard --project-dir . --pretty 2>/dev/null
 ```
 
-If the guard fires: print the message and stop. Do not proceed.
+If the guard status is `run-recover`, stop and route to `/sweetclaude:recover`. If it is `manual-review`, stop and show the guard message. Do not run taxonomy migration from this skill.
 
 ## MODE CHECK
 

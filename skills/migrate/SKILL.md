@@ -26,6 +26,15 @@ fi
 PRODUCT_BASE=$(python3 "$SCRIPT" resolve-base --project-dir . | python3 -c "import sys, json; print(json.load(sys.stdin)['product_base'])")
 V3_BACKLOG="${PRODUCT_BASE}/backlog"
 
+PREFLIGHT_OUT=$(python3 "$SCRIPT" preflight --project-dir .)
+MIGRATE_ALLOWED=$(echo "$PREFLIGHT_OUT" | python3 -c "import sys, json; print('true' if json.load(sys.stdin).get('migrate_allowed') else 'false')")
+if [ "$MIGRATE_ALLOWED" != "true" ]; then
+  echo "$PREFLIGHT_OUT"
+  echo "Do not create `migration.lock`, backups, copied files, or migration maps."
+  echo "Run /sweetclaude:recover if the guard says recovery is needed."
+  exit 1
+fi
+
 LOCK_FILE=".sweetclaude/state/migration.lock"
 if [ -f "$LOCK_FILE" ]; then
   echo "ERROR: $LOCK_FILE exists. Previous migration may have crashed."

@@ -41,23 +41,13 @@ Do not call `gh`. Do not read backlog file contents for routing — the cache ou
 
 ## Step 1b: Migration guard
 
-If the backlog query returned zero items, check for unmigrated files:
+Run the read-only recovery guard before interpreting an empty backlog as no work:
 
 ```bash
-product_base=$(python3 -c "
-import yaml, sys
-d = yaml.safe_load(open('.sweetclaude/state/session-state.yaml')) or {}
-print(d.get('paths', {}).get('product_base', '.sweetclaude/product'))
-" 2>/dev/null || echo ".sweetclaude/product")
-
-find "$product_base/backlog" -maxdepth 2 -name 'BL-*.md' -o -name 'STORY-*.md' -o -name 'BUG-*.md' -o -name 'DEBT-*.md' -o -name 'CHORE-*.md' 2>/dev/null | head -5
+python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py guard --project-dir . --pretty 2>/dev/null
 ```
 
-If old-format files are found, output:
-
-> Your project has backlog items in the old format (BL-NNN / STORY-NNN / BUG-NNN). The current taxonomy uses ISSUE-NNN, so these items are invisible to current skills. Run `/sweetclaude:migrate` to convert them. Migration creates a backup first and is reversible.
-
-Then stop. Do not proceed to Step 3.
+If the guard status is `run-recover`, stop and route to `/sweetclaude:recover`. If it is `manual-review`, stop and show the guard message. Do not run taxonomy migration from this skill.
 
 ## Step 2: Apply improvement register
 

@@ -5,13 +5,6 @@ import sys
 from pathlib import Path
 
 
-import pytest
-
-pytestmark = pytest.mark.xfail(
-    reason="Tracked recovery maintenance-router characterization; implementation follow-up is not in the default release gate yet.",
-    strict=False,
-)
-
 REPO_ROOT = Path(__file__).parents[1]
 DOCTOR = REPO_ROOT / "scripts" / "doctor.py"
 TYPED_PRODUCT_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "typed-product-layout"

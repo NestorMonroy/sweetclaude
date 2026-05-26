@@ -1471,6 +1471,184 @@ def _build_migration_recommendations(
 
 
 # ---------------------------------------------------------------------------
+# Maintenance route
+# ---------------------------------------------------------------------------
+
+def _run_migration_preflight(project_dir: Path) -> dict:
+    script = _SCRIPTS_DIR / "migrate" / "migrate-v3-to-v4.py"
+    if not script.exists():
+        return {
+            "status": "unavailable",
+            "migrate_allowed": False,
+            "blocking_factors": [{
+                "code": "migrator-not-found",
+                "severity": "cannot-plan",
+                "detail": str(script),
+            }],
+        }
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(script), "preflight", "--project-dir", str(project_dir)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "status": "unavailable",
+            "migrate_allowed": False,
+            "blocking_factors": [{
+                "code": "migrator-preflight-failed",
+                "severity": "cannot-plan",
+                "detail": str(exc),
+            }],
+        }
+    try:
+        payload = json.loads(completed.stdout) if completed.stdout.strip() else {}
+    except json.JSONDecodeError as exc:
+        payload = {
+            "status": "unavailable",
+            "migrate_allowed": False,
+            "blocking_factors": [{
+                "code": "migrator-preflight-invalid-json",
+                "severity": "cannot-plan",
+                "detail": str(exc),
+            }],
+        }
+    if completed.returncode != 0:
+        payload.setdefault("status", "unavailable")
+        payload.setdefault("migrate_allowed", False)
+        payload.setdefault("blocking_factors", []).append({
+            "code": "migrator-preflight-nonzero",
+            "severity": "cannot-plan",
+            "detail": completed.stderr.strip(),
+        })
+    return payload
+
+
+def _run_recovery_guard(project_dir: Path) -> dict:
+    try:
+        from recovery.recover_project import guard_project
+
+        return guard_project(project_dir)
+    except Exception as exc:
+        return {
+            "status": "unknown",
+            "migrate_allowed": False,
+            "error": str(exc),
+        }
+
+
+def _primary_action(
+    label: str,
+    delegate_skill: str | None = None,
+    mutates_project: bool = False,
+    requires_approval: bool = False,
+) -> dict:
+    action = {
+        "label": label,
+        "mutates_project": mutates_project,
+        "requires_approval": requires_approval,
+    }
+    if delegate_skill:
+        action["delegate_skill"] = delegate_skill
+    return action
+
+
+def build_maintenance_route(project_state: ProjectState) -> dict:
+    """Return the read-only front-door routing decision for maintenance UX."""
+    preflight = _run_migration_preflight(project_state.project_dir)
+    guard = _run_recovery_guard(project_state.project_dir)
+    guard_status = guard.get("status")
+
+    if guard_status == "run-recover":
+        status = "recovery-available"
+        primary = _primary_action(
+            "Run safe recovery",
+            delegate_skill="sweetclaude:recover",
+            mutates_project=True,
+            requires_approval=True,
+        )
+    elif guard_status == "compatibility-mode":
+        status = "compatibility-mode"
+        primary = _primary_action("Continue in compatibility mode", mutates_project=False)
+    elif preflight.get("migrate_allowed"):
+        status = "supported-migration-available"
+        primary = _primary_action(
+            "Start supported migration",
+            delegate_skill="sweetclaude:migrate",
+            mutates_project=True,
+            requires_approval=True,
+        )
+    else:
+        status = "no-migration-recommended"
+        primary = _primary_action("No migration is recommended for this project", mutates_project=False)
+
+    return {
+        "doctor_front_door": True,
+        "status": status,
+        "primary_action": primary,
+        "guard": guard,
+        "migration_preflight": preflight,
+    }
+
+
+def _compatibility_adjustments_for_findings(
+    findings: list[dict],
+    route: dict,
+) -> tuple[list[dict], dict]:
+    if route.get("status") != "compatibility-mode":
+        return findings, {
+            "applied": False,
+            "collapsed_count": 0,
+            "collapsed_by_kind": {},
+        }
+
+    kept: list[dict] = []
+    collapsed_by_kind: dict[str, int] = {}
+
+    def collapse(kind: str) -> None:
+        collapsed_by_kind[kind] = collapsed_by_kind.get(kind, 0) + 1
+
+    for finding in findings:
+        finding_id = str(finding.get("id", ""))
+        if finding_id == "migration-currency:taxonomy-drift:old-prefixes":
+            collapse("legacy-work-item-id")
+            continue
+        if finding_id.startswith("file-diagnostics:invalid-id:"):
+            collapse("legacy-work-item-id")
+            continue
+        kept.append(finding)
+
+    collapsed_count = sum(collapsed_by_kind.values())
+    if collapsed_count:
+        kept.append(asdict(Finding(
+            id="compatibility-mode:accepted-legacy-taxonomy",
+            category="migration_currency",
+            severity="info",
+            summary=(
+                f"Compatibility mode collapsed {collapsed_count} accepted "
+                "legacy taxonomy finding(s)"
+            ),
+            detail=(
+                "Accepted legacy taxonomy state is recorded in "
+                ".sweetclaude/state/sweetclaude.yaml recovery.taxonomy; "
+                "doctor will not prompt migration for those accepted files."
+            ),
+            file_paths=[],
+            fix_type="report-only",
+            fix_recipe={},
+        )))
+
+    return kept, {
+        "applied": True,
+        "collapsed_count": collapsed_count,
+        "collapsed_by_kind": collapsed_by_kind,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Scan
 # ---------------------------------------------------------------------------
 
@@ -1513,15 +1691,27 @@ def _scan(
             f.previously_suppressed = True
 
     active = [f for f in all_findings if f.id not in suppressed_ids]
+    maintenance_route = build_maintenance_route(project_state)
 
-    migration_recs = _build_migration_recommendations(active, project_state)
+    if maintenance_route.get("status") == "compatibility-mode":
+        migration_recs = []
+    else:
+        migration_recs = _build_migration_recommendations(active, project_state)
+
+    findings_payload = [asdict(f) for f in active]
+    findings_payload, compatibility_adjustments = _compatibility_adjustments_for_findings(
+        findings_payload,
+        maintenance_route,
+    )
 
     result = {
-        "findings": [asdict(f) for f in active],
+        "findings": findings_payload,
         "skipped_categories": skipped,
         "suppressions_resolved": sorted(resolved_ids),
         "project_state_summary": build_state_summary(project_state),
         "migration_recommendations": migration_recs,
+        "maintenance_route": maintenance_route,
+        "compatibility_adjustments": compatibility_adjustments,
     }
     if categories:
         result["scanned_categories"] = sorted(checks_to_run.keys())
@@ -2107,6 +2297,8 @@ def main(argv: list[str] | None = None) -> int:
     p_scan = _add("scan")
     p_scan.add_argument("--category", default=None)
 
+    _add("maintenance-route")
+
     _add("create-archive")
 
     p_fix = _add("auto-fix")
@@ -2142,6 +2334,19 @@ def main(argv: list[str] | None = None) -> int:
             state = build_project_state(project_dir)
             cats = [c.strip() for c in args.category.split(",") if c.strip()] if args.category else None
             _emit(_scan(state, categories=cats))
+
+        elif args.cmd == "maintenance-route":
+            project_dir = args.project_dir.resolve()
+            sc_yaml = project_dir / ".sweetclaude" / "state" / "sweetclaude.yaml"
+            if not sc_yaml.exists():
+                _emit({"error": "not-configured",
+                       "message": "SweetClaude not configured for this project"})
+                return 0
+            state = build_project_state(project_dir)
+            _emit({
+                "maintenance_route": build_maintenance_route(state),
+                "project_state_summary": build_state_summary(state),
+            })
 
         elif args.cmd == "create-archive":
             archive = create_archive(args.project_dir.resolve())

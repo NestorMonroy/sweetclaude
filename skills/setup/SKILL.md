@@ -29,6 +29,10 @@ du -sh . 2>/dev/null | cut -f1
 
 Signs of Branch C: count of TODO/FIXME/HACK/XXX comments > 20, or no consistent file naming, or zero tests.
 
+## Recovery Run Artifacts
+
+Keep recovery snapshots and manifests out of source control. The recovery harness writes run state under `.sweetclaude/state/recovery-runs/`; those files are operational snapshots, not product artifacts.
+
 ## Branch A: New Project
 
 > "Hi — I'm SweetClaude. I'll help you build this project with a structured workflow. Let me ask a couple of quick questions."

@@ -1,6 +1,8 @@
 # Step 7: Surface capabilities (capability-surface.md)
 
-**IMPORTANT: This step has two parts. Both parts must execute. Do not stop after 7a.**
+Project-state migration, feature configuration, and plan-directory repair are disabled from update. Do not execute these
+commands from update; report them through doctor/setup instead.
+
 
 ## 7a: What's new in this update
 

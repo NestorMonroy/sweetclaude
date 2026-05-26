@@ -140,6 +140,14 @@ If `false`:
 
 ## Step 5b: v4 hard stop — v3 artifacts present
 
+First classify the project with the read-only recovery guard:
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py guard --project-dir . --pretty 2>/dev/null
+```
+
+If the guard says recovery is needed, run: /sweetclaude:recover. Run /sweetclaude:migrate only when the guard says `migrate_allowed: true`; for `run-recover`, `manual-review`, or `compatibility-mode`, do not recommend migration.
+
 After confirming setup is complete, check for v3 backlog files. The trigger is a v4 plugin running
 against a project that hasn't migrated yet — detected by comparing the plugin version (from
 `installed_plugins.json`) against the project's own `installed_version`. This is a one-time check
@@ -201,7 +209,7 @@ if $PLUGIN_IS_V4 && ( $PROJECT_NOT_V4 || [ "$V3_FILES" -gt 0 ] ); then
   echo "Migration creates a safety backup and moves items to .sweetclaude/product/. Your"
   echo "current work is not affected. A clean git working tree is not required."
   echo ""
-  echo "Run: /sweetclaude:migrate"
+  echo "Run /sweetclaude:migrate only when the guard says migrate_allowed=true."
   exit 1
 fi
 ```

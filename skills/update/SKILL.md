@@ -538,113 +538,35 @@ Continue to Step 6b. The user-facing success report is deferred until Step 6b co
 
 ---
 
-## Step 6b: Project-state drift detection and migration
+## Step 6b: Project-state drift detection
 
-> **Future:** Steps 6b, 6b1, and 6b2 will be delegated to `sweetclaude:doctor` check categories (`migration_currency`, `file_diagnostics`, `storage_lint`) in a future version. The doctor skill provides a unified safety model (archive, backup, dry-run) that these inline checks lack.
+Update does not run
+project-state migrations inline. Framework sync and project-state mutation are deliberately decoupled: update may report drift, but the owning doctor/recovery flow decides what to do next.
 
-Only run if `.sweetclaude/state/sweetclaude.yaml` exists in the current project directory — skip silently otherwise. (Update can be run from any directory; this step only applies when run from inside a SweetClaude project.)
-
-After the framework sync, the registry on disk may declare schema versions newer than this project's state files. Surface it immediately — don't make the user bounce sessions.
-
-Parse the runner's stdout directly. Do NOT read `pending-drift-decision.yaml` — that marker is written by `drift-gate.sh` at session start and represents pre-update state. The fresh stdout from the just-synced runner is authoritative for this step.
+Only run this scan if `.sweetclaude/state/sweetclaude.yaml` exists in the current project directory. Update can be run from any directory.
 
 ```bash
 DRIFT_COUNT=0
-CASE=A
-DRIFT_MARKER=".sweetclaude/state/pending-drift-decision.yaml"
 if [ -f .sweetclaude/state/sweetclaude.yaml ] && [ -n "$RUNNER" ] && [ -f "$RUNNER" ]; then
-  DRIFT_OUTPUT=$(python3 "$RUNNER" --project-dir . --report-drift-for-skill 2>/dev/null)
-  DRIFT_COUNT=$(printf '%s\n' "$DRIFT_OUTPUT" | grep '^DRIFT_COUNT=' | cut -d= -f2)
-  [ -z "$DRIFT_COUNT" ] && DRIFT_COUNT=0
-  if printf '%s\n' "$DRIFT_OUTPUT" | grep -q '|chain=broken'; then
-    CASE=B
-  fi
+  DRIFT_JSON=$(python3 "$RUNNER" --project-dir . --scan-drift --persist 2>/dev/null || echo '[]')
+  DRIFT_COUNT=$(printf '%s
+' "$DRIFT_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); xs=d if isinstance(d,list) else d.get('findings',[]); print(sum(1 for x in xs if x.get('needs_migration')))" 2>/dev/null || echo 0)
 fi
-echo "CASE=$CASE"
 echo "DRIFT_COUNT=$DRIFT_COUNT"
 ```
 
-If `DRIFT_COUNT` is 0: remove any stale marker left over from this session's earlier drift-gate scan, print the success report (Step 6c template below) with `✓ Project: clean` line, then continue to Step 7.
+If `DRIFT_COUNT` is 0, print the success report with `✓ Project: clean`.
 
-```bash
-if [ "$DRIFT_COUNT" = "0" ]; then
-  rm -f "$DRIFT_MARKER" 2>/dev/null || true
-fi
-```
-
-If `DRIFT_COUNT > 0`: the framework update just bumped registry versions past the project's state. Migrate or remove — no "Not now," no silent proceed. This is the locked Gap #7 rule.
-
-**Case A (CASE=A — all chains ok):** present via **AskUserQuestion** (single-select, no "Something else"):
-
-> "Framework updated to v{new_version}. {DRIFT_COUNT} SweetClaude state file(s) in this project need migration before SweetClaude can continue. Would you like to do this now?"
->
-> Options:
-> - **Migrate now** — invoke `sweetclaude:_migrate` to bring this project up to current.
-> - **Remove SweetClaude from this project (re-onboarding required to reactivate)** — invoke `sweetclaude:purge`.
-
-**Case B (CASE=B — at least one chain broken):** present via **AskUserQuestion** (single-select):
-
-> "Framework updated to v{new_version}, but this project's SweetClaude state files are too old for automatic migration (out of framework support window). How would you like to proceed?"
->
-> Options:
-> - **Re-onboard from scratch** — archive existing SweetClaude content and run `/sweetclaude:adopt` against a fresh state.
-> - **Remove SweetClaude from this project (re-onboarding required to reactivate)** — invoke `sweetclaude:purge`.
-
-If the user picks **Re-onboard from scratch** (Case B only):
-
-```bash
-TS=$(date -u +%Y%m%d-%H%M%S)
-LEGACY=".sweetclaude.legacy/$TS"
-mkdir -p ".sweetclaude.legacy"
-if [ -d .sweetclaude ]; then
-  mv .sweetclaude "$LEGACY"
-fi
-python3 ~/.claude/scripts/sweetclaude/maintenance/archive-sweetclaude-dir.py "$LEGACY"
-echo "Moved existing SweetClaude content to $LEGACY/ — adopt will use it as reference, not auto-migrate."
-```
-
-Then invoke `sweetclaude:adopt`. Stop (adopt drives the next session itself). Do NOT continue to Step 6c — adopt owns the next session entirely.
-
-If the user picks **Remove SweetClaude** (either case): invoke `sweetclaude:purge`. Stop. Do NOT continue to Step 6c.
-
-If the user picks **Migrate now** (Case A only): invoke `sweetclaude:_migrate`. When it returns, re-run the drift check:
-
-```bash
-POST_MIGRATE_COUNT=0
-if [ -n "$RUNNER" ] && [ -f "$RUNNER" ]; then
-  POST_OUTPUT=$(python3 "$RUNNER" --project-dir . --report-drift-for-skill 2>/dev/null)
-  POST_MIGRATE_COUNT=$(printf '%s\n' "$POST_OUTPUT" | grep '^DRIFT_COUNT=' | cut -d= -f2)
-  [ -z "$POST_MIGRATE_COUNT" ] && POST_MIGRATE_COUNT=0
-fi
-echo "POST_MIGRATE_COUNT=$POST_MIGRATE_COUNT"
-```
-
-If `POST_MIGRATE_COUNT` is 0: clean state. Print the success report (Step 6c template below) with `✓ Project: clean (verified post-migrate)` line, then continue to Step 7.
-
-If `POST_MIGRATE_COUNT > 0`: do NOT print the success report. The framework files were synced, but the project is not in a coherent post-update state. Print the halt diagnostic instead:
+If `DRIFT_COUNT` is greater than 0, print:
 
 ```
-SweetClaude update PARTIAL.
-═══════════════════════════
-
-✓ Version:    {old_version} → {new_version}  (framework synced)
-✗ Project:    {POST_MIGRATE_COUNT} file(s) still drifted after _migrate
-
-This usually means:
-  (a) user picked Rollback or Leave-as-is in _migrate
-  (b) a registered migration is missing its handler (chain broken)
-  (c) a handler ran but didn't bump versions correctly
-
-Files still drifted:
-  {Print the FINDING lines from $POST_OUTPUT}
-
-→ The framework is at v{new_version}. Project state is incomplete.
-  The next session's drift-gate will surface this with full diagnostics.
+SweetClaude framework files were updated.
+Project-state migration is not run inline.
+No project files were changed by update.
+Run /sweetclaude:doctor for the maintenance route.
 ```
 
-Stop. Do NOT continue to Step 7.
-
----
+Do not write `doctor-prompt-pending.json` from update. Do not execute its project skill-state migration from update.
 
 ## Step 6b1: Orphan file scan
 
@@ -767,29 +689,7 @@ New skills added (not available until restart):
 
 Do not mention any `/sweetclaude:` command as something the user can run now. Do not ask "Want to run it?" or offer to invoke any skill. The current session does not have the updated skill set.
 
-After printing the template (and the new-skills block if applicable), write the doctor prompt marker so the next session offers a post-update checkup:
-
-```bash
-if [ -f .sweetclaude/state/sweetclaude.yaml ]; then
-  python3 -c "
-import json, os, tempfile
-from datetime import datetime, timezone
-marker = {
-    'trigger': 'update',
-    'version': '${NEW_VERSION}',
-    'created_at': datetime.now(timezone.utc).isoformat(timespec='seconds')
-}
-path = '.sweetclaude/state/doctor-prompt-pending.json'
-os.makedirs(os.path.dirname(path), exist_ok=True)
-with tempfile.NamedTemporaryFile('w', dir=os.path.dirname(path), suffix='.tmp', delete=False) as tmp:
-    json.dump(marker, tmp, indent=2)
-    tmp_name = tmp.name
-os.replace(tmp_name, path)
-" 2>/dev/null || true
-fi
-```
-
-Continue to Step 7.
+Do not write `doctor-prompt-pending.json` from update. No project files were changed by update. Continue to Step 7.
 
 ---
 
@@ -802,77 +702,21 @@ Read [capability-surface.md](capability-surface.md) and execute it in full.
 
 ## Step 7b: Feature configuration check
 
-Only run this step if `.sweetclaude/state/sweetclaude.yaml` exists in the current project directory — skip silently otherwise.
-
-```bash
-python3 - << 'PY'
-import yaml, os
-
-sc_path = '.sweetclaude/state/sweetclaude.yaml'
-if not os.path.exists(sc_path):
-    print("NO_SC")
-    exit()
-
-try:
-    d = yaml.safe_load(open(sc_path)) or {}
-except:
-    print("NO_SC")
-    exit()
-
-features = d.get('features', {})
-keys = ['product_milestones', 'product_backlog', 'product_personas',
-        'product_stories', 'document_corpus', 'usage_tracking', 'behavioral_regression']
-
-enabled = sum(1 for k in keys
-              if isinstance(features.get(k), dict) and features[k].get('status') == 'active')
-unconfigured = sum(1 for k in keys
-                   if not isinstance(features.get(k), dict)
-                   or features[k].get('status') not in ('active', 'declined'))
-
-try:
-    mc = yaml.safe_load(open('.sweetclaude/metrics/config.yaml'))
-    if mc.get('enabled', False) and features.get('usage_tracking', {}).get('status') != 'active':
-        enabled += 1
-        unconfigured = max(0, unconfigured - 1)
-except:
-    pass
-
-print(f"ENABLED:{enabled}")
-print(f"TOTAL:{len(keys)}")
-print(f"UNCONFIGURED:{unconfigured}")
-PY
-```
-
-If output is `NO_SC`, skip. Otherwise, if `UNCONFIGURED` > 0 or `ENABLED` < `TOTAL`:
-
-Use **AskUserQuestion** (single-select):
-> "This project has {ENABLED} of {TOTAL} features enabled. Want to review the feature setup?"
-- **Yes** → invoke `sweetclaude:_features`
-- **No** → continue
-
----
+Skip feature configuration from update. Feature setup is project mutation and belongs to doctor/setup, not framework update.
 
 ## Step 7c: Configure plan directory
 
-Only run if `.sweetclaude/` exists in the current project directory — skip silently otherwise.
+Skip plan-directory configuration from update. Plan directory repair is project mutation and belongs to doctor/setup, not framework update.
 
-Ensure the plan directory exists and `plansDirectory` is set in both project settings files. Logic lives in a helper script (same reason as Step 0's `clear-decline.py` — no nested heredocs):
+## Step 8: Project-state migration is not run inline
 
-```bash
-python3 ~/.claude/scripts/sweetclaude/maintenance/configure-plan-dir.py .
-```
+Project-state migration is not run inline by update. The framework may be synced while the current project still has drift; the success report must say so and point to `/sweetclaude:doctor`.
 
----
-
-## Step 8: Project-state migration is run inline (see Step 6b)
-
-The current project is migrated inline by Step 6b right after the framework sync — no session bounce required. Other projects the user opens will hit the same hard demand via `bootstrap` Step 5b on their next entry.
-
-Rationale (Gap #7, locked in `scratch/v3-upgrade-assessment-2026-05-11/DECISIONS.md`):
-
-- Framework sync and project-state migration remain logically independent — if migration fails, the framework sync stays successful (the user can still open other projects on the new framework).
-- Every project migrates by the same mechanism — Step 6b here, Step 5b in bootstrap — both routing through `_migrate`.
-- No "update the framework, defer migration" path. Migrate or remove.
+Disabled from update:
+- project-state migration commands
+- purge or re-onboarding commands
+- plan-directory configuration
+- feature configuration
 
 ---
 

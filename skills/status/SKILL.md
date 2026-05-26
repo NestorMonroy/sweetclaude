@@ -27,10 +27,18 @@ Use `phase_schema_version` from pre-loaded session state:
 ## Step 2: Migration guard
 
 ```bash
-[[ -d .sweetclaude/product/ ]] && echo "PRODUCT_DIR_OK" || echo "PRODUCT_DIR_MISSING"
+python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py guard --project-dir . --pretty 2>/dev/null
 ```
 
-If `PRODUCT_DIR_MISSING`: output "`.sweetclaude/product/` not found — run `/sweetclaude:migrate` first." Stop.
+If the guard status is `run-recover`: output "Run /sweetclaude:recover" and "Do not run /sweetclaude:migrate yet." Stop.
+
+If the guard status is `manual-review`: output the guard message and stop.
+
+If the guard status is `compatibility-mode`: continue; the project has accepted legacy taxonomy state.
+
+If `.sweetclaude/product/` is missing because migration has not been run, run /sweetclaude:migrate only when the guard reports `migrate_allowed: true`; otherwise follow the recovery route above.
+
+If the guard status is `missing-product-base`: output the guard message and stop.
 
 ## Step 3: Parse argument
 

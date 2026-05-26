@@ -103,40 +103,33 @@ If `suppressions_resolved` is non-empty, list each one:
 
 ---
 
-## Step 2b: Migration gate
+## Step 2b: Maintenance front door
 
-Check `migration_recommendations` from the scan output. If the array is non-empty, a migration would resolve a significant number of findings. Present this **before** the fix menu — migration should run first because it eliminates findings that would otherwise clutter the fix flow.
-
-For each recommendation, present via AskUserQuestion:
-
-> {summary} — migration would resolve an estimated {estimated_resolvable} of {total_findings} findings ({pct}%). Run migration now?
-
-Options:
-- **Run migration** — "Run the migration, then rescan to see what's left"
-- **Skip** — "Continue without migrating"
-
-**On Run migration:**
-
-Delegate to the appropriate migration skill based on `script`:
-- `migrate_taxonomy.py` → run the script directly; do **not** invoke `sweetclaude:migrate` because that skill wraps the v3-to-v4 BL migration script
-- `runner.py` → invoke `sweetclaude:_migrate`
-- `migrate-v3-to-v4.py` → invoke `sweetclaude:migrate`
-
-After the migration skill completes, **rescan automatically**:
+Before showing migration prompts or the fix menu, read the deterministic route:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/doctor.py scan --project-dir . 2>/dev/null
+python3 ~/.claude/scripts/sweetclaude/doctor.py maintenance-route --project-dir . 2>/dev/null
 ```
 
-Parse the new scan result. Replace the current findings list and migration_recommendations with the fresh output. Print:
+Store `maintenance_route`. Doctor is the maintenance front door; Step 1 must already have handled and visibly rendered the scan output before this route is used for menus. Do not `cat` or print
+`.sweetclaude/state/last-doctor-run.json`; use the scan JSON and the route JSON only.
 
-> Migration complete. Rescanned: {new_total} findings remaining (was {old_total}).
+Handle route statuses:
 
-Continue to Step 3 with the new findings. The fix menu and all subsequent steps operate on the post-migration scan.
+- `recovery-available`: offer **Run safe recovery** and delegate to `sweetclaude:recover`.
+- `supported-migration-available`: offer **Start supported migration** and delegate to `sweetclaude:migrate`.
+- `no-migration-recommended`: print **No migration is recommended for this project** and continue to the normal fix menu.
+- `compatibility-mode`: do not show a migration prompt; render the scan normally. If `compatibility_adjustments.applied` is true, include: `Compatibility mode collapsed {collapsed_count} accepted legacy taxonomy finding(s).`
 
-**On Skip:** Continue to Step 3 with the original findings.
+Do not invoke
+`migrate_taxonomy.py` from doctor. It may appear in findings for historical context, but doctor must route through `maintenance_route` and delegated skills. Do not use it to
+present a migration prompt unless `maintenance_route.status` is
+`supported-migration-available`.
 
----
+Use `menu_default` for skip-menu behavior. A stored default may preselect the Step 3 menu path, but doctor must not skip the menu by itself before Step 1 and this front-door route have been rendered.
+
+For internal commands such as `recover`,
+`_migrate`, or other maintenance helpers, keep routing explicit in the report instead of silently jumping to another command.
 
 ## Step 3: Pre-fix menu
 
@@ -350,13 +343,13 @@ echo '{"finding_id": "...", "action": "suppress", "reason": "...", "timestamp": 
 
 When a prompted fix involves migration or restoration:
 
-- **Schema migration** (`fix_recipe.script` = "runner.py"): Invoke `sweetclaude:_migrate` skill. Record result via `record-action`.
+- **Schema migration** (`fix_recipe.script` = "runner.py"): Route through the maintenance front door and record the delegated result via `record-action`.
 
-- **Taxonomy migration** (`fix_recipe.script` = "migrate_taxonomy.py"): Run the script directly. Record result.
+- **Taxonomy migration** (`fix_recipe.script` = "migrate_taxonomy.py"): Do not run this directly; route through `maintenance_route` and record the decision.
 
 - **v3-to-v4 migration** (`fix_recipe.script` = "migrate-v3-to-v4.py"): Run the script. Record result.
 
-- **Purge/re-onboard**: Invoke `sweetclaude:purge`. Record result.
+- **Purge/re-onboard**: Record the route decision and let the owning recovery/removal skill handle any destructive work.
 
 ---
 

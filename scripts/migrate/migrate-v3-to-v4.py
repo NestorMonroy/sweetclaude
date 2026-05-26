@@ -13,6 +13,7 @@ delegates to.
 CLI subcommands:
   resolve-base       --project-dir DIR
   scan-orphans       --project-dir DIR
+  preflight          --project-dir DIR
   validate           --project-dir DIR
   plan               --project-dir DIR [--include-done]
   execute            --project-dir DIR [--include-done]
@@ -292,6 +293,91 @@ def scan_orphans(project_dir: pathlib.Path) -> dict:
     }
 
 
+_WORK_ITEM_ID_RE = re.compile(r"^(STORY|BUG|DEBT|CHORE|BL|ISSUE|EP|I|RM|MS)-\d+")
+_TYPED_OLD_PATTERNS = ("STORY-*.md", "BUG-*.md", "DEBT-*.md", "CHORE-*.md", "BL-*.md")
+
+
+def _work_item_id_from_name(path: pathlib.Path) -> str | None:
+    match = _WORK_ITEM_ID_RE.match(path.name)
+    return match.group(0) if match else None
+
+
+def preflight(project_dir: pathlib.Path) -> dict:
+    """Read-only migration safety preflight.
+
+    The v3->v4 BL migrator supports flat BL-*.md files in the selected backlog
+    directory. Retired typed backlog directories are intentionally blocked and
+    routed through recovery because blind migration can collapse distinct typed
+    namespaces or duplicate IDs.
+    """
+    product_base = resolve_product_base(project_dir)
+    backlog_path = product_base / "backlog"
+
+    flat_bl_files = sorted(backlog_path.glob("BL-*.md")) if backlog_path.is_dir() else []
+    typed_old_files: list[pathlib.Path] = []
+    for subdir in _TYPED_SUBDIRS:
+        typed_dir = backlog_path / subdir
+        if not typed_dir.is_dir():
+            continue
+        for pattern in _TYPED_OLD_PATTERNS:
+            typed_old_files.extend(sorted(typed_dir.rglob(pattern)))
+
+    id_to_files: dict[str, list[str]] = {}
+    for root in (product_base,):
+        if not root.exists():
+            continue
+        for path in root.rglob("*.md"):
+            item_id = _work_item_id_from_name(path)
+            if item_id:
+                id_to_files.setdefault(item_id, []).append(str(path))
+
+    duplicates = [
+        {"id": item_id, "files": sorted(files)}
+        for item_id, files in sorted(id_to_files.items())
+        if len(files) > 1
+    ]
+
+    blocking_factors: list[dict] = []
+    if typed_old_files:
+        blocking_factors.append({
+            "code": "unsupported-typed-backlog-layout",
+            "severity": "recovery-required",
+            "detail": "Typed legacy backlog directories are not supported by the flat BL migrator.",
+            "count": len(typed_old_files),
+            "sample": [str(path) for path in typed_old_files[:10]],
+        })
+    if duplicates:
+        blocking_factors.append({
+            "code": "duplicate-work-item-ids",
+            "severity": "manual-decision-required-before-taxonomy-migration",
+            "detail": "Duplicate work item IDs block blind taxonomy migration.",
+            "count": len(duplicates),
+            "sample": duplicates[:10],
+        })
+
+    migrate_allowed = bool(flat_bl_files) and not blocking_factors
+    if blocking_factors:
+        status = "blocked"
+        next_step = "Run /sweetclaude:recover before any taxonomy migration."
+    elif migrate_allowed:
+        status = "ready"
+        next_step = "Run /sweetclaude:migrate to preview and execute the supported flat BL migration."
+    else:
+        status = "no-v3-files"
+        next_step = "No supported flat BL-*.md files were found for this migrator."
+
+    return {
+        "status": status,
+        "migrate_allowed": migrate_allowed,
+        "product_base": str(product_base),
+        "flat_bl_count": len(flat_bl_files),
+        "typed_old_prefix_count": len(typed_old_files),
+        "duplicate_id_count": len(duplicates),
+        "blocking_factors": blocking_factors,
+        "next_step": next_step,
+    }
+
+
 def validate(project_dir: pathlib.Path) -> dict:
     """Step 2 — return {failures: [{file, problem}], ids: {id: [file, ...]}}."""
     product_base = resolve_product_base(project_dir)
@@ -466,6 +552,9 @@ def execute(project_dir: pathlib.Path, include_done: bool) -> dict:
     guard = _check_already_migrated(project_dir)
     if guard:
         return guard
+    preflight_result = preflight(project_dir)
+    if not preflight_result.get("migrate_allowed"):
+        return {"error": "migration-blocked", "preflight": preflight_result}
     plan = build_plan(project_dir, include_done)
     today = datetime.datetime.now(
         datetime.timezone.utc,
@@ -669,6 +758,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _add("resolve-base")
     _add("scan-orphans")
+    _add("preflight")
     _add("validate")
     p_plan = _add("plan")
     p_plan.add_argument("--include-done", action="store_true")
@@ -686,6 +776,8 @@ def main(argv: list[str] | None = None) -> int:
         _emit({"product_base": str(resolve_product_base(project_dir))})
     elif args.cmd == "scan-orphans":
         _emit(scan_orphans(project_dir))
+    elif args.cmd == "preflight":
+        _emit(preflight(project_dir))
     elif args.cmd == "validate":
         _emit(validate(project_dir))
     elif args.cmd == "plan":
