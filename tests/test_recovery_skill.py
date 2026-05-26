@@ -12,7 +12,9 @@ def test_recover_skill_delegates_to_recovery_script_and_keeps_safety_gates():
     assert "scripts/recovery/recover_project.py" in skill
     assert "diagnose --project-dir . --pretty" in skill
     assert "plan --project-dir . --pretty" in skill
-    assert "execute --project-dir . --approve --pretty" in skill
+    assert "mutation_plan" in skill
+    assert "approval_receipt_template" in skill
+    assert "execute --project-dir . --approve --approval-receipt" in skill
     assert "resume --run-dir" in skill
     assert "rollback --run-dir" in skill
     assert "Never run `sweetclaude:migrate`" in skill

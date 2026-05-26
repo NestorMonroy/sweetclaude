@@ -1,4 +1,5 @@
 import os
+import copy
 import json
 import subprocess
 import sys
@@ -44,6 +45,9 @@ def test_capability_manifest_loads_release_checks():
         "static-checks",
         "release-metadata",
         "manifest-validation",
+        "release-identity",
+        "docs-capability",
+        "public-distribution",
     }
 
 
@@ -66,6 +70,11 @@ def test_capability_manifest_loads_capability_contracts():
     assert migration["delegate_skill"] == "sweetclaude:migrate"
     assert migration["preflight_required"] is True
     assert migration["supports_project_shapes"] == ["flat_bl_backlog"]
+    assert migration["mutation_class"] == "planned_write"
+    assert migration["rollback_support"]["supported"] is True
+    assert migration["rollback_support"]["command"]
+    assert migration["unsupported_states"][0]["behavior"] == "block"
+    assert migration["version_metadata"]["introduced_in"] == "4.0.0-beta"
     assert blocked["supported"] is False
 
 
@@ -81,6 +90,51 @@ def test_capability_manifest_validates_capability_shape_references():
         assert "capability does not support shape" in str(exc)
     else:
         raise AssertionError("validate_manifest accepted a mismatched capability shape")
+
+
+def test_capability_manifest_requires_rollback_support_for_mutating_capabilities():
+    manifest = load_manifest(ROOT / "config" / "capability-manifest.yaml")
+    broken = copy.deepcopy(manifest)
+    del broken["capabilities"]["migrate.flat_bl_to_issue"]["rollback_support"]
+
+    try:
+        validate_manifest(broken)
+    except ValueError as exc:
+        assert "rollback_support" in str(exc)
+    else:
+        raise AssertionError("validate_manifest accepted missing rollback support")
+
+
+def test_capability_manifest_rejects_mutating_capability_without_supported_rollback():
+    manifest = load_manifest(ROOT / "config" / "capability-manifest.yaml")
+    broken = copy.deepcopy(manifest)
+    broken["capabilities"]["migrate.flat_bl_to_issue"]["rollback_support"] = {
+        "supported": False,
+        "command": None,
+        "limitations": ["not implemented"],
+    }
+
+    try:
+        validate_manifest(broken)
+    except ValueError as exc:
+        assert "rollback_support.supported" in str(exc)
+    else:
+        raise AssertionError("validate_manifest accepted unsupported rollback")
+
+
+def test_capability_manifest_validates_unsupported_state_policy():
+    manifest = load_manifest(ROOT / "config" / "capability-manifest.yaml")
+    broken = copy.deepcopy(manifest)
+    broken["capabilities"]["migrate.flat_bl_to_issue"]["unsupported_states"] = [
+        {"condition": "typed_legacy_backlog", "behavior": "mutate_anyway"},
+    ]
+
+    try:
+        validate_manifest(broken)
+    except ValueError as exc:
+        assert "unsupported_states" in str(exc)
+    else:
+        raise AssertionError("validate_manifest accepted invalid unsupported-state behavior")
 
 
 def test_capability_manifest_validate_cli_emits_summary():
