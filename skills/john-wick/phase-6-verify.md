@@ -6,6 +6,11 @@ Update `current_phase: VERIFY` in `john-wick.yaml`.
 
 Run the complete test suite on the feature branch. Generate a final MD test report (see report-format.md) and append to the aggregate report. If any tests fail: run the severity classifier (see severity-classifier.md). If significant failures: invoke IM2. **V1-specific IM2 behavior:** Fix-and-continue from V1 re-enters at V1 (re-run the full test suite) — do NOT re-enter the IM1 loop. After 2 consecutive Fix-and-continue cycles from V1, IM2 presents only Skip (proceed to V2 with known test failures documented) and Abort options. If not significant: log and continue.
 
+Before any V1 Fix-and-continue cycle, apply `../process-controls.md` using
+`john-wick.yaml process_control.steps.V1`. Each failed cycle increments
+`process_failure_count`. If the process-control limit is reached before the
+V1-specific two-cycle cap, stop at IM2 with no autonomous fix attempt.
+
 Update `current_step: V2`.
 
 ## V2 — Code, security, and compliance review (Autonomous)

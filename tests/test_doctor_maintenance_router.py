@@ -272,3 +272,34 @@ def test_doctor_never_recommends_migration_without_manifest_support(tmp_path):
     assert route["blocked_capabilities"][0]["capability_id"] == (
         "migrate.typed_legacy_backlog"
     )
+
+
+def test_doctor_does_not_dispatch_migration_from_supported_version_string(tmp_path):
+    project = _copy_syncog_fixture(tmp_path, migration_status="deferred")
+    state_path = project / ".sweetclaude" / "state" / "sweetclaude.yaml"
+    state_path.write_text(
+        "\n".join([
+            "framework:",
+            "  installed_version: 4.1.9-beta",
+            "  migration_status: deferred",
+            "paths:",
+            "  product_base: docs/product",
+            "recovery:",
+            "  taxonomy:",
+            "    status: stabilized-without-migration",
+            "    migration_required: false",
+            "    blind_taxonomy_migration_allowed: false",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+
+    scan = _doctor_scan(project)
+    route = scan["maintenance_route"]
+
+    assert route["guard"]["project_shape"] == "accepted_legacy_taxonomy"
+    assert route["status"] == "compatibility-mode"
+    assert route["primary_action"]["mutates_project"] is False
+    assert route["primary_action"]["capability_id"] == "doctor.compatibility_mode"
+    assert route["primary_action"].get("delegate_skill") != "sweetclaude:migrate"
+    assert scan["migration_recommendations"] == []

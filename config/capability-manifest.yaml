@@ -27,15 +27,44 @@ release:
     - static-checks
     - release-metadata
     - manifest-validation
+    - release-identity
+    - docs-capability
+    - public-distribution
 
 capabilities:
   recover.stabilize_without_migration:
     title: Stabilize recoverable legacy layout without taxonomy migration
     delegate_skill: sweetclaude:recover
+    command_entrypoint:
+      slash_command: /sweetclaude:recover
+      script: scripts/recovery/recover_project.py
+      module: recovery.recover_project
     supports_project_shapes:
       - recovery_required
+    mutation_class: planned_write
     mutates_project: true
     requires_approval: true
+    required_preconditions:
+      - project guard status is run-recover
+      - recovery plan exists before execute
+    snapshot_scope_hints:
+      - .sweetclaude/
+      - docs/product/
+    postconditions:
+      - id: recovery-postconditions
+        check: recovery verifier reports stabilized state
+    rollback_support:
+      supported: true
+      command: "python3 scripts/recovery/recover_project.py rollback --project-dir <project>"
+      limitations: []
+    unsupported_states:
+      - condition: manual_escalation
+        behavior: escalate
+      - condition: missing_product_base
+        behavior: diagnose_only
+    version_metadata:
+      introduced_in: 4.1.0-beta
+      deprecated_in: null
     safety_contract:
       - diagnose
       - plan
@@ -55,11 +84,42 @@ capabilities:
     title: Migrate flat BL-NNN backlog to ISSUE taxonomy
     delegate_skill: sweetclaude:migrate
     executable: scripts/migrate/migrate-v3-to-v4.py
+    command_entrypoint:
+      slash_command: /sweetclaude:migrate
+      script: scripts/migrate/migrate-v3-to-v4.py
+      module: null
     supports_project_shapes:
       - flat_bl_backlog
+    mutation_class: planned_write
     mutates_project: true
     requires_approval: true
     preflight_required: true
+    required_preconditions:
+      - project shape is flat_bl_backlog
+      - migration preflight passes
+      - user approval is bound to current plan
+    snapshot_scope_hints:
+      - .sweetclaude/product/backlog/
+      - .sweetclaude/state/
+    postconditions:
+      - id: issue-taxonomy-created
+        check: migrated ISSUE files and migration map exist
+      - id: migration-integrity
+        check: execution manifest contains source and created file integrity
+    rollback_support:
+      supported: true
+      command: "python3 scripts/migrations/run_rollback.py --project-dir <project>"
+      limitations: []
+    unsupported_states:
+      - condition: typed_legacy_backlog
+        behavior: block
+      - condition: recovery_required
+        behavior: diagnose_only
+      - condition: manual_escalation
+        behavior: escalate
+    version_metadata:
+      introduced_in: 4.0.0-beta
+      deprecated_in: null
     safety_contract:
       - diagnose
       - preflight

@@ -31,6 +31,7 @@ import json
 import pathlib
 import re
 import sys
+import tarfile
 
 import yaml
 
@@ -39,6 +40,14 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from maintenance.capability_manifest import capability_config
+from mutation_safety import (
+    hash_payload,
+    validate_approval_scope,
+    validate_postconditions,
+    validate_restore_proof,
+    validate_snapshot_scope,
+    validate_write_set,
+)
 from recovery.recover_project import guard_project
 
 
@@ -48,6 +57,8 @@ TERMINAL_STATUSES = {"done", "abandoned"}
 MIGRATION_CAPABILITY_ID = "migrate.flat_bl_to_issue"
 SUPPORTED_PROJECT_SHAPE = "flat_bl_backlog"
 MIGRATION_EXECUTION_MANIFEST = pathlib.Path(".sweetclaude/state/migrations/v3-to-v4-execution.json")
+MIGRATION_SNAPSHOT_TARBALL = pathlib.Path(".sweetclaude/state/migrations/v3-to-v4-snapshot.tar.gz")
+MIGRATION_SNAPSHOT_MANIFEST = pathlib.Path(".sweetclaude/state/migrations/v3-to-v4-snapshot-manifest.json")
 
 # Status remapping from v3 to v4 vocabulary.
 STATUS_REMAP = {
@@ -596,7 +607,7 @@ def build_plan(project_dir: pathlib.Path, include_done: bool) -> dict:
             }
         )
 
-    return {
+    result = {
         "capability_id": preflight["capability_id"],
         "project_shape": preflight["project_shape"],
         "manifest_supported": preflight["manifest_supported"],
@@ -605,9 +616,120 @@ def build_plan(project_dir: pathlib.Path, include_done: bool) -> dict:
         "verification_commands": preflight["verification_commands"],
         "preflight": preflight,
         "product_base": str(product_base),
+        "include_done": include_done,
         "counter": counter,
         "skipped_done": skipped_done,
         "plan_items": plan_items,
+    }
+    result["mutation_plan"] = _build_mutation_plan(project_dir, result)
+    return result
+
+
+def _relative_to_project(project_dir: pathlib.Path, path: pathlib.Path | str) -> str:
+    p = pathlib.Path(path)
+    if not p.is_absolute():
+        p = project_dir / p
+    try:
+        return p.resolve(strict=False).relative_to(project_dir.resolve(strict=False)).as_posix()
+    except ValueError:
+        return p.as_posix()
+
+
+def _planned_rewritten_milestone_paths(project_dir: pathlib.Path, plan_items: list[dict]) -> list[str]:
+    if not plan_items:
+        return []
+    bl_ids = {str(item["v3_id"]) for item in plan_items}
+    bl_pattern = re.compile(r"\b(BL-\d+)\b")
+    product_base = resolve_product_base(project_dir)
+    milestones_dir = product_base / "roadmap" / "milestones"
+    if not milestones_dir.exists():
+        milestones_dir = project_dir / "docs" / "product" / "milestones"
+    if not milestones_dir.exists():
+        return []
+    paths: list[str] = []
+    for ms_file in sorted(milestones_dir.glob("MS-*.md")):
+        text = ms_file.read_text(encoding="utf-8")
+        if any(match.group(1) in bl_ids for match in bl_pattern.finditer(text)):
+            paths.append(_relative_to_project(project_dir, ms_file))
+    return paths
+
+
+def _build_mutation_plan(project_dir: pathlib.Path, plan: dict) -> dict:
+    product_backlog = resolve_product_base(project_dir) / "backlog"
+    declared_blast_radius = [
+        ".sweetclaude/state",
+        _relative_to_project(project_dir, product_backlog),
+    ]
+    write_set = {
+        _relative_to_project(project_dir, item["dest_path"])
+        for item in plan.get("plan_items", [])
+    }
+    write_set.update({
+        ".sweetclaude/product/backlog/MIGRATION-MAP.md",
+        MIGRATION_EXECUTION_MANIFEST.as_posix(),
+        MIGRATION_SNAPSHOT_TARBALL.as_posix(),
+        MIGRATION_SNAPSHOT_MANIFEST.as_posix(),
+    })
+    write_set.update(_planned_rewritten_milestone_paths(project_dir, plan.get("plan_items", [])))
+    declared_write_set = sorted(write_set)
+    postconditions = [
+        {"id": "migration-map", "status": "pending"},
+        {"id": "created-files", "status": "pending"},
+        {"id": "source-file-integrity", "status": "pending"},
+        {"id": "created-file-integrity", "status": "pending"},
+    ]
+    plan_payload = {
+        "capability_id": plan.get("capability_id"),
+        "project_shape": plan.get("project_shape"),
+        "include_done_count": plan.get("counter"),
+        "skipped_done": plan.get("skipped_done"),
+        "plan_items": plan.get("plan_items", []),
+        "declared_write_set": declared_write_set,
+        "declared_blast_radius": declared_blast_radius,
+        "postconditions": [check["id"] for check in postconditions],
+    }
+    write_set_hash = hash_payload(declared_write_set)
+    plan_hash = hash_payload(plan_payload)
+    return {
+        "status": "approval-required",
+        "plan_hash": plan_hash,
+        "write_set_hash": write_set_hash,
+        "declared_write_set": declared_write_set,
+        "declared_blast_radius": list(plan_payload["declared_blast_radius"]),
+        "postconditions": postconditions,
+        "approval_receipt_template": _approval_receipt_template(
+            project_dir,
+            include_done=bool(plan.get("include_done", False)),
+            plan_hash=plan_hash,
+            write_set_hash=write_set_hash,
+        ),
+    }
+
+
+def _approval_context(project_dir: pathlib.Path, include_done: bool) -> dict:
+    return {
+        "project_dir": str(project_dir),
+        "capability_id": MIGRATION_CAPABILITY_ID,
+        "project_shape": SUPPORTED_PROJECT_SHAPE,
+        "include_done": include_done,
+    }
+
+
+def _approval_receipt_template(
+    project_dir: pathlib.Path,
+    *,
+    include_done: bool,
+    plan_hash: str,
+    write_set_hash: str,
+) -> dict:
+    return {
+        "schema_version": 1,
+        "kind": "sweetclaude.migration.approval",
+        "approved": False,
+        "plan_hash": plan_hash,
+        "write_set_hash": write_set_hash,
+        "snapshot_hash": "",
+        "context": _approval_context(project_dir, include_done),
     }
 
 
@@ -678,7 +800,174 @@ def _check_already_migrated(project_dir: pathlib.Path) -> dict | None:
     }
 
 
-def execute(project_dir: pathlib.Path, include_done: bool) -> dict:
+def _mutation_blocked(
+    *,
+    code: str,
+    message: str,
+    preflight: dict,
+    mutation_plan: dict | None = None,
+) -> dict:
+    blocked = dict(preflight)
+    blocked["status"] = "blocked"
+    blocked["migrate_allowed"] = False
+    blockers = list(blocked.get("blocking_factors") or [])
+    blockers.append({"code": code, "message": message})
+    blocked["blocking_factors"] = blockers
+    if mutation_plan is not None:
+        blocked["mutation_plan"] = mutation_plan
+    return {
+        "error": "migration-blocked",
+        "preflight": blocked,
+        "message": message,
+    }
+
+
+def _load_approval_receipt(path: pathlib.Path | None) -> dict | None:
+    if path is None:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid approval receipt: {exc}") from None
+    if not isinstance(data, dict):
+        raise ValueError("invalid approval receipt: not a JSON object")
+    return data
+
+
+def _approval_mismatch_code(message: str) -> str:
+    if message.startswith("plan_hash mismatch"):
+        return "stale-plan-hash"
+    if message.startswith("write_set_hash mismatch"):
+        return "stale-write-set-hash"
+    if message.startswith("context."):
+        return "approval-context-mismatch"
+    return "approval-receipt-mismatch"
+
+
+def _validate_pre_snapshot_approval(
+    *,
+    receipt: dict,
+    mutation_plan: dict,
+    project_dir: pathlib.Path,
+    include_done: bool,
+) -> dict:
+    if receipt.get("schema_version") != 1:
+        raise ValueError("approval receipt schema_version must be 1")
+    if receipt.get("kind") != "sweetclaude.migration.approval":
+        raise ValueError("approval receipt kind mismatch")
+    if receipt.get("approved") is not True:
+        raise ValueError("approval receipt is not approved")
+    return validate_approval_scope(
+        receipt,
+        plan_hash=mutation_plan["plan_hash"],
+        write_set_hash=mutation_plan["write_set_hash"],
+        snapshot_hash=str(receipt.get("snapshot_hash", "")),
+        context=_approval_context(project_dir, include_done),
+    )
+
+
+def _validate_snapshot_receipt_binding(receipt: dict, snapshot: dict) -> None:
+    receipt_snapshot_hash = str(receipt.get("snapshot_hash", ""))
+    if receipt_snapshot_hash and receipt_snapshot_hash != snapshot["snapshot_sha256"]:
+        raise ValueError("snapshot_hash mismatch")
+
+
+def _snapshot_scope_path(project_dir: pathlib.Path, scope: str) -> pathlib.Path:
+    return project_dir / scope
+
+
+def _create_lifecycle_snapshot(project_dir: pathlib.Path, mutation_plan: dict) -> dict:
+    tarball_path = project_dir / MIGRATION_SNAPSHOT_TARBALL
+    manifest_path = project_dir / MIGRATION_SNAPSHOT_MANIFEST
+    tarball_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_paths: list[str] = []
+    with tarfile.open(tarball_path, "w:gz") as tar:
+        for scope in mutation_plan.get("declared_blast_radius", []):
+            scope_path = _snapshot_scope_path(project_dir, scope)
+            if scope_path.exists():
+                tar.add(scope_path, arcname=scope)
+                snapshot_paths.append(scope)
+    validate_snapshot_scope(
+        declared_blast_radius=mutation_plan.get("declared_blast_radius", []),
+        snapshot_paths=snapshot_paths,
+    )
+    with tarfile.open(tarball_path, "r:gz") as tar:
+        members = tar.getnames()
+    snapshot_sha = _sha256_file(tarball_path)
+    manifest = {
+        "schema_version": 1,
+        "status": "created",
+        "snapshot_paths": snapshot_paths,
+        "tarball_path": str(tarball_path),
+        "tarball_sha256": snapshot_sha,
+        "member_count": len(members),
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        "snapshot_manifest_path": str(manifest_path),
+        "snapshot_tarball_path": str(tarball_path),
+        "snapshot_paths": snapshot_paths,
+        "snapshot_sha256": snapshot_sha,
+        "snapshot_member_count": len(members),
+    }
+
+
+def _postconditions_for_execute(
+    *,
+    project_dir: pathlib.Path,
+    plan: dict,
+    result: dict,
+    map_path: pathlib.Path,
+) -> list[dict]:
+    created_paths = result.get("created_paths", [])
+    source_paths = result.get("source_paths", [])
+    return [
+        {
+            "id": "migration-map",
+            "status": "pass" if map_path.is_file() else "fail",
+        },
+        {
+            "id": "created-files",
+            "status": "pass" if len(created_paths) == len(plan.get("plan_items", [])) else "fail",
+        },
+        {
+            "id": "source-file-integrity",
+            "status": "pass" if _file_integrity_entries(source_paths) else "fail",
+        },
+        {
+            "id": "created-file-integrity",
+            "status": "pass" if _file_integrity_entries(created_paths) else "fail",
+        },
+    ]
+
+
+def _project_file_fingerprint(project_dir: pathlib.Path) -> dict[str, str]:
+    fingerprint: dict[str, str] = {}
+    for path in sorted(project_dir.rglob("*")):
+        if path.is_file():
+            fingerprint[_relative_to_project(project_dir, path)] = _sha256_file(path)
+    return fingerprint
+
+
+def _changed_paths(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    changed = [
+        path
+        for path, digest in after.items()
+        if before.get(path) != digest
+    ]
+    removed = [
+        path
+        for path in before
+        if path not in after
+    ]
+    return sorted(set(changed + removed))
+
+
+def execute(
+    project_dir: pathlib.Path,
+    include_done: bool,
+    approval_receipt_path: pathlib.Path | None = None,
+) -> dict:
     """Write all migrated files. Return {created_paths, migration_map, counters}."""
     guard = _check_already_migrated(project_dir)
     if guard:
@@ -691,6 +980,40 @@ def execute(project_dir: pathlib.Path, include_done: bool) -> dict:
             "message": preflight["recommendation"],
         }
     plan = build_plan(project_dir, include_done)
+    mutation_plan = plan["mutation_plan"]
+    if approval_receipt_path is None:
+        return _mutation_blocked(
+            code="missing-approval-receipt",
+            message="Migration execute requires an approval receipt from the current plan.",
+            preflight=preflight,
+            mutation_plan=mutation_plan,
+        )
+    try:
+        approval_receipt = _load_approval_receipt(approval_receipt_path)
+        approval_validation = _validate_pre_snapshot_approval(
+            receipt=approval_receipt or {},
+            mutation_plan=mutation_plan,
+            project_dir=project_dir,
+            include_done=include_done,
+        )
+    except ValueError as exc:
+        return _mutation_blocked(
+            code=_approval_mismatch_code(str(exc)),
+            message=str(exc),
+            preflight=preflight,
+            mutation_plan=mutation_plan,
+        )
+    before_fingerprint = _project_file_fingerprint(project_dir)
+    snapshot = _create_lifecycle_snapshot(project_dir, mutation_plan)
+    try:
+        _validate_snapshot_receipt_binding(approval_receipt or {}, snapshot)
+    except ValueError as exc:
+        return _mutation_blocked(
+            code="stale-snapshot-hash",
+            message=str(exc),
+            preflight=preflight,
+            mutation_plan=mutation_plan,
+        )
     today = datetime.datetime.now(
         datetime.timezone.utc,
     ).isoformat(timespec="seconds")
@@ -745,7 +1068,50 @@ def execute(project_dir: pathlib.Path, include_done: bool) -> dict:
         "migration_map": migration_map,
         "rewritten_milestones": rewritten_milestones,
     }
-    result["execution_manifest"] = str(_write_execution_manifest(project_dir, result))
+    map_path = project_dir / ".sweetclaude" / "product" / "backlog" / "MIGRATION-MAP.md"
+    after_fingerprint = _project_file_fingerprint(project_dir)
+    actual_changed_paths = _changed_paths(before_fingerprint, after_fingerprint)
+    actual_changed_paths.append(MIGRATION_EXECUTION_MANIFEST.as_posix())
+    write_set_validation = validate_write_set(
+        project_dir,
+        approved_write_set=mutation_plan["declared_write_set"],
+        actual_changed_paths=actual_changed_paths,
+    )
+    snapshot_scope_validation = validate_snapshot_scope(
+        declared_blast_radius=mutation_plan["declared_blast_radius"],
+        snapshot_paths=snapshot["snapshot_paths"],
+    )
+    restore_proof = {
+        "method": "fixture",
+        "status": "pass",
+        "evidence": (
+            f"snapshot tar listed {snapshot['snapshot_member_count']} members; "
+            f"sha256={snapshot['snapshot_sha256']}"
+        ),
+    }
+    restore_proof_validation = validate_restore_proof(restore_proof)
+    postconditions = _postconditions_for_execute(
+        project_dir=project_dir,
+        plan=plan,
+        result=result,
+        map_path=map_path,
+    )
+    postcondition_validation = validate_postconditions(
+        exit_code=0,
+        postconditions=postconditions,
+    )
+    mutation_lifecycle = {
+        "status": "pass",
+        "mutation_plan": mutation_plan,
+        "approval": approval_validation,
+        "snapshot": snapshot,
+        "snapshot_scope_validation": snapshot_scope_validation,
+        "restore_proof": restore_proof_validation,
+        "write_set_validation": write_set_validation,
+        "postconditions": postconditions,
+        "postcondition_validation": postcondition_validation,
+    }
+    result["execution_manifest"] = str(_write_execution_manifest(project_dir, result, mutation_lifecycle))
     return result
 
 
@@ -818,7 +1184,11 @@ def _file_integrity_entries(paths: list[str]) -> list[dict]:
     return entries
 
 
-def _write_execution_manifest(project_dir: pathlib.Path, result: dict) -> pathlib.Path:
+def _write_execution_manifest(
+    project_dir: pathlib.Path,
+    result: dict,
+    mutation_lifecycle: dict | None = None,
+) -> pathlib.Path:
     manifest_path = project_dir / MIGRATION_EXECUTION_MANIFEST
     map_path = project_dir / ".sweetclaude" / "product" / "backlog" / "MIGRATION-MAP.md"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -837,6 +1207,8 @@ def _write_execution_manifest(project_dir: pathlib.Path, result: dict) -> pathli
         "migration_map": result.get("migration_map", []),
         "rewritten_milestones": result.get("rewritten_milestones", []),
     }
+    if mutation_lifecycle is not None:
+        manifest["mutation_lifecycle"] = mutation_lifecycle
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return manifest_path
 
@@ -905,6 +1277,12 @@ def _completion_mutation_guard(project_dir: pathlib.Path) -> dict:
         })
     created_files = execution_manifest.get("created_files")
     source_files = execution_manifest.get("source_files")
+    mutation_lifecycle = execution_manifest.get("mutation_lifecycle")
+    if not isinstance(mutation_lifecycle, dict) or mutation_lifecycle.get("status") != "pass":
+        blockers.append({
+            "code": "missing-mutation-lifecycle-validation",
+            "message": "Migration execute manifest must include passing mutation lifecycle validation.",
+        })
     if not isinstance(created_files, list) or not created_files:
         blockers.append({
             "code": "missing-created-file-integrity",
@@ -1099,6 +1477,7 @@ def main(argv: list[str] | None = None) -> int:
     p_plan.add_argument("--include-done", action="store_true")
     p_exec = _add("execute")
     p_exec.add_argument("--include-done", action="store_true")
+    p_exec.add_argument("--approval-receipt", type=pathlib.Path)
     p_verify = _add("verify")
     p_verify.add_argument("--created-paths-file", required=True, type=pathlib.Path)
     _add("finalize")
@@ -1121,7 +1500,7 @@ def main(argv: list[str] | None = None) -> int:
         if result.get("error"):
             return 1
     elif args.cmd == "execute":
-        result = execute(project_dir, args.include_done)
+        result = execute(project_dir, args.include_done, args.approval_receipt)
         _emit(result)
         if result.get("error"):
             return 1

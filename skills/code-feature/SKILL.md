@@ -15,6 +15,18 @@ STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exi
 
 Build feature: $ARGUMENTS
 
+## Process Control Gate
+
+Before Step 3 starts, read `skills/process-controls.md` and create or update
+`.sweetclaude/state/process-control-ledger.yaml`. The Level 3 pipeline may not
+spawn a test writer, QA caucus, implementer, or background agent when the
+ledger is missing, over budget, stale, or in a stop disposition.
+
+If the QA caucus, RED validation, implementation, or verification step produces
+repeated blockers that would require another caucus/correction loop, stop and
+ask the user for a bounded decision. Do not continue autonomous patch-test-
+recaucus cycles under the same story contract.
+
 ## Process
 
 ### Step 0: Story Branch Setup
@@ -80,6 +92,11 @@ Run the full Level 3 pipeline from `sweetclaude:code-tdd`:
    - `sweetclaude:qa-caucus-integration` — cross-cutting concerns
    Consolidate findings. Present gaps to user for approval. Add approved gaps to test files.
 
+   The process-control ledger must show one available three-reviewer caucus
+   budget before spawn. After the caucus, update caucus round, reviewer count,
+   and blocking finding counts. A second blocking caucus failure requires user
+   decision or contract reopen before more edits or reviewer dispatch.
+
 3. **Verify RED.** Run tests. All must fail. If any pass unexpectedly, investigate before continuing.
 
 4. **User approval.** Present the test files. Wait for explicit approval before implementation begins.
@@ -87,6 +104,9 @@ Run the full Level 3 pipeline from `sweetclaude:code-tdd`:
 5. **Commit tests.** Git checkpoint: `test: RED - {feature-name} failing tests`
 
 6. **Spawn implementer subagent.** Receives: test files (read-only), existing codebase. Never sees user stories, Gherkin, or test-writing reasoning. Instruction: make the tests pass with minimum code.
+
+   Before dispatching, confirm the process-control ledger has implementer
+   budget available and no active stop disposition.
 
    Before dispatching, offer via AskUserQuestion:
    - **Implement now (inline)** — run in this conversation; see progress in real time

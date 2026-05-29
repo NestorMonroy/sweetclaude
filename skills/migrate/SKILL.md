@@ -165,7 +165,16 @@ Then present **AskUserQuestion**:
 ## Step 5: Execute
 
 ```bash
-EXEC_OUT=$(python3 "$SCRIPT" execute --project-dir . $INCLUDE_DONE)
+APPROVAL_RECEIPT=".sweetclaude/state/migrations/v3-to-v4-approval-receipt.json"
+mkdir -p "$(dirname "$APPROVAL_RECEIPT")"
+echo "$PLAN_OUT" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+receipt = dict(d['mutation_plan']['approval_receipt_template'])
+receipt['approved'] = True
+json.dump(receipt, open('$APPROVAL_RECEIPT', 'w'), indent=2, sort_keys=True)
+"
+EXEC_OUT=$(python3 "$SCRIPT" execute --project-dir . $INCLUDE_DONE --approval-receipt "$APPROVAL_RECEIPT")
 echo "$EXEC_OUT" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)

@@ -80,7 +80,8 @@ Stop. Do not mutate files.
 ## Step 4: Plan
 
 ```bash
-python3 "$SCRIPT" plan --project-dir . --pretty
+PLAN_OUT=$(python3 "$SCRIPT" plan --project-dir . --pretty)
+echo "$PLAN_OUT"
 ```
 
 Parse the JSON output and render:
@@ -112,7 +113,16 @@ If the user chooses `Stop`, stop. Do not mutate files.
 ## Step 6: Execute
 
 ```bash
-python3 "$SCRIPT" execute --project-dir . --approve --pretty
+APPROVAL_RECEIPT=".sweetclaude/state/recovery-approval-receipt.json"
+mkdir -p "$(dirname "$APPROVAL_RECEIPT")"
+echo "$PLAN_OUT" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+receipt = dict(d['mutation_plan']['approval_receipt_template'])
+receipt['approved'] = True
+json.dump(receipt, open('$APPROVAL_RECEIPT', 'w'), indent=2, sort_keys=True)
+"
+python3 "$SCRIPT" execute --project-dir . --approve --approval-receipt "$APPROVAL_RECEIPT" --pretty
 ```
 
 Parse the JSON output and render:

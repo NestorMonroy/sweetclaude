@@ -26,6 +26,15 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from maintenance.capability_manifest import capability_config, project_shape_config
+from mutation_safety import (
+    hash_payload,
+    should_stop_repair_loop,
+    validate_approval_scope,
+    validate_postconditions,
+    validate_restore_proof,
+    validate_snapshot_scope,
+    validate_write_set,
+)
 
 try:
     from recovery.characterize_project import characterize_project
@@ -139,6 +148,28 @@ def _project_relative_path(project: Path, path: Path | str) -> str:
         except ValueError:
             return str(candidate)
     return candidate.as_posix()
+
+
+def _project_file_fingerprint(project: Path) -> dict[str, str]:
+    fingerprint: dict[str, str] = {}
+    for path in sorted(project.rglob("*")):
+        if path.is_file():
+            fingerprint[_project_relative_path(project, path)] = _sha256_file(path)
+    return fingerprint
+
+
+def _changed_paths(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    changed = [
+        path
+        for path, digest in after.items()
+        if before.get(path) != digest
+    ]
+    removed = [
+        path
+        for path in before
+        if path not in after
+    ]
+    return sorted(set(changed + removed))
 
 
 def _resolve_project_path(project: Path, rel_path: str) -> Path:
@@ -317,6 +348,96 @@ def _validate_recovery_plan_capability(plan: dict[str, Any]) -> None:
         raise ValueError(
             f"recovery capability {capability_id} does not support project_shape={project_shape}"
         )
+
+
+def _approval_context(project: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "project_dir": str(project),
+        "plan_id": plan.get("plan_id"),
+        "capability_id": plan.get("capability_id"),
+        "project_shape": plan.get("project_shape"),
+    }
+
+
+def _recovery_write_set(plan: dict[str, Any]) -> list[str]:
+    write_set = {str(path) for path in plan.get("affected_paths", [])}
+    write_set.add((RECOVERY_RUNS_DIR.as_posix()).rstrip("/") + "/")
+    return sorted(write_set)
+
+
+def _recovery_plan_payload(plan: dict[str, Any], write_set: list[str]) -> dict[str, Any]:
+    return {
+        "plan_id": plan.get("plan_id"),
+        "capability_id": plan.get("capability_id"),
+        "project_shape": plan.get("project_shape"),
+        "operations": list(plan.get("operations", [])),
+        "declared_write_set": write_set,
+        "declared_blast_radius": list(plan.get("snapshot", {}).get("paths", [])),
+        "verification": list(plan.get("verification", [])),
+    }
+
+
+def _attach_mutation_plan(project: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    write_set = _recovery_write_set(plan)
+    payload = _recovery_plan_payload(plan, write_set)
+    plan_hash = hash_payload(payload)
+    write_set_hash = hash_payload(write_set)
+    mutation_plan = {
+        "status": "approval-required" if plan.get("can_execute_after_snapshot") else "not-executable",
+        "plan_hash": plan_hash,
+        "write_set_hash": write_set_hash,
+        "declared_write_set": write_set,
+        "declared_blast_radius": list(payload["declared_blast_radius"]),
+        "postconditions": [
+            {"id": check.get("id"), "status": "pending"}
+            for check in plan.get("verification", [])
+        ] + [{"id": "verification", "status": "pending"}],
+        "approval_receipt_template": {
+            "schema_version": 1,
+            "kind": "sweetclaude.recovery.approval",
+            "approved": False,
+            "plan_hash": plan_hash,
+            "write_set_hash": write_set_hash,
+            "snapshot_hash": "",
+            "context": _approval_context(project, plan),
+        },
+    }
+    plan["mutation_plan"] = mutation_plan
+    return plan
+
+
+def _load_approval_receipt(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid approval receipt: {exc}") from None
+    if not isinstance(data, dict):
+        raise ValueError("invalid approval receipt: not a JSON object")
+    return data
+
+
+def _validate_approval_receipt(
+    *,
+    receipt: dict[str, Any],
+    project: Path,
+    plan: dict[str, Any],
+) -> dict[str, Any]:
+    if receipt.get("schema_version") != 1:
+        raise ValueError("approval receipt schema_version must be 1")
+    if receipt.get("kind") != "sweetclaude.recovery.approval":
+        raise ValueError("approval receipt kind mismatch")
+    if receipt.get("approved") is not True:
+        raise ValueError("approval receipt is not approved")
+    mutation_plan = plan["mutation_plan"]
+    return validate_approval_scope(
+        receipt,
+        plan_hash=mutation_plan["plan_hash"],
+        write_set_hash=mutation_plan["write_set_hash"],
+        snapshot_hash=str(receipt.get("snapshot_hash", "")),
+        context=_approval_context(project, plan),
+    )
 
 
 def _snapshot_paths(project: Path, diagnosis: dict[str, Any]) -> list[str]:
@@ -511,6 +632,7 @@ def _create_snapshot(project: Path, plan: dict[str, Any]) -> dict[str, Any]:
         "run_id": run_id,
         "run_dir": str(run_dir),
         "path": str(snapshot_path),
+        "sha256": _sha256_file(snapshot_path),
         "paths": snapshot_paths,
         "file_count": len(files),
         "files": files,
@@ -901,6 +1023,7 @@ def _finalize_execution_result(
 def execute_project(
     project_dir: Path | str,
     approve: bool = False,
+    approval_receipt: Path | str | None = None,
     fail_after_operations: int | None = None,
 ) -> dict[str, Any]:
     if not approve:
@@ -911,8 +1034,24 @@ def execute_project(
     if not plan.get("can_execute_after_snapshot"):
         raise ValueError(f"plan is not executable: {plan.get('plan_status')}")
     _validate_recovery_plan_capability(plan)
+    if approval_receipt is None:
+        raise PermissionError("execute requires an approval receipt")
+    receipt = _load_approval_receipt(Path(approval_receipt))
+    approval_validation = _validate_approval_receipt(
+        receipt=receipt or {},
+        project=project,
+        plan=plan,
+    )
 
+    before_fingerprint = _project_file_fingerprint(project)
     snapshot = _create_snapshot(project, plan)
+    receipt_snapshot_hash = str((receipt or {}).get("snapshot_hash", ""))
+    if receipt_snapshot_hash and receipt_snapshot_hash != snapshot["sha256"]:
+        raise ValueError("snapshot_hash mismatch")
+    snapshot_scope_validation = validate_snapshot_scope(
+        declared_blast_radius=plan["mutation_plan"]["declared_blast_radius"],
+        snapshot_paths=snapshot["paths"],
+    )
     run_dir = Path(snapshot["run_dir"])
     result: dict[str, Any] = {
         "schema_version": EXECUTION_SCHEMA_VERSION,
@@ -925,6 +1064,7 @@ def execute_project(
         "snapshot": snapshot,
         "operations": [],
         "verification": [],
+        "max_resume_attempts": 3,
     }
     manifest_path = run_dir / "execution-manifest.json"
     _atomic_write_json(manifest_path, result)
@@ -943,6 +1083,25 @@ def execute_project(
                 )
 
         _finalize_execution_result(project, snapshot, result, manifest_path)
+        after_fingerprint = _project_file_fingerprint(project)
+        write_set_validation = validate_write_set(
+            project,
+            approved_write_set=plan["mutation_plan"]["declared_write_set"],
+            actual_changed_paths=_changed_paths(before_fingerprint, after_fingerprint),
+        )
+        postcondition_validation = validate_postconditions(
+            exit_code=0,
+            postconditions=result["verification"],
+        )
+        result["mutation_lifecycle"] = {
+            "status": "pass",
+            "mutation_plan": plan["mutation_plan"],
+            "approval": approval_validation,
+            "snapshot_scope_validation": snapshot_scope_validation,
+            "write_set_validation": write_set_validation,
+            "postcondition_validation": postcondition_validation,
+        }
+        _atomic_write_json(manifest_path, result)
     except Exception as exc:
         result["status"] = "failed"
         result["error"] = str(exc)
@@ -972,6 +1131,22 @@ def resume_project(run_dir: Path | str) -> dict[str, Any]:
     snapshot_path = Path(snapshot["path"])
     if not snapshot_path.exists():
         raise FileNotFoundError(f"snapshot not found: {snapshot_path}")
+
+    repair_loop = should_stop_repair_loop(
+        attempts=int(result.get("resume_count", 0) or 0),
+        max_attempts=int(result.get("max_resume_attempts", 3) or 3),
+        previous_postcondition_hash=result.get("previous_postcondition_hash"),
+        current_postcondition_hash=result.get("current_postcondition_hash"),
+        new_regressions=list(result.get("new_regressions", []) or []),
+    )
+    if repair_loop["stop"]:
+        result = dict(result)
+        result["command"] = "resume"
+        result["status"] = "stopped"
+        result["repair_loop"] = repair_loop
+        result["report_path"] = _write_recovery_report(run_path, result)
+        _atomic_write_json(manifest_path, result)
+        return result
 
     if result.get("status") == "succeeded":
         result = dict(result)
@@ -1030,6 +1205,13 @@ def rollback_project(run_dir: Path | str) -> dict[str, Any]:
                 raise ValueError(f"snapshot member escapes project root: {member.name}")
         tar.extractall(project)
 
+    proof = validate_restore_proof({
+        "method": "command",
+        "status": "pass",
+        "command": f"python3 scripts/recovery/recover_project.py rollback --run-dir {run_path}",
+        "evidence": f"restored snapshot {snapshot_path}",
+    })
+
     result = {
         "schema_version": EXECUTION_SCHEMA_VERSION,
         "command": "rollback",
@@ -1038,6 +1220,7 @@ def rollback_project(run_dir: Path | str) -> dict[str, Any]:
         "run_dir": str(run_path),
         "status": "rolled_back",
         "snapshot_path": str(snapshot_path),
+        "restore_proof": proof,
     }
     result["report_path"] = _write_recovery_report(run_path, manifest, rollback=result)
     _atomic_write_json(run_path / "rollback-manifest.json", result)
@@ -1082,7 +1265,7 @@ def plan_project(project_dir: Path | str) -> dict[str, Any]:
     plan_id = _plan_id(project, route, operations)
     affected_paths = sorted(dict.fromkeys(op["target"] for op in operations))
 
-    return {
+    plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "command": "plan",
         "plan_id": plan_id,
@@ -1135,6 +1318,7 @@ def plan_project(project_dir: Path | str) -> dict[str, Any]:
         ] if can_plan else [],
         "next_step": next_step,
     }
+    return _attach_mutation_plan(project, plan)
 
 
 def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
@@ -1374,6 +1558,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Required confirmation for mutating recovery execution",
     )
     execute_parser.add_argument(
+        "--approval-receipt",
+        type=Path,
+        help="Approval receipt generated from the current recovery plan",
+    )
+    execute_parser.add_argument(
         "--fail-after-operations",
         type=int,
         default=None,
@@ -1410,6 +1599,7 @@ def main(argv: list[str] | None = None) -> int:
             result = execute_project(
                 Path(args.project_dir),
                 approve=args.approve,
+                approval_receipt=args.approval_receipt,
                 fail_after_operations=args.fail_after_operations,
             )
         elif args.command == "rollback":

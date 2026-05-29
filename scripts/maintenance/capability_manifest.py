@@ -14,6 +14,8 @@ import yaml
 
 
 MANIFEST_RELATIVE_PATH = Path("config") / "capability-manifest.yaml"
+MUTATION_CLASSES = {"read_only", "planned_write", "destructive", "release"}
+UNSUPPORTED_STATE_BEHAVIORS = {"diagnose_only", "block", "escalate"}
 
 
 def _versionless_config_path() -> Path:
@@ -44,6 +46,85 @@ def _require_string_list(config: dict[str, Any], key: str, context: str) -> list
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ValueError(f"Capability manifest {context}.{key} must be a string list")
     return value
+
+
+def _require_optional_string(config: dict[str, Any], key: str, context: str) -> None:
+    value = config.get(key)
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"Capability manifest {context}.{key} must be a string or null")
+
+
+def _validate_command_entrypoint(config: dict[str, Any], context: str) -> None:
+    entrypoint = config.get("command_entrypoint")
+    if entrypoint is None:
+        return
+    if not isinstance(entrypoint, dict):
+        raise ValueError(f"Capability manifest {context}.command_entrypoint must be a mapping")
+    for key in ("slash_command", "script", "module"):
+        _require_optional_string(entrypoint, key, f"{context}.command_entrypoint")
+
+
+def _validate_postconditions(config: dict[str, Any], context: str) -> None:
+    postconditions = config.get("postconditions")
+    if postconditions is None:
+        return
+    if not isinstance(postconditions, list):
+        raise ValueError(f"Capability manifest {context}.postconditions must be a list")
+    for index, postcondition in enumerate(postconditions, start=1):
+        pc_context = f"{context}.postconditions[{index}]"
+        if not isinstance(postcondition, dict):
+            raise ValueError(f"Capability manifest {pc_context} must be a mapping")
+        for key in ("id", "check"):
+            if not isinstance(postcondition.get(key), str) or not postcondition[key]:
+                raise ValueError(f"Capability manifest {pc_context}.{key} must be a non-empty string")
+
+
+def _validate_rollback_support(config: dict[str, Any], context: str) -> None:
+    rollback = config.get("rollback_support")
+    if rollback is None:
+        if config.get("mutates_project"):
+            raise ValueError(f"Capability manifest {context}.rollback_support is required for mutating capabilities")
+        return
+    if not isinstance(rollback, dict):
+        raise ValueError(f"Capability manifest {context}.rollback_support must be a mapping")
+    if not isinstance(rollback.get("supported"), bool):
+        raise ValueError(f"Capability manifest {context}.rollback_support.supported must be a boolean")
+    if config.get("mutates_project") and not rollback["supported"]:
+        raise ValueError(f"Capability manifest {context}.rollback_support.supported must be true for mutating capabilities")
+    command = rollback.get("command")
+    if rollback["supported"] and (not isinstance(command, str) or not command):
+        raise ValueError(f"Capability manifest {context}.rollback_support.command must be a non-empty string when rollback is supported")
+    _require_string_list(rollback, "limitations", f"{context}.rollback_support")
+
+
+def _validate_unsupported_states(config: dict[str, Any], context: str) -> None:
+    unsupported_states = config.get("unsupported_states")
+    if unsupported_states is None:
+        return
+    if not isinstance(unsupported_states, list):
+        raise ValueError(f"Capability manifest {context}.unsupported_states must be a list")
+    for index, state in enumerate(unsupported_states, start=1):
+        state_context = f"{context}.unsupported_states[{index}]"
+        if not isinstance(state, dict):
+            raise ValueError(f"Capability manifest {state_context} must be a mapping")
+        if not isinstance(state.get("condition"), str) or not state["condition"]:
+            raise ValueError(f"Capability manifest {state_context}.condition must be a non-empty string")
+        behavior = state.get("behavior")
+        if behavior not in UNSUPPORTED_STATE_BEHAVIORS:
+            raise ValueError(
+                f"Capability manifest {state_context}.behavior must be one of "
+                f"{sorted(UNSUPPORTED_STATE_BEHAVIORS)}"
+            )
+
+
+def _validate_version_metadata(config: dict[str, Any], context: str) -> None:
+    version_metadata = config.get("version_metadata")
+    if version_metadata is None:
+        return
+    if not isinstance(version_metadata, dict):
+        raise ValueError(f"Capability manifest {context}.version_metadata must be a mapping")
+    _require_optional_string(version_metadata, "introduced_in", f"{context}.version_metadata")
+    _require_optional_string(version_metadata, "deprecated_in", f"{context}.version_metadata")
 
 
 def validate_manifest(data: dict[str, Any]) -> None:
@@ -94,6 +175,30 @@ def validate_manifest(data: dict[str, Any]) -> None:
             _require_bool(config, "supported", context)
         if config.get("mutates_project") and not config.get("requires_approval"):
             raise ValueError(f"Capability manifest {context} mutates_project requires approval")
+        mutation_class = config.get("mutation_class")
+        if mutation_class is not None and mutation_class not in MUTATION_CLASSES:
+            raise ValueError(
+                f"Capability manifest {context}.mutation_class must be one of {sorted(MUTATION_CLASSES)}"
+            )
+        if config.get("mutates_project") and mutation_class not in {
+            "planned_write", "destructive", "release",
+        }:
+            raise ValueError(
+                f"Capability manifest {context}.mutation_class must describe mutating behavior"
+            )
+        if not config.get("mutates_project") and mutation_class in {"planned_write", "destructive"}:
+            raise ValueError(
+                f"Capability manifest {context}.mutation_class cannot be mutating when mutates_project is false"
+            )
+        _validate_command_entrypoint(config, context)
+        if config.get("required_preconditions") is not None:
+            _require_string_list(config, "required_preconditions", context)
+        if config.get("snapshot_scope_hints") is not None:
+            _require_string_list(config, "snapshot_scope_hints", context)
+        _validate_postconditions(config, context)
+        _validate_rollback_support(config, context)
+        _validate_unsupported_states(config, context)
+        _validate_version_metadata(config, context)
 
     for shape, config in project_shapes.items():
         context = f"project_shapes.{shape}"
