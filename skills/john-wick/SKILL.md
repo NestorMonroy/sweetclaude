@@ -29,6 +29,7 @@ Fully autonomous, resumable SDLC pipeline. Runs from discovery artifacts to merg
 - [state-schema.md](state-schema.md) — `john-wick.yaml` schema
 - [report-format.md](report-format.md) — Test report template
 - [severity-classifier.md](severity-classifier.md) — Significant vs not-significant decision rules
+- [../process-controls.md](../process-controls.md) — caucus, subagent, WLF, and correction-loop stop rules
 
 ---
 
@@ -167,6 +168,14 @@ If any step produces an unrecoverable error — including but not limited to: sk
 **Skill invocations are transparent.** When invoking an existing skill (product-prd, design-architecture, etc.), John Wick uses the `Skill` tool exactly as a user would. It does not bypass preflight guards, skip sections, or pass undocumented flags (except `--autonomous` which is an explicit extension added in Plan 1).
 
 **State before steps.** `john-wick.yaml current_step` is updated to the next step before that step begins. A resume after any interruption will re-enter the correct step without duplication.
+
+**Process controls before autonomous dispatch.** Before any step spawns
+subagents, runs a caucus, invokes an implementer, or enters a correction loop,
+read `process_control` in `john-wick.yaml` and apply
+`../process-controls.md`. If `process_control` is missing, initialize it before
+dispatch. If it is over budget or has an active stop disposition, set
+`status: waiting_for_user`, populate `interactive_gate_pending`, and stop. Do
+not spawn another agent or caucus while the stop is active.
 
 **Multi-service warning.** John Wick is designed for one service at a time. If the service contract analysis (DS3) identifies that a dependency's spec is absent or marked in-progress (another John Wick run), flag explicitly:
 > "⚠ Dependency in-flight: [{service}] appears to be under active development. Contract analysis for this dependency may be stale by the time implementation begins. Consider sequencing: finish the upstream service's John Wick pipeline through DS7 before continuing."

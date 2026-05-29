@@ -11,6 +11,12 @@ Update `current_step: P2`.
 
 ## P2 — Story review caucus (Autonomous)
 
+Before spawning the caucus, apply `../process-controls.md` using
+`john-wick.yaml process_control.steps.P2`. If no budget remains or a stop
+disposition is active, set `status: waiting_for_user`,
+`interactive_gate_pending.step: P2`, and ask whether to approve a fresh caucus
+budget, reopen/split stories, or pause. Do not spawn reviewers while stopped.
+
 Run a 2-turn story review caucus with these four personas (pass inline — do not rely on a preset file):
 
 **Personas for story-review:**
@@ -23,6 +29,10 @@ Invoke caucus with: stories path, personas above, 2 turns, question: "Are these 
 
 Write caucus output to `.sweetclaude/caucus/story-review-[YYYYMMDD].md`.
 Record in `caucus_outputs`: `{step: P2, path: ...}`.
+Update `process_control.steps.P2` with one caucus round and four reviewer
+agents used. If the caucus returns blocking findings that imply the story
+contract is unstable, increment blocking failures and stop for user decision or
+story split before any recaucus.
 Update `current_step: P3`.
 
 ## P3 — Apply uncontested story adjustments (Autonomous)

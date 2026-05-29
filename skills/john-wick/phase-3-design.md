@@ -66,6 +66,13 @@ Update `current_step: DS4`.
 
 ## DS4 — Architecture and impact caucus (Autonomous)
 
+Before spawning the caucus, apply `../process-controls.md` using
+`john-wick.yaml process_control.steps.DS4`. If no budget remains or a stop
+disposition is active, set `status: waiting_for_user`,
+`interactive_gate_pending.step: DS4`, and ask whether to approve a fresh
+caucus budget, reopen the design contract, or pause. Do not spawn reviewers
+while stopped.
+
 Run a 3-turn architecture review caucus with these four personas (pass inline):
 
 **Personas for architecture-impact:**
@@ -78,6 +85,10 @@ Invoke caucus with: architecture doc, tech spec, contract analysis, compliance c
 
 Write output to `.sweetclaude/caucus/architecture-review-[YYYYMMDD].md`.
 Record in `caucus_outputs`: `{step: DS4, path: ...}`.
+Update `process_control.steps.DS4` with one caucus round and four reviewer
+agents used. If the caucus returns blocking findings that require another
+caucus or expand the architecture contract, increment blocking failures and
+stop for user decision before any recaucus.
 Update `current_step: DS5`.
 
 ## DS5 — Classify design findings (Autonomous)

@@ -26,6 +26,13 @@ If the scope check passes (≤ 8 epics): Update `current_step: D2`. (Override-ac
 
 ## D2 — PRD caucus (Autonomous)
 
+Before spawning the caucus, apply `../process-controls.md` using
+`john-wick.yaml process_control.steps.D2`. If no budget remains or a stop
+disposition is active, set `status: waiting_for_user`,
+`interactive_gate_pending.step: D2`, and ask whether to approve a fresh caucus
+budget, reopen the PRD contract, or pause. Do not spawn reviewers while
+stopped.
+
 Run a 3-turn product design review caucus on the PRD. Pass these four personas inline to the caucus skill — do not rely on a preset file:
 
 **Personas for product-design-review:**
@@ -38,6 +45,10 @@ Invoke the caucus skill with: PRD path, personas above, 3 turns, question: "Does
 
 Write caucus output to `.sweetclaude/caucus/prd-review-[YYYYMMDD].md`.
 Record in `caucus_outputs`: `{step: D2, path: ...}`.
+Update `process_control.steps.D2` with one caucus round and four reviewer
+agents used. If the caucus returns blocking findings that require another
+caucus or substantial contract expansion, increment blocking failures and stop
+for user decision before any recaucus.
 Update `current_step: D3`.
 
 ## D3 — Apply uncontested findings (Autonomous)

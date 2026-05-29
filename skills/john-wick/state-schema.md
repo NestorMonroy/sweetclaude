@@ -42,6 +42,22 @@ checkin_outputs:
     findings: none | minor | significant
     escalated: boolean
 
+process_control:
+  budget_approved: boolean
+  max_caucus_rounds_per_step: integer
+  max_reviewer_agents_per_budget: integer
+  max_blocking_caucus_failures_per_step: integer
+  max_process_failures_before_gate: integer
+  active_stop_disposition: string | null
+  human_resume_approved: boolean
+  steps:
+    STEP_ID:
+      caucus_rounds_used: integer
+      reviewer_agents_used: integer
+      blocking_caucus_failures: integer
+      process_failure_count: integer
+      adversarial_pass_state_bypasses: integer
+
 interactive_gate_pending:
   step: string | null
   description: string | null

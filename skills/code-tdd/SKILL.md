@@ -16,6 +16,30 @@ STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exi
 
 Tests specify behavior. Implementation satisfies tests. Hooks enforce this. No exceptions.
 
+## Process Control Gate
+
+Before any Level 2 or Level 3 subagent dispatch, and before any QA caucus, read
+`skills/process-controls.md` and create or update
+`.sweetclaude/state/process-control-ledger.yaml`.
+
+Do not spawn a test writer, implementer, reviewer, or caucus if the ledger is
+missing, over budget, stale, or in a stop disposition. Stop and ask the user
+for a bounded decision instead.
+
+Default budget for this skill without explicit user approval:
+
+- one test-writer dispatch;
+- one implementer dispatch;
+- one three-reviewer QA caucus;
+- no more than two caucus/correction rounds for the same story;
+- no more than one blocking caucus failure before user decision or contract
+  reopen.
+
+If repeated caucus findings, repeated failed RED/GREEN correction, WLF/process
+failure records, or pass-state bypasses indicate that the story/test contract is
+unstable, stop. Do not keep patching tests or spawning more agents under the
+same contract.
+
 ## Branch Check
 
 ```bash
@@ -115,6 +139,12 @@ Use AskUserQuestion with these options:
 
    Each agent receives the test file paths and the `.feature` file for context. After all three return, consolidate gaps. Present to user for approval. Add approved gaps to test files.
 
+   Before spawn, the process-control ledger must show an available
+   three-reviewer caucus budget. After the caucus, update the ledger with
+   reviewer count, caucus round count, and blocking-finding count. If this is
+   the second blocking caucus failure for the story, stop for user decision or
+   contract reopen before any further test edits or caucus spawn.
+
 6. **Verify RED:** Run tests. All must fail.
 
 7. **User approval.** Present the test files. Wait for explicit approval.
@@ -122,6 +152,9 @@ Use AskUserQuestion with these options:
 8. **Commit tests.** Git checkpoint.
 
 9. **Spawn implementer subagent.** Same rules as Level 2. Tests are read-only. The implementer runs in the main project dir — it never sees the Gherkin spec or test-writer reasoning.
+
+   Before spawn, the process-control ledger must show implementer budget
+   available and no active stop disposition.
 
 10. **Verify GREEN.** All tests pass.
 

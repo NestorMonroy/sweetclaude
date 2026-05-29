@@ -15,6 +15,15 @@ STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exi
 
 Implement GitHub issue $ARGUMENTS using the SweetClaude pipeline.
 
+## Process Control Gate
+
+Before invoking `sweetclaude:code-tdd` or any implementation subagent path,
+read `skills/process-controls.md` and create or update
+`.sweetclaude/state/process-control-ledger.yaml`. If the ledger is missing,
+over budget, stale, or in a stop disposition, pause and ask the user for a
+bounded decision before dispatching more agents or continuing a correction
+loop.
+
 ## Process
 
 0. **Story Branch Setup.**
