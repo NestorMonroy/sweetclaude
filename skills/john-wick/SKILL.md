@@ -177,6 +177,17 @@ dispatch. If it is over budget or has an active stop disposition, set
 `status: waiting_for_user`, populate `interactive_gate_pending`, and stop. Do
 not spawn another agent or caucus while the stop is active.
 
+**Success criteria contract authority.** John Wick must create and freeze a
+`success_criteria_contract` during Define before Plan, Design, Implement Prep,
+Implement, Verify, review, release, or caucus completion evaluation can proceed.
+Persist the contract path, `success_criteria_contract_hash`, and
+`criterion_ids` in `john-wick.yaml`. Later phases may create
+`criteria-amendment-request.yaml`, backlog items, split-story proposals, or
+human escalations, but they may not silently change the frozen criteria.
+Completion is valid only when `success-criteria-ledger.json` evaluates every
+frozen criterion and reports `all_success_criteria_passed == true`. No review,
+caucus, verification, release, or completion step may add completion criteria.
+
 **Multi-service warning.** John Wick is designed for one service at a time. If the service contract analysis (DS3) identifies that a dependency's spec is absent or marked in-progress (another John Wick run), flag explicitly:
 > "⚠ Dependency in-flight: [{service}] appears to be under active development. Contract analysis for this dependency may be stale by the time implementation begins. Consider sequencing: finish the upstream service's John Wick pipeline through DS7 before continuing."
 

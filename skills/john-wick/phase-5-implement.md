@@ -22,6 +22,7 @@ For each issue in issue_list where status = pending:
      - Architecture doc and tech spec
      - Locked test files (read-only — test-guardian enforces this)
      - Compliance context
+     - Frozen `success_criteria_contract_hash` and relevant `criterion_ids`
 
      Before invoking, apply `../process-controls.md` using
      `john-wick.yaml process_control.steps.IM1-issue-{number}`. If implementer
@@ -45,11 +46,17 @@ For each issue in issue_list where status = pending:
        ledger reports a stop.
 
   6. Once tests are green (after step 5 completes — not after each individual fix attempt):
+     Update `.sweetclaude/reports/success-criteria-ledger.json` for the current
+     issue. The ledger must map each relevant frozen criterion id to accepted
+     evidence, pass/fail status, evidence freshness, and the evaluated
+     `success_criteria_contract_hash`. The issue may be marked complete only
+     when its relevant ledger entries support `all_success_criteria_passed == true`.
+
      If phase_checkins=true: invoke sweetclaude:john-wick-checkin with:
      - phase=IMPLEMENT
-     - question=Is this implementation drifting from the approved design? Does the code match the architecture and tech spec?
+     - question=Is this implementation drifting from the approved design? Does the code match the architecture, tech spec, frozen success_criteria_contract_hash, and criterion_ids?
      - discovery_artifacts={paths from john-wick.yaml}
-     - phase_artifacts={architecture path, tech spec path, current issue branch diff}
+     - phase_artifacts={architecture path, tech spec path, current issue branch diff, success-criteria-ledger.json}
      - post_lock=true
      If significant: escalate to IM2 (cannot modify locked tests).
      Record significant drift as a blocking failure in the process-control

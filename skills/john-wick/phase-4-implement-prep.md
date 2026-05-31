@@ -4,6 +4,11 @@
 
 Update `current_phase: IMPLEMENT_PREP` in `john-wick.yaml`.
 
+Before spawning the test writer, verify that `john-wick.yaml` contains
+`success_criteria_contract.path`, `success_criteria_contract_hash`, and
+`criterion_ids`, and that the hash still matches the frozen contract file.
+Stop for user decision if the contract is missing, stale, or contradictory.
+
 Apply `../process-controls.md` using
 `john-wick.yaml process_control.steps.IP1`. If subagent budget is missing,
 exhausted, or stopped, set `status: waiting_for_user`,
@@ -11,6 +16,10 @@ exhausted, or stopped, set `status: waiting_for_user`,
 writer budget or pause. Do not spawn the test writer while stopped.
 
 Spawn a test writer subagent (TDD Level 3). The subagent receives: all `.feature` files from `.sweetclaude/features/`, and existing test file patterns from the project for structural context. Do NOT pass the architecture document, tech spec, contract analysis, or source implementation files — the subagent has no implementation knowledge and writes tests from Gherkin only.
+
+The generated tests must trace to frozen `criterion_ids`. Missing coverage is a
+pre-lock test gap or `criteria-amendment-request.yaml`; it is not permission to
+add completion criteria.
 
 The subagent writes test files and commits them. Record all test file paths in `created_artifacts` with `type: tests`. Update `process_control.steps.IP1` with the subagent dispatch. Update `current_step: IP2`.
 
@@ -29,6 +38,10 @@ Spawn three QA caucus subagents in parallel:
 - `sweetclaude:qa-caucus-integration`
 
 Input for each: test files, Gherkin specs, stories, PRD.
+
+Input also includes the frozen success criteria contract path and
+`success_criteria_contract_hash`. QA reviewers may identify criterion coverage
+gaps but may not add completion criteria.
 
 Consolidate gaps using the same uncontested/contested rule as D3: a gap is uncontested if all three caucus outputs flag it, or two flag it and one is silent. Write the consolidated gap list to `.sweetclaude/caucus/qa-coverage-[YYYYMMDD].md`. Record in `caucus_outputs`: `{step: IP2, path: ...}`. Update `process_control.steps.IP2` with one caucus round and three reviewer agents used. Test files are pre-lock at this point — apply uncontested gap coverage additions to test files. If the caucus exposes blocking coverage drift that would require another caucus, increment blocking failures and stop for user decision or test-contract reopen before any recaucus. Update `current_step: IP3`.
 

@@ -27,6 +27,15 @@ repeated blockers that would require another caucus/correction loop, stop and
 ask the user for a bounded decision. Do not continue autonomous patch-test-
 recaucus cycles under the same story contract.
 
+For large/high-rigor stories, Step 2 must produce or locate a frozen
+`success_criteria_contract` before Step 3 starts. The handoff into TDD must
+include `success_criteria_contract_hash`, `criterion_ids`, and the expected
+evidence artifacts. Completion is not valid without
+`success-criteria-ledger.json` showing every frozen criterion evaluated and
+`all_success_criteria_passed == true`. No review, caucus, verification,
+release, or completion step may add completion criteria; new concerns route to
+backlog, amendment request, split story, or human escalation.
+
 ## Process
 
 ### Step 0: Story Branch Setup

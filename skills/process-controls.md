@@ -15,6 +15,9 @@ The ledger must record:
 
 - workflow or story id;
 - current step;
+- success criteria contract path, if the workflow is large/high-rigor;
+- `success_criteria_contract_hash`, if the workflow is large/high-rigor;
+- `criterion_ids`, if the workflow is large/high-rigor;
 - subagent budget approval;
 - maximum caucus rounds in the current budget window;
 - maximum reviewer agents in the current budget window;
@@ -25,6 +28,42 @@ The ledger must record:
 - adversarial pass-state bypass count;
 - human approvals for extra budget, contract reopen, or resume after stop;
 - current stop disposition, if any.
+
+## Success Criteria Contract Controls
+
+Large/high-rigor story workflows must begin with a frozen
+`success_criteria_contract` before downstream planning, design, test writing,
+implementation, review, release, or caucus completion evaluation starts.
+
+The contract must record:
+
+- a stable story/workflow id;
+- binary `criterion_ids`;
+- one measurable pass condition and one measurable fail condition per criterion;
+- the expected evidence artifact, evidence owner, and evidence freshness rule
+  for each criterion;
+- a `success_criteria_contract_hash` computed after the contract is frozen.
+
+The contract is not valid if any criterion depends on open-ended judgment such
+as "looks good", "adequate", "comprehensive", "SOTA", "properly done", or
+"reviewer approved" without a concrete binary measurement.
+
+Every downstream phase must preserve the frozen contract path,
+`success_criteria_contract_hash`, and `criterion_ids`. A downstream phase may
+produce a `criteria-amendment-request.yaml`, but it may not silently change the
+contract or treat new concerns as completion blockers.
+
+Implementation completion requires `success-criteria-ledger.json`. The ledger
+must evaluate every frozen criterion id against accepted evidence and expose one
+binary outcome: `all_success_criteria_passed == true` or `false`.
+
+No review, caucus, verification, release, or completion step may add completion
+criteria. If a reviewer finds a real issue outside the frozen criteria, route it
+to backlog, a criteria amendment request, a split story, or human escalation.
+
+No completion claim is valid when the contract is missing, the hash is stale,
+any frozen criterion is missing from the ledger, any criterion fails, or any
+criterion is unevaluated.
 
 ## Default Limits
 
