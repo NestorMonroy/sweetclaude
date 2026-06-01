@@ -74,6 +74,8 @@ def test_shared_process_controls_define_success_criteria_contract():
         "success_criteria_contract_hash",
         "criterion_ids",
         "success-criteria-ledger.json",
+        "scripts/success_criteria_contracts.py validate-contract",
+        "scripts/success_criteria_contracts.py validate-ledger",
         "all_success_criteria_passed == true",
     ):
         assert phrase in text

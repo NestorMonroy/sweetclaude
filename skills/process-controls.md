@@ -48,6 +48,16 @@ The contract is not valid if any criterion depends on open-ended judgment such
 as "looks good", "adequate", "comprehensive", "SOTA", "properly done", or
 "reviewer approved" without a concrete binary measurement.
 
+Runtime validation must use:
+
+```bash
+python3 scripts/success_criteria_contracts.py validate-contract --contract .sweetclaude/contracts/success-criteria-contract.yaml
+```
+
+The validator computes `success_criteria_contract_hash` from canonical contract
+content excluding the declared hash field, so post-freeze contract edits fail as
+stale.
+
 Every downstream phase must preserve the frozen contract path,
 `success_criteria_contract_hash`, and `criterion_ids`. A downstream phase may
 produce a `criteria-amendment-request.yaml`, but it may not silently change the
@@ -56,6 +66,16 @@ contract or treat new concerns as completion blockers.
 Implementation completion requires `success-criteria-ledger.json`. The ledger
 must evaluate every frozen criterion id against accepted evidence and expose one
 binary outcome: `all_success_criteria_passed == true` or `false`.
+
+Runtime completion validation must use:
+
+```bash
+python3 scripts/success_criteria_contracts.py validate-ledger --contract .sweetclaude/contracts/success-criteria-contract.yaml --ledger .sweetclaude/reports/success-criteria-ledger.json
+```
+
+Each ledger criterion entry must include `status: pass`, the frozen
+`success_criteria_contract_hash`, the contract-declared `evidence_artifact` and
+`evidence_owner`, and `evidence_fresh: true` or equivalent current freshness.
 
 No review, caucus, verification, release, or completion step may add completion
 criteria. If a reviewer finds a real issue outside the frozen criteria, route it

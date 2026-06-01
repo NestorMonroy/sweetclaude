@@ -1,0 +1,555 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Validate SweetClaude success criteria contracts and ledgers."""
+from __future__ import annotations
+
+import argparse
+import copy
+import datetime
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+VALID_MEASUREMENT_TYPES = {
+    "command",
+    "schema_check",
+    "file_hash",
+    "ui_assertion",
+    "human_terminal_approval",
+    "external_system",
+}
+VALID_EVIDENCE_OWNERS = {"controller", "test", "human", "external_system"}
+VALID_MEASUREMENT_PHASES = {
+    "success-criteria-definition",
+    "contribution-discovery",
+    "authority-review",
+    "story-design",
+    "acceptance-and-red-test-validation",
+    "implementation",
+    "terminal-review",
+}
+PASS_STATUSES = {"pass", "passed", "ok", "success"}
+FRESHNESS_STATUSES = {"fresh", "current", "valid"}
+VAGUE_TERMS = {
+    "adequate",
+    "appropriate",
+    "complete",
+    "comprehensive",
+    "good",
+    "handle",
+    "handles",
+    "improve",
+    "improved",
+    "proper",
+    "properly",
+    "production-ready",
+    "reasonable",
+    "robust",
+    "sota",
+    "support",
+    "supports",
+}
+OBJECTIVE_SIGNALS = {
+    "contains",
+    "equals",
+    "exists",
+    "exits",
+    "fails",
+    "matches",
+    "must be",
+    "not contain",
+    "passes",
+    "returns",
+    "sha256",
+    "status",
+}
+
+
+class SuccessCriteriaValidationError(ValueError):
+    """Raised when a success criteria contract or ledger fails closed."""
+
+
+def validate_success_criteria_contract(path: str | Path) -> dict[str, Any]:
+    """Validate a frozen success criteria contract YAML artifact."""
+    contract_path = Path(path)
+    contract = _load_yaml_object(contract_path, context="Success criteria contract")
+    _validate_contract_shape(contract)
+    expected_hash = compute_success_criteria_contract_hash(contract)
+    declared_hash = _normalize_hash(
+        _require_non_empty_string(
+            _require_object(contract, "contract_freeze", context="Success criteria contract"),
+            "contract_hash",
+            context="Success criteria contract contract_freeze",
+        )
+    )
+    if declared_hash != expected_hash:
+        raise SuccessCriteriaValidationError(
+            "Success criteria contract contract_hash mismatch: "
+            f"expected {expected_hash}, got {declared_hash}"
+        )
+    criterion_ids = [criterion["id"] for criterion in contract["success_criteria"]]
+    return {
+        "ok": True,
+        "contract_hash": expected_hash,
+        "criterion_ids": criterion_ids,
+        "criteria_count": len(criterion_ids),
+    }
+
+
+def validate_success_criteria_ledger(
+    *,
+    contract_path: str | Path,
+    ledger_path: str | Path,
+) -> dict[str, Any]:
+    """Validate final completion evidence against a frozen criteria contract."""
+    contract = _load_yaml_object(contract_path, context="Success criteria contract")
+    contract_result = validate_success_criteria_contract(contract_path)
+    contract_hash = contract_result["contract_hash"]
+    expected_criteria = {criterion["id"]: criterion for criterion in contract["success_criteria"]}
+
+    ledger = _load_json_object(ledger_path, context="Success criteria ledger")
+    story_id = _require_non_empty_string(ledger, "story_id", context="Success criteria ledger")
+    if story_id != contract["story_id"]:
+        raise SuccessCriteriaValidationError(
+            "Success criteria ledger story_id mismatch: "
+            f"expected {contract['story_id']}, got {story_id}"
+        )
+    ledger_hash = _normalize_hash(
+        _require_non_empty_string(
+            ledger,
+            "success_criteria_contract_hash",
+            context="Success criteria ledger",
+        )
+    )
+    if ledger_hash != contract_hash:
+        raise SuccessCriteriaValidationError(
+            "Success criteria ledger success_criteria_contract_hash mismatch: "
+            f"expected {contract_hash}, got {ledger_hash}"
+        )
+    if ledger.get("all_success_criteria_passed") is not True:
+        raise SuccessCriteriaValidationError(
+            "Success criteria ledger all_success_criteria_passed must be true"
+        )
+
+    entries = _ledger_entries(ledger)
+    seen: set[str] = set()
+    missing_or_failed: list[str] = []
+    for index, entry in enumerate(entries):
+        context = f"Success criteria ledger criteria[{index}]"
+        criterion_id = _require_non_empty_string(entry, "id", context=context)
+        if criterion_id in seen:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria ledger has duplicate criterion id {criterion_id}"
+            )
+        seen.add(criterion_id)
+        expected = expected_criteria.get(criterion_id)
+        if expected is None:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria ledger contains unknown criterion id {criterion_id}"
+            )
+        status = _entry_status(entry, context=context)
+        if status not in PASS_STATUSES:
+            missing_or_failed.append(criterion_id)
+            continue
+        entry_hash = entry.get("success_criteria_contract_hash")
+        if entry_hash is not None and _normalize_hash(str(entry_hash)) != contract_hash:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria ledger criterion {criterion_id} has stale contract hash"
+            )
+        evidence_artifact = _require_non_empty_string(
+            entry,
+            "evidence_artifact",
+            context=context,
+        )
+        evidence_owner = _require_non_empty_string(entry, "evidence_owner", context=context)
+        if evidence_artifact != expected["evidence_artifact"]:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria ledger criterion {criterion_id} evidence_artifact mismatch: "
+                f"expected {expected['evidence_artifact']}, got {evidence_artifact}"
+            )
+        if evidence_owner != expected["evidence_owner"]:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria ledger criterion {criterion_id} evidence_owner mismatch: "
+                f"expected {expected['evidence_owner']}, got {evidence_owner}"
+            )
+        if not _entry_evidence_is_fresh(entry):
+            raise SuccessCriteriaValidationError(
+                f"Success criteria ledger criterion {criterion_id} evidence is stale or unverified"
+            )
+
+    expected_ids = set(expected_criteria)
+    if seen != expected_ids:
+        missing = sorted(expected_ids - seen)
+        extra = sorted(seen - expected_ids)
+        details = []
+        if missing:
+            details.append(f"missing {missing}")
+        if extra:
+            details.append(f"extra {extra}")
+        raise SuccessCriteriaValidationError(
+            "Success criteria ledger criterion ids do not match contract: " + "; ".join(details)
+        )
+    if missing_or_failed:
+        raise SuccessCriteriaValidationError(
+            "Success criteria ledger has failed criteria: " + ", ".join(sorted(missing_or_failed))
+        )
+    return {
+        "ok": True,
+        "contract_hash": contract_hash,
+        "criterion_ids": sorted(expected_ids),
+        "criteria_count": len(expected_ids),
+        "all_success_criteria_passed": True,
+    }
+
+
+def compute_success_criteria_contract_hash(contract: dict[str, Any]) -> str:
+    """Return the canonical hash for a contract, excluding its declared hash."""
+    canonical = copy.deepcopy(contract)
+    freeze = canonical.get("contract_freeze")
+    if isinstance(freeze, dict):
+        freeze.pop("contract_hash", None)
+    encoded = yaml.safe_dump(canonical, sort_keys=True, allow_unicode=False).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_contract_shape(contract: dict[str, Any]) -> None:
+    required_top = (
+        "story_id",
+        "story_title",
+        "story_objective",
+        "expected_outcomes",
+        "non_goals",
+        "success_criteria",
+        "contract_freeze",
+    )
+    for field in required_top:
+        if _blank(contract.get(field)):
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract is missing {field}"
+            )
+    story_id = str(contract["story_id"])
+    if not re.match(r"^[A-Z]+-[0-9]+$", story_id):
+        raise SuccessCriteriaValidationError(
+            f"Success criteria contract story_id is invalid: {story_id}"
+        )
+    _validate_outcomes(contract)
+    _validate_criteria(contract)
+    freeze = _require_object(contract, "contract_freeze", context="Success criteria contract")
+    _require_non_empty_string(freeze, "frozen_at", context="Success criteria contract contract_freeze")
+    _require_non_empty_string(freeze, "frozen_by", context="Success criteria contract contract_freeze")
+    _parse_timestamp(str(freeze["frozen_at"]), field="contract_freeze.frozen_at")
+
+
+def _validate_outcomes(contract: dict[str, Any]) -> None:
+    outcomes = _require_non_empty_list(
+        contract,
+        "expected_outcomes",
+        context="Success criteria contract",
+    )
+    seen: set[str] = set()
+    for index, outcome in enumerate(outcomes):
+        if not isinstance(outcome, dict):
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract expected_outcomes[{index}] must be an object"
+            )
+        outcome_id = _require_non_empty_string(
+            outcome,
+            "id",
+            context=f"Success criteria contract expected_outcomes[{index}]",
+        )
+        if not re.match(r"^OUTCOME-[0-9]{3,}$", outcome_id):
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract outcome id is invalid: {outcome_id}"
+            )
+        if outcome_id in seen:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract duplicate outcome id: {outcome_id}"
+            )
+        seen.add(outcome_id)
+        _require_non_empty_string(
+            outcome,
+            "statement",
+            context=f"Success criteria contract expected_outcomes[{index}]",
+        )
+
+
+def _validate_criteria(contract: dict[str, Any]) -> None:
+    criteria = _require_non_empty_list(
+        contract,
+        "success_criteria",
+        context="Success criteria contract",
+    )
+    outcome_ids = {
+        outcome["id"]
+        for outcome in contract["expected_outcomes"]
+        if isinstance(outcome, dict) and isinstance(outcome.get("id"), str)
+    }
+    seen: set[str] = set()
+    required_fields = (
+        "id",
+        "outcome_id",
+        "statement",
+        "binary_predicate",
+        "measurement_type",
+        "measurement_procedure",
+        "evidence_artifact",
+        "evidence_owner",
+        "pass_condition",
+        "fail_condition",
+        "allowed_phase_to_measure",
+        "amendment_policy",
+        "backlog_routing",
+    )
+    for index, criterion in enumerate(criteria):
+        context = f"Success criteria contract success_criteria[{index}]"
+        if not isinstance(criterion, dict):
+            raise SuccessCriteriaValidationError(f"{context} must be an object")
+        for field in required_fields:
+            if _blank(criterion.get(field)):
+                criterion_id = str(criterion.get("id") or f"index {index}")
+                raise SuccessCriteriaValidationError(
+                    f"Success criteria contract criterion {criterion_id} is missing {field}"
+                )
+        criterion_id = str(criterion["id"])
+        if not re.match(r"^SC-[0-9]{3,}$", criterion_id):
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract criterion id is invalid: {criterion_id}"
+            )
+        if criterion_id in seen:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract duplicate criterion id: {criterion_id}"
+            )
+        seen.add(criterion_id)
+        if criterion["outcome_id"] not in outcome_ids:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract criterion {criterion_id} maps to undeclared outcome"
+            )
+        if criterion["measurement_type"] not in VALID_MEASUREMENT_TYPES:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract criterion {criterion_id} has invalid measurement_type"
+            )
+        if criterion["evidence_owner"] not in VALID_EVIDENCE_OWNERS:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract criterion {criterion_id} has invalid evidence_owner"
+            )
+        if criterion["allowed_phase_to_measure"] not in VALID_MEASUREMENT_PHASES:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract criterion {criterion_id} has invalid allowed_phase_to_measure"
+            )
+        if criterion["amendment_policy"] != "human_approved_only":
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract criterion {criterion_id} has invalid amendment_policy"
+            )
+        if str(criterion["pass_condition"]).strip() == str(criterion["fail_condition"]).strip():
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract criterion {criterion_id} pass/fail conditions must differ"
+            )
+        if _has_multiple_outcomes(criterion):
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract criterion {criterion_id} has multiple outcomes"
+            )
+        if _has_vague_unmeasured_language(criterion):
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract criterion {criterion_id} is not objectively measurable"
+            )
+        if _human_judgment_without_predicate(criterion):
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract criterion {criterion_id} uses human judgment without a binary predicate"
+            )
+
+
+def _has_multiple_outcomes(criterion: dict[str, Any]) -> bool:
+    text = f"{criterion.get('statement', '')} {criterion.get('binary_predicate', '')}".lower()
+    if any(token in text for token in ("all of", "every ", "both ")):
+        return False
+    return bool(re.search(r"\b(and|also)\b", text))
+
+
+def _has_vague_unmeasured_language(criterion: dict[str, Any]) -> bool:
+    text = " ".join(
+        str(criterion.get(field, ""))
+        for field in ("statement", "binary_predicate", "pass_condition", "fail_condition")
+    ).lower()
+    words = set(re.findall(r"[a-z][a-z-]*", text))
+    if not words.intersection(VAGUE_TERMS):
+        return False
+    measurement = " ".join(
+        str(criterion.get(field, ""))
+        for field in (
+            "binary_predicate",
+            "measurement_procedure",
+            "pass_condition",
+            "fail_condition",
+        )
+    ).lower()
+    return not any(signal in measurement for signal in OBJECTIVE_SIGNALS)
+
+
+def _human_judgment_without_predicate(criterion: dict[str, Any]) -> bool:
+    if criterion.get("measurement_type") != "human_terminal_approval":
+        return False
+    measurement = " ".join(
+        str(criterion.get(field, ""))
+        for field in (
+            "binary_predicate",
+            "measurement_procedure",
+            "pass_condition",
+            "fail_condition",
+        )
+    ).lower()
+    weak_patterns = (
+        "human approves",
+        "reviewer approved",
+        "reviewer approves",
+        "looks good",
+        "acceptable",
+        "satisfactory",
+    )
+    if any(pattern in measurement for pattern in weak_patterns):
+        return True
+    return not any(signal in measurement for signal in OBJECTIVE_SIGNALS)
+
+
+def _ledger_entries(ledger: dict[str, Any]) -> list[dict[str, Any]]:
+    entries = ledger.get("criteria")
+    if entries is None:
+        entries = ledger.get("criterion_results")
+    if not isinstance(entries, list) or not entries:
+        raise SuccessCriteriaValidationError(
+            "Success criteria ledger criteria must be a non-empty list"
+        )
+    if not all(isinstance(entry, dict) for entry in entries):
+        raise SuccessCriteriaValidationError(
+            "Success criteria ledger criteria must contain objects"
+        )
+    return entries
+
+
+def _entry_status(entry: dict[str, Any], *, context: str) -> str:
+    raw = entry.get("status", entry.get("result", entry.get("disposition")))
+    if not isinstance(raw, str) or not raw.strip():
+        raise SuccessCriteriaValidationError(f"{context} is missing status")
+    return raw.strip().lower()
+
+
+def _entry_evidence_is_fresh(entry: dict[str, Any]) -> bool:
+    if entry.get("evidence_fresh") is True:
+        return True
+    if entry.get("evidence_stale") is True:
+        return False
+    freshness = entry.get("evidence_freshness")
+    if isinstance(freshness, str) and freshness.strip().lower() in FRESHNESS_STATUSES:
+        return True
+    return False
+
+
+def _load_yaml_object(path: str | Path, *, context: str) -> dict[str, Any]:
+    try:
+        data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise SuccessCriteriaValidationError(f"{context} not found: {path}") from None
+    except yaml.YAMLError as exc:
+        raise SuccessCriteriaValidationError(f"{context} is not valid YAML: {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SuccessCriteriaValidationError(f"{context} must be a YAML object")
+    return data
+
+
+def _load_json_object(path: str | Path, *, context: str) -> dict[str, Any]:
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise SuccessCriteriaValidationError(f"{context} not found: {path}") from None
+    except json.JSONDecodeError as exc:
+        raise SuccessCriteriaValidationError(f"{context} is not valid JSON: {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SuccessCriteriaValidationError(f"{context} must be a JSON object")
+    return data
+
+
+def _require_object(data: dict[str, Any], field: str, *, context: str) -> dict[str, Any]:
+    value = data.get(field)
+    if not isinstance(value, dict):
+        raise SuccessCriteriaValidationError(f"{context} {field} must be an object")
+    return value
+
+
+def _require_non_empty_list(data: dict[str, Any], field: str, *, context: str) -> list[Any]:
+    value = data.get(field)
+    if not isinstance(value, list) or not value:
+        raise SuccessCriteriaValidationError(f"{context} {field} must be a non-empty list")
+    return value
+
+
+def _require_non_empty_string(data: dict[str, Any], field: str, *, context: str) -> str:
+    value = data.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise SuccessCriteriaValidationError(f"{context} is missing {field}")
+    return value.strip()
+
+
+def _parse_timestamp(value: str, *, field: str) -> datetime.datetime:
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        parsed = datetime.datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise SuccessCriteriaValidationError(f"{field} must be an ISO timestamp") from exc
+    if parsed.tzinfo is None:
+        raise SuccessCriteriaValidationError(f"{field} must include timezone")
+    return parsed.astimezone(datetime.timezone.utc)
+
+
+def _normalize_hash(value: str) -> str:
+    raw = value.strip().lower()
+    if raw.startswith("sha256:"):
+        digest = raw.removeprefix("sha256:")
+    else:
+        digest = raw
+    if not re.match(r"^[0-9a-f]{64}$", digest):
+        raise SuccessCriteriaValidationError(f"Invalid sha256 hash: {value}")
+    return "sha256:" + digest
+
+
+def _blank(value: Any) -> bool:
+    return value is None or value == "" or value == [] or value == {}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_contract = sub.add_parser("validate-contract")
+    p_contract.add_argument("--contract", required=True)
+
+    p_ledger = sub.add_parser("validate-ledger")
+    p_ledger.add_argument("--contract", required=True)
+    p_ledger.add_argument("--ledger", required=True)
+
+    args = parser.parse_args(argv)
+    try:
+        if args.cmd == "validate-contract":
+            result = validate_success_criteria_contract(args.contract)
+        elif args.cmd == "validate-ledger":
+            result = validate_success_criteria_ledger(
+                contract_path=args.contract,
+                ledger_path=args.ledger,
+            )
+        else:
+            raise SuccessCriteriaValidationError(f"Unknown command: {args.cmd}")
+        print(json.dumps(result, sort_keys=True))
+        return 0
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

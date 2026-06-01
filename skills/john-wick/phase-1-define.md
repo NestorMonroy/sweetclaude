@@ -100,6 +100,15 @@ gate unless every criterion is binary and measurable. Compute and record
 `success_criteria_contract_hash` after the contract is frozen. Store the
 contract path, hash, and `criterion_ids` in `john-wick.yaml`.
 
+Before updating `current_step: CK1`, run:
+
+```bash
+python3 scripts/success_criteria_contracts.py validate-contract --contract .sweetclaude/contracts/success-criteria-contract.yaml
+```
+
+If the runtime validator fails, stay in D4 and correct the contract or route to
+human decision. Do not continue to Plan with an invalid or stale contract.
+
 No later phase, review, caucus, verification, release, or completion step may
 add completion criteria. Later concerns require `criteria-amendment-request.yaml`,
 backlog routing, split-story routing, or human escalation.

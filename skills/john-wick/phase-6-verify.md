@@ -11,6 +11,12 @@ Validate `.sweetclaude/reports/success-criteria-ledger.json` against the frozen
 present, evaluated, fresh, and passed. Do not advance if
 `all_success_criteria_passed == true` is absent or false.
 
+Run:
+
+```bash
+python3 scripts/success_criteria_contracts.py validate-ledger --contract .sweetclaude/contracts/success-criteria-contract.yaml --ledger .sweetclaude/reports/success-criteria-ledger.json
+```
+
 Before any V1 Fix-and-continue cycle, apply `../process-controls.md` using
 `john-wick.yaml process_control.steps.V1`. Each failed cycle increments
 `process_failure_count`. If the process-control limit is reached before the
