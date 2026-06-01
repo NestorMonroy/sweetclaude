@@ -24,6 +24,16 @@ over budget, stale, or in a stop disposition, pause and ask the user for a
 bounded decision before dispatching more agents or continuing a correction
 loop.
 
+For large/high-rigor issues, implementation may not begin until the issue or
+calling workflow supplies a frozen `success_criteria_contract`. Preserve
+`success_criteria_contract_hash` and `criterion_ids` through planning,
+implementation, verification, and PR preparation. Completion requires
+`success-criteria-ledger.json` with every frozen criterion evaluated and
+`all_success_criteria_passed == true`. No review, caucus, verification,
+release, or completion step may add completion criteria; concerns outside the
+contract become backlog, amendment requests, split stories, or human
+escalations.
+
 ## Process
 
 0. **Story Branch Setup.**

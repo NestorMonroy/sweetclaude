@@ -44,6 +44,7 @@ from status import (
     _reopen_file,
 )
 from evidence import write_receipt
+from success_criteria_contracts import compute_success_criteria_contract_hash
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +112,93 @@ def _write_completion_receipt(project_dir: Path, subject_id: str) -> Path:
         command="pytest -q",
         summary="focused verification passed",
     )
+
+
+def _valid_success_criteria_contract(subject_id: str) -> dict:
+    contract = {
+        "story_id": subject_id,
+        "story_title": "Status gate success criteria",
+        "story_objective": "Require a validated ledger before done.",
+        "expected_outcomes": [
+            {"id": "OUTCOME-001", "statement": "Done status is evidence-bound."}
+        ],
+        "non_goals": [
+            {"id": "NONGOAL-001", "statement": "Do not require this for unflagged work."}
+        ],
+        "success_criteria": [
+            {
+                "id": "SC-001",
+                "outcome_id": "OUTCOME-001",
+                "statement": "The ledger proves status closure.",
+                "binary_predicate": "all_success_criteria_passed equals true",
+                "measurement_type": "schema_check",
+                "measurement_procedure": "Run validate-workflow --stage completion",
+                "evidence_artifact": ".sweetclaude/reports/success-criteria-ledger.json",
+                "evidence_owner": "controller",
+                "pass_condition": "all_success_criteria_passed equals true",
+                "fail_condition": "all_success_criteria_passed is missing or false",
+                "allowed_phase_to_measure": "implementation",
+                "amendment_policy": "human_approved_only",
+                "backlog_routing": "Create follow-up work.",
+            }
+        ],
+        "contract_freeze": {
+            "frozen_at": "2026-05-31T12:00:00Z",
+            "frozen_by": "test",
+            "contract_hash": "",
+        },
+    }
+    contract["contract_freeze"]["contract_hash"] = compute_success_criteria_contract_hash(contract)
+    return contract
+
+
+def _write_success_criteria_packet(project_dir: Path, subject_id: str) -> tuple[Path, Path]:
+    contract = _valid_success_criteria_contract(subject_id)
+    contract_path = project_dir / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml"
+    ledger_path = project_dir / ".sweetclaude" / "reports" / "success-criteria-ledger.json"
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
+    contract_hash = compute_success_criteria_contract_hash(contract)
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "story_id": subject_id,
+                "success_criteria_contract_hash": contract_hash,
+                "all_success_criteria_passed": True,
+                "criteria": [
+                    {
+                        "id": "SC-001",
+                        "status": "pass",
+                        "success_criteria_contract_hash": contract_hash,
+                        "evidence_artifact": ".sweetclaude/reports/success-criteria-ledger.json",
+                        "evidence_owner": "controller",
+                        "evidence_fresh": True,
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return contract_path, ledger_path
+
+
+def _make_success_criteria_issue(project_dir: Path, rel_path: str, status: str, issue_id: str) -> Path:
+    contract_path, ledger_path = _write_success_criteria_packet(project_dir, issue_id)
+    path = project_dir / rel_path
+    _frontmatter_file(path, {
+        "id": issue_id,
+        "title": f"Test issue {issue_id}",
+        "status": status,
+        "type": "enhancement",
+        "created": "2026-05-22",
+        "requires_success_criteria_contract": True,
+        "success_criteria_contract_path": str(contract_path.relative_to(project_dir)),
+        "success_criteria_ledger_path": str(ledger_path.relative_to(project_dir)),
+    })
+    return path
 
 
 def _get_cache_row(project_dir: Path, item_id: str) -> dict | None:
@@ -903,6 +991,47 @@ class TestSetTerminalCreatesDestDir:
 
 
 # ---------------------------------------------------------------------------
+# Scenario: set_terminal() enforces success criteria completion for flagged work
+# ---------------------------------------------------------------------------
+
+class TestSetTerminalSuccessCriteriaGate:
+    def test_flagged_done_without_ledger_fails_closed(self, tmp_path):
+        project_dir = _setup_project_dir(tmp_path)
+        path = _make_success_criteria_issue(
+            project_dir, "roadmap/issues/ISSUE-260-test.md", "active", "ISSUE-260"
+        )
+        (project_dir / ".sweetclaude" / "reports" / "success-criteria-ledger.json").unlink()
+
+        with pytest.raises(ValueError, match="success criteria completion validation failed"):
+            set_terminal(
+                str(path),
+                "done",
+                "go",
+                project_dir=str(project_dir),
+                require_evidence=False,
+            )
+
+        assert path.exists()
+        assert not (project_dir / "roadmap" / "issues" / "done" / "ISSUE-260-test.md").exists()
+
+    def test_flagged_done_with_valid_ledger_passes_when_generic_evidence_waived(self, tmp_path):
+        project_dir = _setup_project_dir(tmp_path)
+        path = _make_success_criteria_issue(
+            project_dir, "roadmap/issues/ISSUE-261-test.md", "active", "ISSUE-261"
+        )
+
+        set_terminal(
+            str(path),
+            "done",
+            "go",
+            project_dir=str(project_dir),
+            require_evidence=False,
+        )
+
+        assert (project_dir / "roadmap" / "issues" / "done" / "ISSUE-261-test.md").exists()
+
+
+# ---------------------------------------------------------------------------
 # Scenario: set_terminal() rejects move when destination file already exists
 # ---------------------------------------------------------------------------
 
@@ -1112,6 +1241,51 @@ class TestCliSetTerminal:
         out = json.loads(result.stdout)
         assert "subject mismatch" in out["error"].lower()
         assert (project_dir / "roadmap" / "issues" / "ISSUE-222-test.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# Scenario: CLI set-terminal enforces success criteria despite evidence bypass
+# ---------------------------------------------------------------------------
+
+class TestCliSetTerminalSuccessCriteriaGate:
+    def test_allow_missing_evidence_does_not_bypass_success_criteria(self, tmp_path):
+        project_dir = _setup_project_dir(tmp_path)
+        _make_success_criteria_issue(
+            project_dir, "roadmap/issues/ISSUE-262-test.md", "active", "ISSUE-262"
+        )
+        (project_dir / ".sweetclaude" / "reports" / "success-criteria-ledger.json").unlink()
+
+        result = _run_cli([
+            "set-terminal",
+            "--file", str(project_dir / "roadmap" / "issues" / "ISSUE-262-test.md"),
+            "--status", "done",
+            "--actor", "go",
+            "--project-dir", str(project_dir),
+            "--allow-missing-evidence",
+        ])
+
+        assert result.returncode == 1
+        out = json.loads(result.stdout)
+        assert "success criteria" in out["error"].lower()
+        assert (project_dir / "roadmap" / "issues" / "ISSUE-262-test.md").exists()
+
+    def test_valid_success_criteria_ledger_allows_bypassed_generic_evidence(self, tmp_path):
+        project_dir = _setup_project_dir(tmp_path)
+        _make_success_criteria_issue(
+            project_dir, "roadmap/issues/ISSUE-263-test.md", "active", "ISSUE-263"
+        )
+
+        result = _run_cli([
+            "set-terminal",
+            "--file", str(project_dir / "roadmap" / "issues" / "ISSUE-263-test.md"),
+            "--status", "done",
+            "--actor", "go",
+            "--project-dir", str(project_dir),
+            "--allow-missing-evidence",
+        ])
+
+        assert result.returncode == 0
+        assert (project_dir / "roadmap" / "issues" / "done" / "ISSUE-263-test.md").exists()
 
 
 # ---------------------------------------------------------------------------

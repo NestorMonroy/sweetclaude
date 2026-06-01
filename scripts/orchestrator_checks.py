@@ -1,5 +1,7 @@
 import os
 
+from success_criteria_contracts import validate_success_criteria_workflow
+
 CHECKS = {}
 
 
@@ -37,6 +39,54 @@ def _make_absolute(path, project_dir):
         resolved = os.path.join(project_dir, path)
     _check_containment(resolved, project_dir)
     return resolved
+
+
+def _success_criteria_required(state):
+    return bool(
+        state.get("requires_success_criteria_contract")
+        or state.get("success_criteria_contract")
+        or state.get("success_criteria_contract_path")
+    )
+
+
+def _success_criteria_path(state, nested_key, direct_key):
+    nested = state.get(nested_key)
+    if isinstance(nested, dict):
+        value = nested.get("path")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    if isinstance(nested, str) and nested.strip():
+        return nested.strip()
+    value = state.get(direct_key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _run_success_criteria_check(state, project_dir, stage):
+    if not _success_criteria_required(state):
+        return True, ""
+    result = validate_success_criteria_workflow(
+        project_dir=project_dir,
+        workflow_id=state.get("workflow_id"),
+        stage=stage,
+        contract_path=_success_criteria_path(
+            state,
+            "success_criteria_contract",
+            "success_criteria_contract_path",
+        ),
+        ledger_path=_success_criteria_path(
+            state,
+            "success_criteria_ledger",
+            "success_criteria_ledger_path",
+        ),
+    )
+    if result.get("ok"):
+        return True, ""
+    return False, "{}: {}".format(
+        result.get("recovery_hint") or "Success criteria validation failed",
+        result.get("error") or result.get("blocking_failures"),
+    )
 
 
 @register("file_exists")
@@ -109,3 +159,18 @@ def check_all_artifacts_non_empty(step, state, project_dir):
     if empty:
         return False, "Empty input artifacts: {}".format(", ".join(empty))
     return True, ""
+
+
+@register("success_criteria_contract_valid")
+def check_success_criteria_contract_valid(step, state, project_dir):
+    return _run_success_criteria_check(state, project_dir, "define-exit")
+
+
+@register("success_criteria_ledger_valid")
+def check_success_criteria_ledger_valid(step, state, project_dir):
+    return _run_success_criteria_check(state, project_dir, "completion")
+
+
+@register("success_criteria_completion_valid")
+def check_success_criteria_completion_valid(step, state, project_dir):
+    return _run_success_criteria_check(state, project_dir, "completion")

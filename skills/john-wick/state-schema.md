@@ -20,6 +20,22 @@ discovery_artifacts:
 compliance_context: string | null
 d1_flags: []
 
+success_criteria_contract:
+  path: string | null
+  success_criteria_contract_hash: string | null
+  criterion_ids:
+    - string
+  criteria_amendment_requests:
+    - path: string
+      status: proposed | approved | rejected | routed
+
+success_criteria_ledger:
+  path: string | null
+  evaluated_contract_hash: string | null
+  all_success_criteria_passed: boolean | null
+  missing_or_failed_criterion_ids:
+    - string
+
 created_artifacts:
   - step: string
     type: prd | stories | gherkin | architecture | tech_spec | contract_analysis | tests | report | pr

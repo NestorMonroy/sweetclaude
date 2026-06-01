@@ -85,7 +85,35 @@ Do not advance to the next section until the current section is confirmed. After
 docs: approved PRD for {feature_name} at D4
 ```
 
-Update `created_artifacts` version to final. Clear `d1_flags` in `john-wick.yaml` (set to empty list). Update `current_step: CK1`.
+Update `created_artifacts` version to final. Clear `d1_flags` in
+`john-wick.yaml` (set to empty list).
+
+Create
+`.sweetclaude/contracts/success-criteria-contract.yaml` from the approved PRD.
+The contract must contain only binary, measurable success criteria with stable
+`criterion_ids`, explicit pass/fail conditions, evidence artifact paths,
+evidence owners, and evidence freshness rules. Reject subjective or
+multi-outcome criteria before continuing.
+
+Write `.sweetclaude/contracts/success-criteria-lint-report.json` and fail the
+gate unless every criterion is binary and measurable. Compute and record
+`success_criteria_contract_hash` after the contract is frozen. Store the
+contract path, hash, and `criterion_ids` in `john-wick.yaml`.
+
+Before updating `current_step: CK1`, run:
+
+```bash
+python3 scripts/success_criteria_contracts.py validate-contract --contract .sweetclaude/contracts/success-criteria-contract.yaml
+```
+
+If the runtime validator fails, stay in D4 and correct the contract or route to
+human decision. Do not continue to Plan with an invalid or stale contract.
+
+No later phase, review, caucus, verification, release, or completion step may
+add completion criteria. Later concerns require `criteria-amendment-request.yaml`,
+backlog routing, split-story routing, or human escalation.
+
+Update `current_step: CK1`.
 
 ## CK1 — Define phase check-in (Conditional)
 

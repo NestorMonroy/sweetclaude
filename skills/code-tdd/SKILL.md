@@ -40,6 +40,16 @@ failure records, or pass-state bypasses indicate that the story/test contract is
 unstable, stop. Do not keep patching tests or spawning more agents under the
 same contract.
 
+For large/high-rigor stories, TDD entry requires a frozen
+`success_criteria_contract`, its `success_criteria_contract_hash`, and
+`criterion_ids`. Tests must trace to the frozen criterion ids, and any missing
+coverage becomes either a test gap before lock or a
+`criteria-amendment-request.yaml`; it may not silently expand completion scope.
+Completion of TDD/implementation requires `success-criteria-ledger.json` with
+every frozen criterion evaluated and `all_success_criteria_passed == true`. No
+review, caucus, verification, release, or completion step may add completion
+criteria.
+
 ## Branch Check
 
 ```bash

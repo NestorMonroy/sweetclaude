@@ -6,6 +6,11 @@ Update `current_phase: PLAN` in `john-wick.yaml`.
 
 Invoke `sweetclaude:product-user-stories` with the approved PRD as input. Generate human-readable stories with acceptance criteria. Write to `.sweetclaude/stories/[feature-name]-stories-v1.md`.
 
+Each story must reference the relevant frozen `criterion_ids` from the
+`success_criteria_contract_hash`. If a PRD/story requirement cannot map to a
+frozen criterion, record it as a `criteria-amendment-request.yaml` candidate
+and stop for user decision before treating it as required completion scope.
+
 Record in `created_artifacts`: `{step: P1, type: stories, path: ..., version: 1}`.
 Update `current_step: P2`.
 
@@ -27,6 +32,11 @@ Run a 2-turn story review caucus with these four personas (pass inline — do no
 
 Invoke caucus with: stories path, personas above, 2 turns, question: "Are these stories specific enough to write deterministic acceptance tests? Are any acceptance criteria ambiguous, unmeasurable, or missing?"
 
+The caucus may audit traceability to the frozen `criterion_ids`, but it may not
+add completion criteria. Any missing or ambiguous criterion becomes a
+`criteria-amendment-request.yaml`, backlog item, split-story proposal, or human
+escalation.
+
 Write caucus output to `.sweetclaude/caucus/story-review-[YYYYMMDD].md`.
 Record in `caucus_outputs`: `{step: P2, path: ...}`.
 Update `process_control.steps.P2` with one caucus round and four reviewer
@@ -47,6 +57,9 @@ For each story in the stories document, invoke `sweetclaude:product-user-tdd-tes
 ```
 test: Gherkin specs for {feature_name} stories
 ```
+
+Every generated feature file must preserve the relevant `criterion_ids` so test
+coverage can be traced back to the frozen `success_criteria_contract_hash`.
 
 Record in `created_artifacts`: `{step: P4, type: gherkin, path: .sweetclaude/features/, version: 1}`.
 Update `current_step: CK2`.

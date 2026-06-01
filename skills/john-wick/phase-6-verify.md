@@ -6,6 +6,17 @@ Update `current_phase: VERIFY` in `john-wick.yaml`.
 
 Run the complete test suite on the feature branch. Generate a final MD test report (see report-format.md) and append to the aggregate report. If any tests fail: run the severity classifier (see severity-classifier.md). If significant failures: invoke IM2. **V1-specific IM2 behavior:** Fix-and-continue from V1 re-enters at V1 (re-run the full test suite) — do NOT re-enter the IM1 loop. After 2 consecutive Fix-and-continue cycles from V1, IM2 presents only Skip (proceed to V2 with known test failures documented) and Abort options. If not significant: log and continue.
 
+Validate `.sweetclaude/reports/success-criteria-ledger.json` against the frozen
+`success_criteria_contract_hash`. Every frozen `criterion_ids` entry must be
+present, evaluated, fresh, and passed. Do not advance if
+`all_success_criteria_passed == true` is absent or false.
+
+Run:
+
+```bash
+python3 scripts/success_criteria_contracts.py validate-ledger --contract .sweetclaude/contracts/success-criteria-contract.yaml --ledger .sweetclaude/reports/success-criteria-ledger.json
+```
+
 Before any V1 Fix-and-continue cycle, apply `../process-controls.md` using
 `john-wick.yaml process_control.steps.V1`. Each failed cycle increments
 `process_failure_count`. If the process-control limit is reached before the
@@ -18,6 +29,11 @@ Update `current_step: V2`.
 Invoke `sweetclaude:code-review` with all three review types: code, security, and compliance.
 
 The compliance review reads `.sweetclaude/state/compliance-context.yaml` automatically (Plan 1 updated this skill). No manual framework specification needed.
+
+Review may verify the frozen criteria ledger, but no review, caucus,
+verification, release, or completion step may add completion criteria. Findings
+outside the frozen criteria must route to backlog, amendment request, split
+story, or human escalation.
 
 Write review output to `.sweetclaude/reports/code-review-[YYYYMMDD].md`.
 Record in `created_artifacts`: `{step: V2, type: report, path: ..., version: 1}`.
@@ -68,9 +84,10 @@ PR description must reference (in order):
 2. User stories: `{stories_path}`
 3. Gherkin specs: `.sweetclaude/features/`
 4. Test report (aggregate): `.sweetclaude/reports/test-report-{feature_name}.md`
-5. Code review findings: `.sweetclaude/reports/code-review-[YYYYMMDD].md`
-6. Compliance frameworks applied: {list from compliance-context.yaml derived_frameworks}
-7. Any IM2 escalations that occurred and how they were resolved (list from checkin_outputs where escalated=true)
+5. Success criteria ledger: `.sweetclaude/reports/success-criteria-ledger.json` with `all_success_criteria_passed == true`
+6. Code review findings: `.sweetclaude/reports/code-review-[YYYYMMDD].md`
+7. Compliance frameworks applied: {list from compliance-context.yaml derived_frameworks}
+8. Any IM2 escalations that occurred and how they were resolved (list from checkin_outputs where escalated=true)
 
 Present the PR URL to the user:
 ```
