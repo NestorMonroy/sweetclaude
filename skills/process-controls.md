@@ -54,6 +54,15 @@ Runtime validation must use:
 python3 scripts/success_criteria_contracts.py validate-contract --contract .sweetclaude/contracts/success-criteria-contract.yaml
 ```
 
+The canonical workflow-facing command is:
+
+```bash
+python3 scripts/success_criteria_contracts.py validate-workflow --stage define-exit
+```
+
+Use `--workflow-id` when validating a stored orchestrator workflow, or explicit
+`--contract`/`--ledger` paths when validating non-standard artifact locations.
+
 The validator computes `success_criteria_contract_hash` from canonical contract
 content excluding the declared hash field, so post-freeze contract edits fail as
 stale.
@@ -71,6 +80,12 @@ Runtime completion validation must use:
 
 ```bash
 python3 scripts/success_criteria_contracts.py validate-ledger --contract .sweetclaude/contracts/success-criteria-contract.yaml --ledger .sweetclaude/reports/success-criteria-ledger.json
+```
+
+The canonical workflow-facing completion command is:
+
+```bash
+python3 scripts/success_criteria_contracts.py validate-workflow --stage completion
 ```
 
 Each ledger criterion entry must include `status: pass`, the frozen

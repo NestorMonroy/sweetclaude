@@ -36,6 +36,9 @@ VALID_MEASUREMENT_PHASES = {
 }
 PASS_STATUSES = {"pass", "passed", "ok", "success"}
 FRESHNESS_STATUSES = {"fresh", "current", "valid"}
+WORKFLOW_STAGES = {"draft", "define-exit", "completion"}
+DEFAULT_CONTRACT_PATH = ".sweetclaude/contracts/success-criteria-contract.yaml"
+DEFAULT_LEDGER_PATH = ".sweetclaude/reports/success-criteria-ledger.json"
 VAGUE_TERMS = {
     "adequate",
     "appropriate",
@@ -206,6 +209,196 @@ def validate_success_criteria_ledger(
         "criteria_count": len(expected_ids),
         "all_success_criteria_passed": True,
     }
+
+
+def validate_success_criteria_workflow(
+    *,
+    project_dir: str | Path = ".",
+    stage: str,
+    workflow_id: str | None = None,
+    contract_path: str | Path | None = None,
+    ledger_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Validate the success-criteria gate for a workflow lifecycle stage."""
+    if stage not in WORKFLOW_STAGES:
+        raise SuccessCriteriaValidationError(
+            f"Workflow validation stage must be one of {sorted(WORKFLOW_STAGES)}"
+        )
+    resolver = WorkflowArtifactResolver(project_dir=Path(project_dir), workflow_id=workflow_id)
+    resolved_contract = resolver.resolve_contract_path(contract_path)
+    resolved_ledger = resolver.resolve_ledger_path(ledger_path)
+    resolved_workflow_id = workflow_id or resolver.workflow_id
+
+    try:
+        if stage in {"draft", "define-exit"}:
+            result = validate_success_criteria_contract(resolved_contract)
+        elif stage == "completion":
+            result = validate_success_criteria_ledger(
+                contract_path=resolved_contract,
+                ledger_path=resolved_ledger,
+            )
+        else:
+            raise AssertionError(stage)
+    except Exception as exc:
+        failure = {
+            "ok": False,
+            "workflow_id": resolved_workflow_id,
+            "stage": stage,
+            "contract_path": str(resolved_contract),
+            "ledger_path": str(resolved_ledger) if resolved_ledger else None,
+            "blocking": stage != "draft",
+            "blocking_failures": [str(exc)] if stage != "draft" else [],
+            "error": str(exc),
+            "recovery_hint": _workflow_recovery_hint(stage, str(exc)),
+        }
+        return failure
+
+    return {
+        "ok": True,
+        "workflow_id": resolved_workflow_id,
+        "stage": stage,
+        "contract_path": str(resolved_contract),
+        "ledger_path": str(resolved_ledger) if resolved_ledger else None,
+        "contract_hash": result.get("contract_hash"),
+        "criterion_ids": result.get("criterion_ids", []),
+        "criteria_count": result.get("criteria_count"),
+        "all_success_criteria_passed": result.get("all_success_criteria_passed"),
+        "blocking": False,
+        "blocking_failures": [],
+        "recovery_hint": "",
+    }
+
+
+class WorkflowArtifactResolver:
+    """Resolve success-criteria artifacts from workflow or John Wick state."""
+
+    def __init__(self, *, project_dir: Path, workflow_id: str | None = None) -> None:
+        self.project_dir = project_dir.expanduser().resolve(strict=False)
+        self.workflow_id = workflow_id
+        self.workflow_state = self._load_workflow_state(workflow_id) if workflow_id else {}
+        self.john_wick_state = self._load_optional_yaml(
+            self.project_dir / ".sweetclaude" / "state" / "john-wick.yaml"
+        )
+
+    def resolve_contract_path(self, explicit: str | Path | None = None) -> Path:
+        return self._resolve_path(
+            explicit
+            or self._extract_contract_path(self.workflow_state)
+            or self._extract_contract_path(self.john_wick_state)
+            or DEFAULT_CONTRACT_PATH,
+            field="contract",
+        )
+
+    def resolve_ledger_path(self, explicit: str | Path | None = None) -> Path | None:
+        value = (
+            explicit
+            or self._extract_ledger_path(self.workflow_state)
+            or self._extract_ledger_path(self.john_wick_state)
+            or DEFAULT_LEDGER_PATH
+        )
+        return self._resolve_path(value, field="ledger")
+
+    def _load_workflow_state(self, workflow_id: str | None) -> dict[str, Any]:
+        if not workflow_id:
+            return {}
+        if not re.match(r"^[A-Za-z0-9_-]+$", workflow_id):
+            raise SuccessCriteriaValidationError(f"Invalid workflow id: {workflow_id}")
+        state_path = (
+            self.project_dir
+            / ".sweetclaude"
+            / "state"
+            / "workflows"
+            / f"{workflow_id}.yaml"
+        )
+        state = self._load_optional_yaml(state_path)
+        if state and state.get("workflow_id") not in {None, workflow_id}:
+            raise SuccessCriteriaValidationError(
+                f"Workflow state id mismatch: expected {workflow_id}, got {state.get('workflow_id')}"
+            )
+        return state
+
+    def _load_optional_yaml(self, path: Path) -> dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise SuccessCriteriaValidationError(f"Workflow state is not valid YAML: {path}: {exc}") from exc
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            raise SuccessCriteriaValidationError(f"Workflow state must be a YAML object: {path}")
+        return data
+
+    def _resolve_path(self, value: str | Path, *, field: str) -> Path:
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            path = self.project_dir / path
+        resolved = path.resolve(strict=False)
+        try:
+            resolved.relative_to(self.project_dir)
+        except ValueError:
+            raise SuccessCriteriaValidationError(
+                f"Resolved {field} path escapes project directory: {resolved}"
+            ) from None
+        return resolved
+
+    def _extract_contract_path(self, state: dict[str, Any]) -> str | None:
+        return self._extract_path(
+            state,
+            nested_key="success_criteria_contract",
+            direct_keys=("success_criteria_contract_path", "contract_path"),
+            artifact_keys=(
+                "success_criteria_contract",
+                "success_criteria_contract_path",
+                "success-criteria-contract",
+            ),
+        )
+
+    def _extract_ledger_path(self, state: dict[str, Any]) -> str | None:
+        return self._extract_path(
+            state,
+            nested_key="success_criteria_ledger",
+            direct_keys=("success_criteria_ledger_path", "ledger_path"),
+            artifact_keys=(
+                "success_criteria_ledger",
+                "success_criteria_ledger_path",
+                "success-criteria-ledger",
+            ),
+        )
+
+    def _extract_path(
+        self,
+        state: dict[str, Any],
+        *,
+        nested_key: str,
+        direct_keys: tuple[str, ...],
+        artifact_keys: tuple[str, ...],
+    ) -> str | None:
+        nested = state.get(nested_key)
+        if isinstance(nested, dict):
+            value = nested.get("path")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        elif isinstance(nested, str) and nested.strip():
+            return nested.strip()
+
+        for key in direct_keys:
+            value = state.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        artifacts = state.get("artifacts")
+        if isinstance(artifacts, dict):
+            for key in artifact_keys:
+                value = artifacts.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+                if isinstance(value, dict):
+                    nested_value = value.get("path")
+                    if isinstance(nested_value, str) and nested_value.strip():
+                        return nested_value.strip()
+        return None
 
 
 def compute_success_criteria_contract_hash(contract: dict[str, Any]) -> str:
@@ -522,6 +715,16 @@ def _blank(value: Any) -> bool:
     return value is None or value == "" or value == [] or value == {}
 
 
+def _workflow_recovery_hint(stage: str, error: str) -> str:
+    if stage == "draft":
+        return "Draft validation failed; continue editing until the contract validates before freeze."
+    if stage == "define-exit":
+        return "Do not leave Define. Fix and refreeze the success criteria contract before planning."
+    if "ledger" in error.lower():
+        return "Do not claim completion. Regenerate or correct success-criteria-ledger.json against the frozen contract."
+    return "Do not claim completion. Re-run validation after correcting success-criteria artifacts."
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -533,6 +736,13 @@ def main(argv: list[str] | None = None) -> int:
     p_ledger.add_argument("--contract", required=True)
     p_ledger.add_argument("--ledger", required=True)
 
+    p_workflow = sub.add_parser("validate-workflow")
+    p_workflow.add_argument("--project-dir", default=".")
+    p_workflow.add_argument("--workflow-id")
+    p_workflow.add_argument("--stage", required=True, choices=sorted(WORKFLOW_STAGES))
+    p_workflow.add_argument("--contract")
+    p_workflow.add_argument("--ledger")
+
     args = parser.parse_args(argv)
     try:
         if args.cmd == "validate-contract":
@@ -542,10 +752,18 @@ def main(argv: list[str] | None = None) -> int:
                 contract_path=args.contract,
                 ledger_path=args.ledger,
             )
+        elif args.cmd == "validate-workflow":
+            result = validate_success_criteria_workflow(
+                project_dir=args.project_dir,
+                workflow_id=args.workflow_id,
+                stage=args.stage,
+                contract_path=args.contract,
+                ledger_path=args.ledger,
+            )
         else:
             raise SuccessCriteriaValidationError(f"Unknown command: {args.cmd}")
         print(json.dumps(result, sort_keys=True))
-        return 0
+        return 0 if result.get("ok") or not result.get("blocking", True) else 1
     except Exception as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True))
         return 1

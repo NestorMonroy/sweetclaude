@@ -11,6 +11,7 @@ from success_criteria_contracts import (
     compute_success_criteria_contract_hash,
     validate_success_criteria_contract,
     validate_success_criteria_ledger,
+    validate_success_criteria_workflow,
 )
 
 
@@ -82,6 +83,7 @@ def _freeze(contract: dict) -> dict:
 
 def _write_contract(path: Path, contract: dict | None = None) -> Path:
     contract = _freeze(contract or _valid_contract())
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
     return path
 
@@ -107,6 +109,7 @@ def _valid_ledger(contract: dict) -> dict:
 
 
 def _write_ledger(path: Path, ledger: dict) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(ledger, indent=2) + "\n", encoding="utf-8")
     return path
 
@@ -233,3 +236,164 @@ def test_cli_validate_ledger_returns_json_success(tmp_path):
 
     assert completed.returncode == 0
     assert json.loads(completed.stdout)["ok"] is True
+
+
+def test_validate_workflow_define_exit_resolves_john_wick_contract(tmp_path):
+    contract = _freeze(_valid_contract())
+    contract_path = _write_contract(
+        tmp_path / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml",
+        contract,
+    )
+    state_dir = tmp_path / ".sweetclaude" / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "john-wick.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "feature_name": "validator",
+                "success_criteria_contract": {
+                    "path": ".sweetclaude/contracts/success-criteria-contract.yaml",
+                    "success_criteria_contract_hash": compute_success_criteria_contract_hash(contract),
+                    "criterion_ids": ["SC-001", "SC-002"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = validate_success_criteria_workflow(
+        project_dir=tmp_path,
+        stage="define-exit",
+    )
+
+    assert result["ok"] is True
+    assert result["contract_path"] == str(contract_path.resolve(strict=False))
+    assert result["criterion_ids"] == ["SC-001", "SC-002"]
+
+
+def test_validate_workflow_completion_resolves_workflow_state_artifacts(tmp_path):
+    contract = _freeze(_valid_contract())
+    contract_path = _write_contract(
+        tmp_path / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml",
+        contract,
+    )
+    ledger_path = _write_ledger(
+        tmp_path / ".sweetclaude" / "reports" / "success-criteria-ledger.json",
+        _valid_ledger(contract),
+    )
+    workflow_dir = tmp_path / ".sweetclaude" / "state" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "STORY-123.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "workflow_id": "STORY-123",
+                "success_criteria_contract": {
+                    "path": ".sweetclaude/contracts/success-criteria-contract.yaml",
+                },
+                "success_criteria_ledger": {
+                    "path": ".sweetclaude/reports/success-criteria-ledger.json",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = validate_success_criteria_workflow(
+        project_dir=tmp_path,
+        workflow_id="STORY-123",
+        stage="completion",
+    )
+
+    assert result["ok"] is True
+    assert result["workflow_id"] == "STORY-123"
+    assert result["contract_path"] == str(contract_path.resolve(strict=False))
+    assert result["ledger_path"] == str(ledger_path.resolve(strict=False))
+    assert result["all_success_criteria_passed"] is True
+
+
+def test_validate_workflow_define_exit_missing_contract_blocks(tmp_path):
+    result = validate_success_criteria_workflow(
+        project_dir=tmp_path,
+        workflow_id="STORY-123",
+        stage="define-exit",
+    )
+
+    assert result["ok"] is False
+    assert result["blocking"] is True
+    assert result["blocking_failures"]
+    assert "Do not leave Define" in result["recovery_hint"]
+
+
+def test_validate_workflow_completion_missing_ledger_blocks(tmp_path):
+    contract = _freeze(_valid_contract())
+    _write_contract(
+        tmp_path / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml",
+        contract,
+    )
+
+    result = validate_success_criteria_workflow(
+        project_dir=tmp_path,
+        workflow_id="STORY-123",
+        stage="completion",
+    )
+
+    assert result["ok"] is False
+    assert result["blocking"] is True
+    assert "ledger" in result["error"].lower()
+    assert "Do not claim completion" in result["recovery_hint"]
+
+
+def test_cli_validate_workflow_draft_reports_invalid_without_blocking(tmp_path):
+    contract = _freeze(_valid_contract())
+    contract["success_criteria"][0]["fail_condition"] = ""
+    contract_path = tmp_path / "success-criteria-contract.yaml"
+    contract_path.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "validate-workflow",
+            "--stage",
+            "draft",
+            "--contract",
+            str(contract_path),
+            "--project-dir",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    payload = json.loads(completed.stdout)
+
+    assert completed.returncode == 0
+    assert payload["ok"] is False
+    assert payload["blocking"] is False
+    assert payload["blocking_failures"] == []
+    assert "Draft validation failed" in payload["recovery_hint"]
+
+
+def test_cli_validate_workflow_completion_returns_json_failure(tmp_path):
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "validate-workflow",
+            "--stage",
+            "completion",
+            "--workflow-id",
+            "STORY-123",
+            "--project-dir",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    payload = json.loads(completed.stdout)
+
+    assert completed.returncode == 1
+    assert payload["ok"] is False
+    assert payload["workflow_id"] == "STORY-123"
+    assert payload["blocking"] is True
+    assert payload["blocking_failures"]
