@@ -376,6 +376,66 @@ def _validate_completion_receipt(receipt_path: str | None, subject_id: str) -> N
     validate_receipt(receipt_path, subject_id=subject_id)
 
 
+def _success_criteria_required(fm: dict) -> bool:
+    return bool(
+        fm.get("requires_success_criteria_contract")
+        or fm.get("success_criteria_contract")
+        or fm.get("success_criteria_contract_path")
+    )
+
+
+def _success_criteria_path(fm: dict, nested_key: str, direct_key: str) -> str | None:
+    nested = fm.get(nested_key)
+    if isinstance(nested, dict):
+        value = nested.get("path")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    if isinstance(nested, str) and nested.strip():
+        return nested.strip()
+    value = fm.get(direct_key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _validate_success_criteria_completion(
+    *,
+    fm: dict,
+    project_dir: Path,
+    subject_id: str,
+) -> None:
+    if not _success_criteria_required(fm):
+        return
+    try:
+        from success_criteria_contracts import validate_success_criteria_workflow
+    except ImportError as exc:
+        raise ValueError(
+            "Success criteria validator unavailable; cannot mark large/high-rigor work done safely"
+        ) from exc
+
+    result = validate_success_criteria_workflow(
+        project_dir=project_dir,
+        workflow_id=subject_id,
+        stage="completion",
+        contract_path=_success_criteria_path(
+            fm,
+            "success_criteria_contract",
+            "success_criteria_contract_path",
+        ),
+        ledger_path=_success_criteria_path(
+            fm,
+            "success_criteria_ledger",
+            "success_criteria_ledger_path",
+        ),
+    )
+    if not result.get("ok"):
+        raise ValueError(
+            "Cannot mark done: success criteria completion validation failed. "
+            f"{result.get('error') or result.get('blocking_failures')}. "
+            f"{result.get('recovery_hint')}"
+        )
+
+
 def _dest_dir_for_terminal(filepath: Path) -> Path:
     parts = filepath.parts
     parent = filepath.parent
@@ -468,8 +528,15 @@ def set_terminal(
     validate_transition(old_status, status, "issue")
 
     entity = fm.get("id", path.stem)
+    pd = _resolve_project_dir(filepath, project_dir)
     if require_evidence and status == "done" and source != "auto" and not _from_sync:
         _validate_completion_receipt(evidence_receipt, str(entity))
+    if status == "done" and source != "auto" and not _from_sync:
+        _validate_success_criteria_completion(
+            fm=fm,
+            project_dir=pd,
+            subject_id=str(entity),
+        )
 
     item_type = fm.get("type")
     if not _from_sync and item_type in ("epic", "milestone") and status == "done":
@@ -515,7 +582,6 @@ def set_terminal(
             pass
         raise RuntimeError(f"Move failed; rolled back: {e}") from e
 
-    pd = _resolve_project_dir(filepath, project_dir)
     try:
         file_rel = str(dest_path.relative_to(pd))
     except ValueError:

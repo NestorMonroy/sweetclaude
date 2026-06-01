@@ -60,6 +60,10 @@ The canonical workflow-facing command is:
 python3 scripts/success_criteria_contracts.py validate-workflow --stage define-exit
 ```
 
+Workflow orchestrator exits for large/high-rigor work must include the
+`success_criteria_contract_valid` check before downstream planning or
+implementation begins.
+
 Use `--workflow-id` when validating a stored orchestrator workflow, or explicit
 `--contract`/`--ledger` paths when validating non-standard artifact locations.
 
@@ -87,6 +91,14 @@ The canonical workflow-facing completion command is:
 ```bash
 python3 scripts/success_criteria_contracts.py validate-workflow --stage completion
 ```
+
+Workflow orchestrator completion exits for large/high-rigor work must include
+`success_criteria_completion_valid` or `success_criteria_ledger_valid`.
+Manual `status.py set-terminal --status done` paths for work flagged with
+`requires_success_criteria_contract`, `success_criteria_contract`, or
+`success_criteria_contract_path` must fail closed until completion validation
+passes; `--allow-missing-evidence` may waive the generic receipt requirement,
+but it must not bypass the success-criteria ledger gate.
 
 Each ledger criterion entry must include `status: pass`, the frozen
 `success_criteria_contract_hash`, the contract-declared `evidence_artifact` and

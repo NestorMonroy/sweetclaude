@@ -78,6 +78,11 @@ def test_shared_process_controls_define_success_criteria_contract():
         "scripts/success_criteria_contracts.py validate-ledger",
         "scripts/success_criteria_contracts.py validate-workflow --stage define-exit",
         "scripts/success_criteria_contracts.py validate-workflow --stage completion",
+        "success_criteria_contract_valid",
+        "success_criteria_completion_valid",
+        "success_criteria_ledger_valid",
+        "status.py set-terminal --status done",
+        "--allow-missing-evidence",
         "all_success_criteria_passed == true",
     ):
         assert phrase in text
