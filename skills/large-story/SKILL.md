@@ -35,6 +35,22 @@ VERIFY, SHIP/closeout, final status rendering, and automated end-to-end
 regression coverage. Fresh disposable execution remains blocked until the next
 acceptance gate passes (Track C TASK-C8, user-observed).
 
+## Controller Path Resolution (do this first)
+
+The controller ships with the plugin, not with the target project. Resolve it
+from this skill's base directory (shown at the top of this skill's context):
+
+```
+CONTROLLER = {skill base directory}/../../scripts/large_story_controller.py
+CONTRACTS  = {skill base directory}/../../scripts/success_criteria_contracts.py
+```
+
+Verify both files exist before starting. Every controller command below is
+written as `python3 scripts/large_story_controller.py ...` for brevity — always
+invoke it as `python3 "$CONTROLLER" --project-dir . ...` with the resolved
+absolute path. Never assume the target project contains a `scripts/`
+directory.
+
 ## The Runner Loop
 
 For every phase, follow exactly this loop. No step may be reordered, skipped,

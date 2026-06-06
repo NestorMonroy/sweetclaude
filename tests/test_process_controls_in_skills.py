@@ -139,6 +139,9 @@ def test_large_story_entrypoint_requires_contract_before_downstream_work():
         "If validation fails, stop. Do not continue downstream",
         "scripts/large_story_controller.py design --workflow-id {workflow_id}",
         "No review, caucus, verification, release, or completion step may add completion criteria",
+        "## Controller Path Resolution (do this first)",
+        "{skill base directory}/../../scripts/large_story_controller.py",
+        "Never assume the target project contains a `scripts/`",
     ):
         assert phrase in large_story
 
