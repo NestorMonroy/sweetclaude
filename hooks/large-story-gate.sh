@@ -14,7 +14,9 @@
 
 set -uo pipefail
 
-INPUT=$(cat)
+INPUT_FILE=$(mktemp "${TMPDIR:-/tmp}/sc-ls-hook.XXXXXX")
+trap 'rm -f "$INPUT_FILE"' EXIT
+cat > "$INPUT_FILE"
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 WORKFLOWS_DIR="$PROJECT_DIR/.sweetclaude/state/workflows"
@@ -27,7 +29,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/scripts"
 
-GATE_INPUT="$INPUT" GATE_PROJECT_DIR="$PROJECT_DIR" GATE_SCRIPTS_DIR="$SCRIPTS_DIR" python3 - <<'PYEOF'
+GATE_INPUT_FILE="$INPUT_FILE" GATE_PROJECT_DIR="$PROJECT_DIR" GATE_SCRIPTS_DIR="$SCRIPTS_DIR" python3 - <<'PYEOF'
 import json
 import os
 import sys
@@ -48,7 +50,8 @@ try:
     sys.path.insert(0, os.environ["GATE_SCRIPTS_DIR"])
     from large_story_controller import gate_tool_use
 
-    data = json.loads(os.environ["GATE_INPUT"])
+    with open(os.environ["GATE_INPUT_FILE"], encoding="utf-8") as handle:
+        data = json.load(handle)
     tool = str(data.get("tool_name") or "")
     tool_input = data.get("tool_input") or {}
     file_path = tool_input.get("file_path") or tool_input.get("notebook_path")

@@ -109,7 +109,10 @@ PROTECTED_BASH_TOKENS = (
     ".sweetclaude/state/workflows",
     ".sweetclaude/state/phase.yaml",
     ".sweetclaude/reports",
+    "record-evidence",
 )
+
+VALID_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 
 ROUTE_SURFACES = {"/sweetclaude:go", "sweetclaude:find-skill", "sweetclaude:_route"}
 POST_SHIP_STAGES = {"terminal_review"}
@@ -194,6 +197,12 @@ def enter_design_phase(
 ) -> dict[str, Any]:
     """Enter DESIGN after define-exit validation and write a durable design artifact."""
     project = Path(project_dir).expanduser().resolve(strict=False)
+    if workflow_id is not None and not _valid_workflow_id(workflow_id):
+        return _failure(
+            "blocked_invalid_workflow_id",
+            "Large-story phase entry is blocked: workflow_id must match "
+            f"{VALID_ID_RE.pattern} (no path separators or traversal).",
+        )
     define_result = validate_success_criteria_workflow(
         project_dir=project,
         workflow_id=workflow_id,
@@ -207,7 +216,7 @@ def enter_design_phase(
         }
 
     resolved_workflow_id = workflow_id or define_result.get("workflow_id") or _workflow_id_from_state(project)
-    if not resolved_workflow_id:
+    if not _valid_workflow_id(resolved_workflow_id):
         return {
             **_failure("blocked_design_entry_failed", "Large-story DESIGN is blocked: workflow_id is required."),
             "next_allowed_stage": "blocked",
@@ -221,7 +230,7 @@ def enter_design_phase(
     artifact_rel = Path(".sweetclaude") / "reports" / "large-story" / resolved_workflow_id / "design" / "design-artifact.md"
     artifact_path = project / artifact_rel
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    summary = design_summary.strip() or "Design pending user/assistant elaboration."
+    summary = _strip_markdown_headings(design_summary.strip()) or "Design pending user/assistant elaboration."
     artifact_path.write_text(
         "\n".join(
             [
@@ -262,6 +271,12 @@ def enter_plan_phase(
 ) -> dict[str, Any]:
     """Enter PLAN after DESIGN and write a durable criterion-mapped plan artifact."""
     project = Path(project_dir).expanduser().resolve(strict=False)
+    if workflow_id is not None and not _valid_workflow_id(workflow_id):
+        return _failure(
+            "blocked_invalid_workflow_id",
+            "Large-story phase entry is blocked: workflow_id must match "
+            f"{VALID_ID_RE.pattern} (no path separators or traversal).",
+        )
     define_result = validate_success_criteria_workflow(
         project_dir=project,
         workflow_id=workflow_id,
@@ -275,7 +290,7 @@ def enter_plan_phase(
         }
 
     resolved_workflow_id = workflow_id or define_result.get("workflow_id") or _workflow_id_from_state(project)
-    if not resolved_workflow_id:
+    if not _valid_workflow_id(resolved_workflow_id):
         return {
             **_failure("blocked_plan_entry_failed", "Large-story PLAN is blocked: workflow_id is required."),
             "next_allowed_stage": "blocked",
@@ -361,6 +376,12 @@ def enter_implement_phase(
 ) -> dict[str, Any]:
     """Enter IMPLEMENT after PLAN and write durable implementation evidence."""
     project = Path(project_dir).expanduser().resolve(strict=False)
+    if workflow_id is not None and not _valid_workflow_id(workflow_id):
+        return _failure(
+            "blocked_invalid_workflow_id",
+            "Large-story phase entry is blocked: workflow_id must match "
+            f"{VALID_ID_RE.pattern} (no path separators or traversal).",
+        )
     define_result = validate_success_criteria_workflow(
         project_dir=project,
         workflow_id=workflow_id,
@@ -374,7 +395,7 @@ def enter_implement_phase(
         }
 
     resolved_workflow_id = workflow_id or define_result.get("workflow_id") or _workflow_id_from_state(project)
-    if not resolved_workflow_id:
+    if not _valid_workflow_id(resolved_workflow_id):
         return {
             **_failure("blocked_implementation_entry_failed", "Large-story IMPLEMENT is blocked: workflow_id is required."),
             "next_allowed_stage": "blocked",
@@ -478,6 +499,12 @@ def enter_verify_phase(
 ) -> dict[str, Any]:
     """Enter VERIFY after IMPLEMENT and write controller-owned ledger evidence."""
     project = Path(project_dir).expanduser().resolve(strict=False)
+    if workflow_id is not None and not _valid_workflow_id(workflow_id):
+        return _failure(
+            "blocked_invalid_workflow_id",
+            "Large-story phase entry is blocked: workflow_id must match "
+            f"{VALID_ID_RE.pattern} (no path separators or traversal).",
+        )
     define_result = validate_success_criteria_workflow(
         project_dir=project,
         workflow_id=workflow_id,
@@ -491,7 +518,7 @@ def enter_verify_phase(
         }
 
     resolved_workflow_id = workflow_id or define_result.get("workflow_id") or _workflow_id_from_state(project)
-    if not resolved_workflow_id:
+    if not _valid_workflow_id(resolved_workflow_id):
         return {
             **_failure("blocked_verify_entry_failed", "Large-story VERIFY is blocked: workflow_id is required."),
             "next_allowed_stage": "blocked",
@@ -573,6 +600,15 @@ def enter_verify_phase(
             **_failure("blocked_verify_entry_failed", "Large-story VERIFY is blocked: no frozen criterion IDs found."),
             "next_allowed_stage": "blocked",
         }
+    invalid_ids = [cid for cid in criterion_ids if not _valid_workflow_id(cid)]
+    if invalid_ids:
+        return {
+            **_failure(
+                "blocked_verify_entry_failed",
+                f"Large-story VERIFY is blocked: criterion ids are invalid: {invalid_ids}.",
+            ),
+            "next_allowed_stage": "blocked",
+        }
 
     supplied_results = criterion_results or {}
     criteria_entries = []
@@ -649,6 +685,24 @@ def enter_verify_phase(
             "ledger_path": str(ledger_rel),
             "next_allowed_stage": "blocked",
         }
+    contract_cross_check = validate_success_criteria_workflow(
+        project_dir=project,
+        workflow_id=resolved_workflow_id,
+        stage="completion",
+    )
+    if not contract_cross_check.get("ok"):
+        return {
+            **_failure(
+                "blocked_verify_entry_failed",
+                "Large-story VERIFY is blocked: the generated ledger does not "
+                "satisfy the frozen contract (evidence_artifact, owner, or "
+                "freshness mismatch). Fix the contract/controller alignment "
+                "before VERIFY can pass.",
+            ),
+            "validator_result": contract_cross_check,
+            "ledger_path": str(ledger_rel),
+            "next_allowed_stage": "blocked",
+        }
     _set_workflow_phase(project, resolved_workflow_id, "VERIFY")
     return {
         "ok": True,
@@ -682,6 +736,11 @@ def enter_ship_phase(
         return result
 
     resolved_workflow_id = completion_gate["workflow_id"]
+    if not _valid_workflow_id(resolved_workflow_id):
+        return {
+            **_failure("blocked_ship_entry_failed", "Large-story SHIP is blocked: workflow_id is invalid."),
+            "next_allowed_stage": "blocked",
+        }
     inconsistency = _check_state_phase_consistency(project, resolved_workflow_id)
     if inconsistency is not None:
         return {**inconsistency, "next_allowed_stage": "blocked"}
@@ -808,7 +867,25 @@ def init_workflow(
     contract_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Create controller-owned large-story workflow state from a frozen contract."""
+    if not _valid_workflow_id(workflow_id):
+        return _failure(
+            "blocked_init_failed",
+            "Large-story init is blocked: workflow_id must match "
+            f"{VALID_ID_RE.pattern} (no path separators or traversal).",
+        )
     project = Path(project_dir).expanduser().resolve(strict=False)
+    existing = [
+        (existing_id, state)
+        for existing_id, state in _active_large_story_workflows(project)
+        if existing_id != workflow_id
+    ]
+    if existing:
+        return _failure(
+            "blocked_init_failed",
+            "Large-story init is blocked: an active large-story workflow already "
+            f"exists ({existing[0][0]}). Complete or repair it before starting "
+            "another.",
+        )
     contract_rel = Path(contract_path) if contract_path else Path(DEFAULT_CONTRACT_PATH)
     resolved_contract = contract_rel if contract_rel.is_absolute() else project / contract_rel
     if not resolved_contract.exists():
@@ -867,8 +944,8 @@ def gate_tool_use(
 ) -> dict[str, Any]:
     """Deterministic allow/deny decision for a tool use under large-story discipline."""
     project = Path(project_dir).expanduser().resolve(strict=False)
-    active = _active_large_story_workflow(project)
-    if active is None:
+    actives = _active_large_story_workflows(project)
+    if not actives:
         return {
             "allow": True,
             "ok": True,
@@ -876,7 +953,19 @@ def gate_tool_use(
             "workflow_id": None,
             "phase": None,
         }
-    workflow_id, state = active
+    if len(actives) > 1:
+        return {
+            "allow": False,
+            "ok": False,
+            "reason": (
+                "Large-story workflow state is ambiguous: multiple active "
+                f"workflows found ({', '.join(item[0] for item in actives)}). "
+                "The gate fails closed until the ambiguity is repaired."
+            ),
+            "workflow_id": None,
+            "phase": None,
+        }
+    workflow_id, state = actives[0]
     phase = str(state.get("phase") or "DEFINE")
 
     def _decision(allow: bool, reason: str) -> dict[str, Any]:
@@ -888,7 +977,12 @@ def gate_tool_use(
             "phase": phase,
         }
 
-    if tool in {"Write", "Edit", "NotebookEdit"} and file_path:
+    if tool in {"Write", "Edit", "NotebookEdit"}:
+        if not file_path:
+            return _decision(
+                False,
+                f"{BLOCKED_GATE_MESSAGE} {tool} call without a file path is anomalous.",
+            )
         rel = _project_relative(project, file_path)
         if rel is None:
             return _decision(
@@ -916,11 +1010,12 @@ def gate_tool_use(
         )
 
     if tool == "Bash" and command:
+        lowered = command.lower()
         for token in PROTECTED_BASH_TOKENS:
-            if token in command:
+            if token in lowered:
                 return _decision(
                     False,
-                    f"{BLOCKED_GATE_MESSAGE} Command references controller-owned path {token}.",
+                    f"{BLOCKED_GATE_MESSAGE} Command references controller-owned path or command {token}.",
                 )
         return _decision(True, "Command does not reference controller-owned paths.")
 
@@ -947,6 +1042,11 @@ def record_evidence(
                 "Evidence recording is blocked: no active large-story workflow.",
             )
         resolved_workflow_id, state = active
+    elif not _valid_workflow_id(resolved_workflow_id):
+        return _failure(
+            "blocked_no_active_workflow",
+            "Evidence recording is blocked: workflow_id is invalid.",
+        )
     else:
         state = _load_yaml_dict(_workflow_state_path(project, resolved_workflow_id))
 
@@ -1043,24 +1143,53 @@ def _load_yaml_dict(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _valid_workflow_id(value: Any) -> bool:
+    return isinstance(value, str) and bool(VALID_ID_RE.fullmatch(value))
+
+
+def _is_active_workflow_state(state: dict[str, Any]) -> bool:
+    return bool(
+        state
+        and state.get("requires_success_criteria_contract")
+        and state.get("status") != "complete"
+    )
+
+
+def _active_large_story_workflows(project: Path) -> list[tuple[str, dict[str, Any]]]:
+    """Every active (non-terminal) large-story workflow, deterministically ordered."""
+    found: dict[str, dict[str, Any]] = {}
+    workflows_dir = project / ".sweetclaude" / "state" / "workflows"
+    if workflows_dir.exists():
+        for candidate in sorted(workflows_dir.glob("*.yaml")):
+            state = _load_yaml_dict(candidate)
+            workflow_id = state.get("workflow_id") if isinstance(state.get("workflow_id"), str) else candidate.stem
+            if not _valid_workflow_id(workflow_id):
+                continue
+            if _is_active_workflow_state(state):
+                found[workflow_id] = state
+    return sorted(found.items())
+
+
 def _active_large_story_workflow(project: Path) -> tuple[str, dict[str, Any]] | None:
+    """The single active workflow, preferring the one phase.yaml points at.
+
+    Returns None when there is no active workflow OR when the active set is
+    ambiguous and phase.yaml does not disambiguate — callers that must fail
+    closed on ambiguity (the gate) use _active_large_story_workflows directly.
+    """
+    actives = _active_large_story_workflows(project)
+    if not actives:
+        return None
+    if len(actives) == 1:
+        return actives[0]
     phase_data = _load_yaml_dict(project / ".sweetclaude" / "state" / "phase.yaml")
     active_item = phase_data.get("active_work_item")
-    workflow_id: str | None = None
     if isinstance(active_item, dict) and active_item.get("entry_category") == "large-story":
-        candidate = active_item.get("id")
-        if isinstance(candidate, str) and candidate:
-            workflow_id = candidate
-    if workflow_id is None:
-        workflow_id = _workflow_id_from_state(project)
-    if workflow_id is None:
-        return None
-    state = _load_yaml_dict(_workflow_state_path(project, workflow_id))
-    if not state or not state.get("requires_success_criteria_contract"):
-        return None
-    if state.get("status") == "complete":
-        return None
-    return workflow_id, state
+        pointed = active_item.get("id")
+        for workflow_id, state in actives:
+            if workflow_id == pointed:
+                return workflow_id, state
+    return None
 
 
 def _sync_phase_yaml(project: Path, workflow_id: str, phase: str) -> None:
@@ -1087,12 +1216,24 @@ def _set_workflow_phase(project: Path, workflow_id: str, phase: str) -> None:
 
 
 def _check_state_phase_consistency(project: Path, workflow_id: str) -> dict[str, Any] | None:
-    workflow_phase = _load_yaml_dict(_workflow_state_path(project, workflow_id)).get("phase")
+    workflow_state = _load_yaml_dict(_workflow_state_path(project, workflow_id))
+    workflow_phase = workflow_state.get("phase")
     phase_data = _load_yaml_dict(project / ".sweetclaude" / "state" / "phase.yaml")
     active_item = phase_data.get("active_work_item")
     if not isinstance(workflow_phase, str) or not isinstance(active_item, dict):
         return None
     if active_item.get("id") != workflow_id:
+        if (
+            active_item.get("entry_category") == "large-story"
+            and _is_active_workflow_state(workflow_state)
+        ):
+            return {
+                **_failure("blocked_state_inconsistent", BLOCKED_STATE_INCONSISTENT_MESSAGE),
+                "workflow_phase": workflow_phase,
+                "phase_yaml_phase": active_item.get("phase"),
+                "phase_yaml_workflow_id": active_item.get("id"),
+                "workflow_id": workflow_id,
+            }
         return None
     item_phase = active_item.get("phase")
     if isinstance(item_phase, str) and item_phase != workflow_phase:
@@ -1108,7 +1249,12 @@ def _check_state_phase_consistency(project: Path, workflow_id: str) -> dict[str,
 def _replace_record_section(text: str, heading: str, values: list[str]) -> str:
     pattern = re.compile(rf"(## {re.escape(heading)}\n\n)(.*?)(\n\n## )", re.DOTALL)
     body = "\n".join(_markdown_list(values))
-    return pattern.sub(lambda match: f"{match.group(1)}{body}{match.group(3)}", text, count=1)
+    replaced, count = pattern.subn(
+        lambda match: f"{match.group(1)}{body}{match.group(3)}", text, count=1
+    )
+    if count == 0:
+        return f"{text.rstrip()}\n\n## {heading}\n\n{body}\n"
+    return replaced
 
 
 def _record_section_items(text: str, heading: str) -> list[str]:
@@ -1218,7 +1364,7 @@ def _completion_gate_result(
         if not evidence.get("ok"):
             return evidence
     resolved_workflow_id = result.get("workflow_id") or workflow_id or _workflow_id_from_state(project)
-    if not resolved_workflow_id:
+    if not _valid_workflow_id(resolved_workflow_id):
         return _failure("blocked_completion_validation_failed", BLOCKED_COMPLETION_VALIDATION_MESSAGE)
     return {
         "ok": True,
@@ -1411,14 +1557,9 @@ def _workflow_id_from_state(project: Path) -> str | None:
         data = yaml.safe_load(large_story_state.read_text(encoding="utf-8")) or {}
         if isinstance(data, dict) and isinstance(data.get("workflow_id"), str):
             return data["workflow_id"]
-    workflows_dir = project / ".sweetclaude" / "state" / "workflows"
-    if workflows_dir.exists():
-        candidates = sorted(workflows_dir.glob("*.yaml"))
-        if len(candidates) == 1:
-            data = yaml.safe_load(candidates[0].read_text(encoding="utf-8")) or {}
-            if isinstance(data, dict) and isinstance(data.get("workflow_id"), str):
-                return data["workflow_id"]
-            return candidates[0].stem
+    active = _active_large_story_workflow(project)
+    if active is not None:
+        return active[0]
     return None
 
 
@@ -1486,12 +1627,27 @@ def _criterion_ids(project: Path, workflow_id: str, define_result: dict[str, Any
     return []
 
 
+def _strip_markdown_headings(text: str) -> str:
+    """Neutralize heading markers in agent-supplied prose so it cannot forge
+    or shadow controller-owned record sections (TASK-C7 MAJOR finding)."""
+    lines = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            lines.append(line[: len(line) - len(stripped)] + stripped.lstrip("#").lstrip())
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def _sanitize_no_success_criteria(text: str) -> str:
+    text = _strip_markdown_headings(text)
     lines = [line for line in text.splitlines() if not line.strip().lower().startswith("success_criteria:")]
     return "\n".join(lines).strip() or "Implementation plan pending elaboration."
 
 
 def _sanitize_no_completion_claims(text: str) -> str:
+    text = _strip_markdown_headings(text)
     lines = []
     for line in text.splitlines():
         lowered = line.lower()

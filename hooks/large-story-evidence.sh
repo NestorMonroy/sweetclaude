@@ -8,7 +8,9 @@
 
 set -uo pipefail
 
-INPUT=$(cat)
+INPUT_FILE=$(mktemp "${TMPDIR:-/tmp}/sc-ls-hook.XXXXXX")
+trap 'rm -f "$INPUT_FILE"' EXIT
+cat > "$INPUT_FILE"
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 WORKFLOWS_DIR="$PROJECT_DIR/.sweetclaude/state/workflows"
@@ -20,7 +22,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/scripts"
 
-EVIDENCE_INPUT="$INPUT" EVIDENCE_PROJECT_DIR="$PROJECT_DIR" EVIDENCE_SCRIPTS_DIR="$SCRIPTS_DIR" python3 - <<'PYEOF' 2>/dev/null || true
+EVIDENCE_INPUT_FILE="$INPUT_FILE" EVIDENCE_PROJECT_DIR="$PROJECT_DIR" EVIDENCE_SCRIPTS_DIR="$SCRIPTS_DIR" python3 - <<'PYEOF' || true
 import json
 import os
 import sys
@@ -37,7 +39,8 @@ CONTROLLER_SCRIPT_TOKENS = (
     "success_criteria_contracts.py",
 )
 
-data = json.loads(os.environ["EVIDENCE_INPUT"])
+with open(os.environ["EVIDENCE_INPUT_FILE"], encoding="utf-8") as handle:
+    data = json.load(handle)
 tool = str(data.get("tool_name") or "")
 tool_input = data.get("tool_input") or {}
 file_path = tool_input.get("file_path") or tool_input.get("notebook_path")

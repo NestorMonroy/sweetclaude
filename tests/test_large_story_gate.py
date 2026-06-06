@@ -361,3 +361,136 @@ def test_record_evidence_cli_returns_json(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert exit_code == 0
+
+
+# --- TASK-C7 security findings: path traversal and evidence forgery -----------
+
+
+def test_init_workflow_rejects_traversal_workflow_id(tmp_path):
+    _write_contract(tmp_path, _contract())
+    for bad_id in ("../../evil", "a/b", "..", ".hidden", "x" * 200, ""):
+        result = init_workflow(project_dir=tmp_path, workflow_id=bad_id)
+        assert result["ok"] is False, bad_id
+        assert not (tmp_path.parent / "evil.yaml").exists()
+
+
+def test_phase_entries_reject_traversal_workflow_id(tmp_path):
+    _init_project(tmp_path)
+    result = enter_design_phase(
+        project_dir=tmp_path, workflow_id="../../evil", design_summary="d"
+    )
+    assert result["ok"] is False
+
+
+def test_record_evidence_rejects_traversal_workflow_id(tmp_path):
+    _init_project(tmp_path)
+    result = record_evidence(
+        project_dir=tmp_path, tool="Write", file_path="app.py", workflow_id="../../evil"
+    )
+    assert result["ok"] is False
+
+
+def test_define_exit_rejects_traversal_criterion_id(tmp_path):
+    _write_contract(tmp_path, _contract(id="../../state/phase"))
+    result = validate_success_criteria_workflow(
+        project_dir=tmp_path, workflow_id=None, stage="define-exit"
+    )
+    assert result["ok"] is False
+
+
+def test_gate_denies_record_evidence_cli_via_bash(tmp_path):
+    project = _init_project(tmp_path)
+    result = gate_tool_use(
+        project_dir=project,
+        tool="Bash",
+        command="python3 /anywhere/large_story_controller.py record-evidence --tool Write --file app.py",
+    )
+    assert result["allow"] is False
+
+
+def test_gate_fails_closed_with_multiple_active_workflows(tmp_path):
+    project = _init_project(tmp_path)
+    second = project / ".sweetclaude" / "state" / "workflows" / "STORY-999.yaml"
+    second.write_text(
+        yaml.safe_dump(
+            {
+                "workflow_id": "STORY-999",
+                "phase": "DEFINE",
+                "requires_success_criteria_contract": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = gate_tool_use(project_dir=project, tool="Write", file_path="app.py")
+    assert result["allow"] is False
+    assert "ambiguous" in result["reason"].lower()
+
+
+def test_init_workflow_refuses_second_active_workflow(tmp_path):
+    project = _init_project(tmp_path)
+    result = init_workflow(project_dir=project, workflow_id="STORY-002")
+    assert result["ok"] is False
+    assert "active" in result["message"].lower()
+
+
+def test_gate_denies_write_tool_without_file_path(tmp_path):
+    project = _init_project(tmp_path)
+    _advance_to_implement(project)
+    result = gate_tool_use(project_dir=project, tool="Write", file_path=None)
+    assert result["allow"] is False
+
+
+def test_gate_denies_case_variant_protected_path_in_bash(tmp_path):
+    project = _init_project(tmp_path)
+    _advance_to_implement(project)
+    result = gate_tool_use(
+        project_dir=project,
+        tool="Bash",
+        command="echo x > .SweetClaude/Reports/success-criteria-ledger.json",
+    )
+    assert result["allow"] is False
+
+
+def test_consistency_check_detects_foreign_active_workflow(tmp_path):
+    project = _init_project(tmp_path)
+    _advance_to_implement(project)
+    phase_path = project / ".sweetclaude" / "state" / "phase.yaml"
+    data = _phase_state(project)
+    data["active_work_item"]["id"] = "STORY-OTHER"
+    phase_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    record_evidence(project_dir=project, tool="Write", file_path="app.py", workflow_id="STORY-001")
+    result = enter_verify_phase(project_dir=project, workflow_id="STORY-001")
+    assert result["ok"] is False
+    assert result["code"] == "blocked_state_inconsistent"
+
+
+def test_summary_heading_injection_cannot_break_evidence_merge(tmp_path):
+    project = _init_project(tmp_path)
+    enter_design_phase(project_dir=project, workflow_id="STORY-001", design_summary="d")
+    enter_plan_phase(project_dir=project, workflow_id="STORY-001", plan_summary="p")
+    injection = "done\n\n## Touched Files\n\n- fake.py\n\n## Commands Run\n\n- fake-cmd"
+    assert enter_implement_phase(
+        project_dir=project, workflow_id="STORY-001", implementation_summary=injection
+    )["ok"]
+    record_evidence(project_dir=project, tool="Write", file_path="real.py")
+    record_evidence(project_dir=project, tool="Bash", command="real-cmd")
+    assert enter_verify_phase(project_dir=project, workflow_id="STORY-001")["ok"]
+    record = (
+        project / ".sweetclaude" / "reports" / "large-story" / "STORY-001"
+        / "implementation" / "implementation-record.md"
+    ).read_text(encoding="utf-8")
+    touched_section = record.split("## Touched Files")[1].split("## Commands Run")[0]
+    assert "real.py" in touched_section
+
+
+def test_verify_blocked_when_ledger_contradicts_contract_artifact_paths(tmp_path):
+    _write_contract(
+        tmp_path,
+        _contract(evidence_artifact=".sweetclaude/reports/large-story/OTHER/evidence/SC-001.json"),
+    )
+    assert init_workflow(project_dir=tmp_path, workflow_id="STORY-001")["ok"]
+    _advance_to_implement(tmp_path)
+    record_evidence(project_dir=tmp_path, tool="Write", file_path="app.py")
+    result = enter_verify_phase(project_dir=tmp_path, workflow_id="STORY-001")
+    assert result["ok"] is False
+    assert result["code"] == "blocked_verify_entry_failed"

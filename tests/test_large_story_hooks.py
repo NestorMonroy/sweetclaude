@@ -356,3 +356,22 @@ def test_stop_hook_allows_after_terminal_closeout(tmp_path):
     result = _run_hook(STOP_HOOK, project, _stop_payload(project))
     assert result.returncode == 0
     assert not result.stdout.strip()
+
+
+def test_evidence_hook_survives_oversized_command(tmp_path):
+    project = _project_with_workflow(tmp_path)
+    _advance_to_implement(project)
+    huge = "pip install flask # " + "A" * 400_000
+    result = _run_hook(EVIDENCE_HOOK, project, _posttool_payload(project, "Bash", command=huge))
+    assert result.returncode == 0
+    entries = _evidence_entries(project)
+    assert any(entry.get("command", "").startswith("pip install flask") for entry in entries)
+
+
+def test_gate_hook_survives_oversized_content(tmp_path):
+    project = _project_with_workflow(tmp_path)
+    payload = _pretool_payload(project, "Write", file_path="app.py", content="A" * 400_000)
+    result = _run_hook(GATE_HOOK, project, payload)
+    decision = _deny_decision(result)
+    assert decision is not None
+    assert decision["permissionDecision"] == "deny"

@@ -10,7 +10,9 @@
 
 set -uo pipefail
 
-INPUT=$(cat)
+INPUT_FILE=$(mktemp "${TMPDIR:-/tmp}/sc-ls-hook.XXXXXX")
+trap 'rm -f "$INPUT_FILE"' EXIT
+cat > "$INPUT_FILE"
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 WORKFLOWS_DIR="$PROJECT_DIR/.sweetclaude/state/workflows"
@@ -22,7 +24,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/scripts"
 
-STOP_INPUT="$INPUT" STOP_PROJECT_DIR="$PROJECT_DIR" STOP_SCRIPTS_DIR="$SCRIPTS_DIR" python3 - <<'PYEOF'
+STOP_INPUT_FILE="$INPUT_FILE" STOP_PROJECT_DIR="$PROJECT_DIR" STOP_SCRIPTS_DIR="$SCRIPTS_DIR" python3 - <<'PYEOF'
 import json
 import os
 import sys
@@ -35,7 +37,8 @@ def block(reason: str) -> None:
 
 
 try:
-    data = json.loads(os.environ["STOP_INPUT"])
+    with open(os.environ["STOP_INPUT_FILE"], encoding="utf-8") as handle:
+        data = json.load(handle)
     if data.get("stop_hook_active"):
         sys.exit(0)
 
