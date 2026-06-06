@@ -1560,6 +1560,17 @@ def _workflow_id_from_state(project: Path) -> str | None:
     active = _active_large_story_workflow(project)
     if active is not None:
         return active[0]
+    # No active workflow: a completed story must still be resolvable for
+    # status rendering and finalize (TASK-C8 run 2 finding). Resolve a single
+    # terminal workflow file; ambiguity still returns None.
+    workflows_dir = project / ".sweetclaude" / "state" / "workflows"
+    if workflows_dir.exists():
+        candidates = sorted(workflows_dir.glob("*.yaml"))
+        if len(candidates) == 1:
+            state = _load_yaml_dict(candidates[0])
+            workflow_id = state.get("workflow_id") if isinstance(state.get("workflow_id"), str) else candidates[0].stem
+            if _valid_workflow_id(workflow_id) and state.get("requires_success_criteria_contract"):
+                return workflow_id
     return None
 
 

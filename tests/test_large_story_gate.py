@@ -494,3 +494,20 @@ def test_verify_blocked_when_ledger_contradicts_contract_artifact_paths(tmp_path
     result = enter_verify_phase(project_dir=tmp_path, workflow_id="STORY-001")
     assert result["ok"] is False
     assert result["code"] == "blocked_verify_entry_failed"
+
+
+def test_status_and_finalize_resolve_terminal_workflow_without_explicit_id(tmp_path):
+    project = _init_project(tmp_path)
+    _advance_to_implement(project)
+    record_evidence(project_dir=project, tool="Write", file_path="app.py")
+    assert enter_verify_phase(project_dir=project, workflow_id="STORY-001")["ok"]
+    assert enter_ship_phase(project_dir=project, workflow_id="STORY-001")["ok"]
+
+    from large_story_controller import finalize_large_story
+
+    status = render_large_story_status(project_dir=project)
+    assert status["ok"] is True, status
+    assert status["workflow_id"] == "STORY-001"
+    finalize = finalize_large_story(project_dir=project)
+    assert finalize["ok"] is True
+    assert finalize["completion_claim_allowed"] is True
