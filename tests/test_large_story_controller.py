@@ -18,6 +18,7 @@ from large_story_controller import (
     enter_plan_phase,
     enter_ship_phase,
     enter_verify_phase,
+    record_evidence,
     route_large_story,
     transition_large_story,
     finalize_large_story,
@@ -272,6 +273,19 @@ def _write_valid_ledger(project: Path, story_id: str = "STORY-001") -> Path:
     return ledger_path
 
 
+def _record_hook_evidence(
+    project: Path,
+    workflow_id: str = "STORY-001",
+    files: tuple[str, ...] = ("app.py",),
+    commands: tuple[str, ...] = ("pytest -q",),
+) -> None:
+    """Mirror the Track C PostToolUse evidence hook for simulated flows."""
+    for file_path in files:
+        record_evidence(project_dir=project, tool="Write", file_path=file_path, workflow_id=workflow_id)
+    for command in commands:
+        record_evidence(project_dir=project, tool="Bash", command=command, workflow_id=workflow_id)
+
+
 def _run_through_verify(project: Path) -> dict:
     enter_design_phase(project_dir=project, workflow_id="STORY-001", design_summary="Design.")
     enter_plan_phase(project_dir=project, workflow_id="STORY-001", plan_summary="Plan.")
@@ -282,6 +296,7 @@ def _run_through_verify(project: Path) -> dict:
         touched_files=["app.py"],
         commands_run=["pytest -q"],
     )
+    _record_hook_evidence(project)
     return enter_verify_phase(project_dir=project, workflow_id="STORY-001")
 
 
@@ -623,6 +638,7 @@ def test_verify_can_enter_only_after_implement_passes(tmp_path):
         touched_files=["app.py"],
         commands_run=["pytest -q"],
     )
+    _record_hook_evidence(project)
 
     allowed = enter_verify_phase(project_dir=project, workflow_id="STORY-001")
 
@@ -642,6 +658,7 @@ def test_verify_writes_ledger_and_evidence_for_every_frozen_criterion(tmp_path):
         touched_files=["app.py"],
         commands_run=["pytest -q"],
     )
+    _record_hook_evidence(project)
 
     result = enter_verify_phase(project_dir=project, workflow_id="STORY-001")
 
@@ -673,6 +690,7 @@ def test_verify_fails_closed_if_criterion_lacks_evidence(tmp_path):
     enter_design_phase(project_dir=project, workflow_id="STORY-001", design_summary="Design.")
     enter_plan_phase(project_dir=project, workflow_id="STORY-001", plan_summary="Plan.")
     enter_implement_phase(project_dir=project, workflow_id="STORY-001", implementation_summary="Implementation.")
+    _record_hook_evidence(project)
 
     result = enter_verify_phase(
         project_dir=project,
@@ -690,6 +708,7 @@ def test_verify_validation_fails_for_missing_or_bad_evidence_path(tmp_path):
     enter_design_phase(project_dir=project, workflow_id="STORY-001", design_summary="Design.")
     enter_plan_phase(project_dir=project, workflow_id="STORY-001", plan_summary="Plan.")
     enter_implement_phase(project_dir=project, workflow_id="STORY-001", implementation_summary="Implementation.")
+    _record_hook_evidence(project)
     result = enter_verify_phase(project_dir=project, workflow_id="STORY-001")
     ledger_path = project / result["ledger_path"]
     ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
@@ -708,6 +727,7 @@ def test_verify_fails_closed_if_ledger_hash_does_not_match_contract(tmp_path):
     enter_design_phase(project_dir=project, workflow_id="STORY-001", design_summary="Design.")
     enter_plan_phase(project_dir=project, workflow_id="STORY-001", plan_summary="Plan.")
     enter_implement_phase(project_dir=project, workflow_id="STORY-001", implementation_summary="Implementation.")
+    _record_hook_evidence(project)
     result = enter_verify_phase(project_dir=project, workflow_id="STORY-001")
     ledger_path = project / result["ledger_path"]
     ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
@@ -894,6 +914,7 @@ def test_final_status_lists_failed_criteria_from_ledger(tmp_path):
     enter_design_phase(project_dir=project, workflow_id="STORY-001", design_summary="Design.")
     enter_plan_phase(project_dir=project, workflow_id="STORY-001", plan_summary="Plan.")
     enter_implement_phase(project_dir=project, workflow_id="STORY-001", implementation_summary="Implementation.")
+    _record_hook_evidence(project)
     result = enter_verify_phase(
         project_dir=project,
         workflow_id="STORY-001",
@@ -974,6 +995,12 @@ def test_full_crud_sqlite_large_story_regression_controller_flow(tmp_path):
     )
     phases.append(implement["status"])
     created_files = _write_fake_crud_app_files(project)
+    _record_hook_evidence(
+        project,
+        workflow_id=workflow_id,
+        files=("app.py", "templates/index.html", "models.db"),
+        commands=("python3 seed.py", "pytest -q tests/crud_regression"),
+    )
 
     assert all(path.exists() and path.stat().st_size > 0 for path in created_files)
     assert not (project / ".sweetclaude" / "reports" / "success-criteria-ledger.json").exists()

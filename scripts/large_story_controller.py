@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,12 @@ try:
 except ImportError:
     sys.exit("pyyaml is required: pip install pyyaml")
 
-from success_criteria_contracts import validate_success_criteria_workflow
+from success_criteria_contracts import (
+    DEFAULT_CONTRACT_PATH,
+    DEFAULT_LEDGER_PATH,
+    validate_success_criteria_contract,
+    validate_success_criteria_workflow,
+)
 
 
 BLOCKED_SLICE0_MESSAGE = (
@@ -71,6 +77,38 @@ BLOCKED_FINAL_RESPONSE_MESSAGE = (
     "Large-story final response is blocked: the response would contradict "
     "controller state or completion validation. Render status through the "
     "large-story finalizer."
+)
+
+BLOCKED_STATE_INCONSISTENT_MESSAGE = (
+    "Large-story state is inconsistent: phase.yaml and the workflow state file "
+    "disagree on the active phase. Status rendering and phase transitions are "
+    "blocked until the controller-owned state is repaired. Do not edit state "
+    "files directly."
+)
+BLOCKED_LEDGER_PATH_DIVERGENT_MESSAGE = (
+    "Large-story VERIFY is blocked: workflow state points to a non-canonical "
+    f"success criteria ledger path. The canonical path is {DEFAULT_LEDGER_PATH}."
+)
+BLOCKED_EVIDENCE_EMPTY_MESSAGE = (
+    "Large-story VERIFY is blocked: no hook-observed implementation evidence "
+    "was recorded in evidence.jsonl. Implementation evidence is captured by "
+    "the harness, not self-reported. If this story genuinely changed no "
+    "project files, re-run verify with --allow-no-file-changes."
+)
+BLOCKED_GATE_MESSAGE = (
+    "Large-story gate denied this tool use. Project files may only be "
+    "modified during IMPLEMENT, after the controller has entered the phase. "
+    "Controller-owned state and report files may never be modified directly."
+)
+
+CANONICAL_LEDGER_REL = Path(DEFAULT_LEDGER_PATH)
+PROTECTED_WORKFLOWS_REL = Path(".sweetclaude") / "state" / "workflows"
+PROTECTED_PHASE_REL = Path(".sweetclaude") / "state" / "phase.yaml"
+PROTECTED_REPORTS_REL = Path(".sweetclaude") / "reports"
+PROTECTED_BASH_TOKENS = (
+    ".sweetclaude/state/workflows",
+    ".sweetclaude/state/phase.yaml",
+    ".sweetclaude/reports",
 )
 
 ROUTE_SURFACES = {"/sweetclaude:go", "sweetclaude:find-skill", "sweetclaude:_route"}
@@ -175,6 +213,10 @@ def enter_design_phase(
             "next_allowed_stage": "blocked",
         }
 
+    inconsistency = _check_state_phase_consistency(project, resolved_workflow_id)
+    if inconsistency is not None:
+        return {**inconsistency, "next_allowed_stage": "blocked"}
+
     contract_hash = str(define_result.get("contract_hash") or "")
     artifact_rel = Path(".sweetclaude") / "reports" / "large-story" / resolved_workflow_id / "design" / "design-artifact.md"
     artifact_path = project / artifact_rel
@@ -200,6 +242,7 @@ def enter_design_phase(
         ),
         encoding="utf-8",
     )
+    _set_workflow_phase(project, resolved_workflow_id, "DESIGN")
     return {
         "ok": True,
         "status": "design",
@@ -237,6 +280,10 @@ def enter_plan_phase(
             **_failure("blocked_plan_entry_failed", "Large-story PLAN is blocked: workflow_id is required."),
             "next_allowed_stage": "blocked",
         }
+
+    inconsistency = _check_state_phase_consistency(project, resolved_workflow_id)
+    if inconsistency is not None:
+        return {**inconsistency, "next_allowed_stage": "blocked"}
 
     contract_hash = str(define_result.get("contract_hash") or "")
     design_rel = Path(".sweetclaude") / "reports" / "large-story" / resolved_workflow_id / "design" / "design-artifact.md"
@@ -288,6 +335,7 @@ def enter_plan_phase(
         ),
         encoding="utf-8",
     )
+    _set_workflow_phase(project, resolved_workflow_id, "PLAN")
     return {
         "ok": True,
         "status": "plan",
@@ -331,6 +379,10 @@ def enter_implement_phase(
             **_failure("blocked_implementation_entry_failed", "Large-story IMPLEMENT is blocked: workflow_id is required."),
             "next_allowed_stage": "blocked",
         }
+
+    inconsistency = _check_state_phase_consistency(project, resolved_workflow_id)
+    if inconsistency is not None:
+        return {**inconsistency, "next_allowed_stage": "blocked"}
 
     contract_hash = str(define_result.get("contract_hash") or "")
     plan_rel = Path(".sweetclaude") / "reports" / "large-story" / resolved_workflow_id / "plan" / "implementation-plan.md"
@@ -399,6 +451,7 @@ def enter_implement_phase(
         ),
         encoding="utf-8",
     )
+    _set_workflow_phase(project, resolved_workflow_id, "IMPLEMENT")
     return {
         "ok": True,
         "status": "implement",
@@ -421,6 +474,7 @@ def enter_verify_phase(
     project_dir: str | Path = ".",
     workflow_id: str | None = None,
     criterion_results: dict[str, dict[str, Any]] | None = None,
+    allow_no_file_changes: bool = False,
 ) -> dict[str, Any]:
     """Enter VERIFY after IMPLEMENT and write controller-owned ledger evidence."""
     project = Path(project_dir).expanduser().resolve(strict=False)
@@ -440,6 +494,24 @@ def enter_verify_phase(
     if not resolved_workflow_id:
         return {
             **_failure("blocked_verify_entry_failed", "Large-story VERIFY is blocked: workflow_id is required."),
+            "next_allowed_stage": "blocked",
+        }
+
+    inconsistency = _check_state_phase_consistency(project, resolved_workflow_id)
+    if inconsistency is not None:
+        return {**inconsistency, "next_allowed_stage": "blocked"}
+
+    workflow_state = _load_yaml_dict(_workflow_state_path(project, resolved_workflow_id))
+    ledger_setting = workflow_state.get("success_criteria_ledger_path")
+    if (
+        isinstance(ledger_setting, str)
+        and ledger_setting.strip()
+        and Path(ledger_setting) != CANONICAL_LEDGER_REL
+    ):
+        return {
+            **_failure("blocked_ledger_path_divergent", BLOCKED_LEDGER_PATH_DIVERGENT_MESSAGE),
+            "configured_ledger_path": ledger_setting,
+            "canonical_ledger_path": str(CANONICAL_LEDGER_REL),
             "next_allowed_stage": "blocked",
         }
 
@@ -469,6 +541,31 @@ def enter_verify_phase(
             "implementation_artifact_path": str(implementation_rel),
             "next_allowed_stage": "blocked",
         }
+
+    evidence_entries = _evidence_log_entries(project, resolved_workflow_id)
+    evidence_files = sorted(
+        {str(entry["file_path"]) for entry in evidence_entries if entry.get("file_path")}
+    )
+    evidence_commands = [
+        str(entry["command"]) for entry in evidence_entries if entry.get("command")
+    ]
+    if not evidence_files and not allow_no_file_changes:
+        return {
+            **_failure("blocked_implementation_evidence_empty", BLOCKED_EVIDENCE_EMPTY_MESSAGE),
+            "evidence_log_path": str(_evidence_log_rel(resolved_workflow_id)),
+            "next_allowed_stage": "blocked",
+        }
+    if evidence_entries:
+        merged_files = sorted(
+            set(_record_section_items(implementation_text, "Touched Files")) | set(evidence_files)
+        )
+        existing_commands = _record_section_items(implementation_text, "Commands Run")
+        merged_commands = existing_commands + [
+            command for command in evidence_commands if command not in existing_commands
+        ]
+        implementation_text = _replace_record_section(implementation_text, "Touched Files", merged_files)
+        implementation_text = _replace_record_section(implementation_text, "Commands Run", merged_commands)
+        implementation_path.write_text(implementation_text, encoding="utf-8")
 
     criterion_ids = _criterion_ids(project, resolved_workflow_id, define_result)
     if not criterion_ids:
@@ -552,6 +649,7 @@ def enter_verify_phase(
             "ledger_path": str(ledger_rel),
             "next_allowed_stage": "blocked",
         }
+    _set_workflow_phase(project, resolved_workflow_id, "VERIFY")
     return {
         "ok": True,
         "status": "verify",
@@ -584,6 +682,9 @@ def enter_ship_phase(
         return result
 
     resolved_workflow_id = completion_gate["workflow_id"]
+    inconsistency = _check_state_phase_consistency(project, resolved_workflow_id)
+    if inconsistency is not None:
+        return {**inconsistency, "next_allowed_stage": "blocked"}
     contract_hash = completion_gate["success_criteria_contract_hash"]
     ledger_rel = completion_gate["ledger_path"]
     closeout_rel = (
@@ -609,6 +710,7 @@ def enter_ship_phase(
     }
     closeout_path.write_text(json.dumps(closeout, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     _write_workflow_terminal_state(project, resolved_workflow_id, closeout_rel)
+    _sync_phase_yaml(project, resolved_workflow_id, "SHIP")
     return {
         "ok": True,
         "status": "ship",
@@ -629,6 +731,15 @@ def finalize_large_story(
     attempted_response: str = "",
 ) -> dict[str, Any]:
     """Authorize or block final large-story response language."""
+    project = Path(project_dir).expanduser().resolve(strict=False)
+    resolved_workflow_id = workflow_id or _workflow_id_from_state(project)
+    if resolved_workflow_id:
+        inconsistency = _check_state_phase_consistency(project, resolved_workflow_id)
+        if inconsistency is not None:
+            inconsistency["completion_claim_allowed"] = False
+            inconsistency["forbidden_phrases_detected"] = _forbidden_phrases(attempted_response)
+            inconsistency["allowed_summary"] = _blocked_summary("blocked_state_inconsistent")
+            return inconsistency
     completion = _completion_result(project_dir=project_dir, workflow_id=workflow_id)
     forbidden = _forbidden_phrases(attempted_response)
     if not completion["ok"]:
@@ -654,6 +765,19 @@ def render_large_story_status(
     """Render controller-owned status for large-story responses."""
     project = Path(project_dir).expanduser().resolve(strict=False)
     resolved_workflow_id = workflow_id or _workflow_id_from_state(project)
+    if resolved_workflow_id:
+        inconsistency = _check_state_phase_consistency(project, resolved_workflow_id)
+        if inconsistency is not None:
+            return {
+                "ok": False,
+                "status": "blocked_state_inconsistent",
+                "workflow_id": resolved_workflow_id,
+                "completion_claim_allowed": False,
+                "allowed_summary": _blocked_summary("blocked_state_inconsistent"),
+                "message": inconsistency["message"],
+                "workflow_phase": inconsistency.get("workflow_phase"),
+                "phase_yaml_phase": inconsistency.get("phase_yaml_phase"),
+            }
     completion = _completion_result(project_dir=project_dir, workflow_id=workflow_id)
     gate = _completion_gate_result(project_dir=project_dir, workflow_id=workflow_id)
     details = _status_details(project, resolved_workflow_id, completion, gate)
@@ -675,6 +799,329 @@ def render_large_story_status(
         "message": completion["message"],
         **details,
     }
+
+
+def init_workflow(
+    *,
+    project_dir: str | Path = ".",
+    workflow_id: str,
+    contract_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Create controller-owned large-story workflow state from a frozen contract."""
+    project = Path(project_dir).expanduser().resolve(strict=False)
+    contract_rel = Path(contract_path) if contract_path else Path(DEFAULT_CONTRACT_PATH)
+    resolved_contract = contract_rel if contract_rel.is_absolute() else project / contract_rel
+    if not resolved_contract.exists():
+        return _failure(
+            "blocked_init_failed",
+            f"Large-story init is blocked: contract not found at {contract_rel}.",
+        )
+    try:
+        contract_result = validate_success_criteria_contract(resolved_contract)
+    except Exception as exc:
+        return _failure("blocked_init_failed", f"Large-story init is blocked: {exc}")
+
+    contract_hash = str(contract_result.get("contract_hash") or "")
+    criterion_ids = list(contract_result.get("criterion_ids") or [])
+    workflow_path = _workflow_state_path(project, workflow_id)
+    workflow_path.parent.mkdir(parents=True, exist_ok=True)
+    workflow_path.write_text(
+        yaml.safe_dump(
+            {
+                "workflow_id": workflow_id,
+                "phase": "DEFINE",
+                "state_owner": "large_story_controller",
+                "requires_success_criteria_contract": True,
+                "success_criteria_contract_path": str(
+                    resolved_contract.relative_to(project)
+                    if resolved_contract.is_relative_to(project)
+                    else resolved_contract
+                ),
+                "success_criteria_contract_hash": contract_hash,
+                "criterion_ids": criterion_ids,
+                "success_criteria_ledger_path": str(CANONICAL_LEDGER_REL),
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _sync_phase_yaml(project, workflow_id, "DEFINE")
+    return {
+        "ok": True,
+        "status": "define",
+        "workflow_id": workflow_id,
+        "success_criteria_contract_hash": contract_hash,
+        "criterion_ids": criterion_ids,
+        "success_criteria_ledger_path": str(CANONICAL_LEDGER_REL),
+        "next_allowed_stage": "design",
+        "message": "Large-story workflow state initialized by controller.",
+    }
+
+
+def gate_tool_use(
+    *,
+    project_dir: str | Path = ".",
+    tool: str,
+    file_path: str | None = None,
+    command: str | None = None,
+) -> dict[str, Any]:
+    """Deterministic allow/deny decision for a tool use under large-story discipline."""
+    project = Path(project_dir).expanduser().resolve(strict=False)
+    active = _active_large_story_workflow(project)
+    if active is None:
+        return {
+            "allow": True,
+            "ok": True,
+            "reason": "No active large-story workflow; gate does not apply.",
+            "workflow_id": None,
+            "phase": None,
+        }
+    workflow_id, state = active
+    phase = str(state.get("phase") or "DEFINE")
+
+    def _decision(allow: bool, reason: str) -> dict[str, Any]:
+        return {
+            "allow": allow,
+            "ok": allow,
+            "reason": reason,
+            "workflow_id": workflow_id,
+            "phase": phase,
+        }
+
+    if tool in {"Write", "Edit", "NotebookEdit"} and file_path:
+        rel = _project_relative(project, file_path)
+        if rel is None:
+            return _decision(
+                False,
+                f"{BLOCKED_GATE_MESSAGE} Target is outside the project directory.",
+            )
+        if (
+            rel == PROTECTED_PHASE_REL
+            or PROTECTED_WORKFLOWS_REL in rel.parents
+            or rel == PROTECTED_WORKFLOWS_REL
+            or PROTECTED_REPORTS_REL in rel.parents
+            or rel == PROTECTED_REPORTS_REL
+        ):
+            return _decision(
+                False,
+                f"{BLOCKED_GATE_MESSAGE} {rel} is controller-owned state or evidence.",
+            )
+        if rel.parts and rel.parts[0] == ".sweetclaude":
+            return _decision(True, f"{rel} is non-protected SweetClaude project state.")
+        if phase == "IMPLEMENT" and _implementation_record_present(project, workflow_id):
+            return _decision(True, "IMPLEMENT phase entered via controller; project writes allowed.")
+        return _decision(
+            False,
+            f"{BLOCKED_GATE_MESSAGE} Current phase is {phase}.",
+        )
+
+    if tool == "Bash" and command:
+        for token in PROTECTED_BASH_TOKENS:
+            if token in command:
+                return _decision(
+                    False,
+                    f"{BLOCKED_GATE_MESSAGE} Command references controller-owned path {token}.",
+                )
+        return _decision(True, "Command does not reference controller-owned paths.")
+
+    return _decision(True, "Tool is not gated.")
+
+
+def record_evidence(
+    *,
+    project_dir: str | Path = ".",
+    tool: str,
+    file_path: str | None = None,
+    command: str | None = None,
+    workflow_id: str | None = None,
+) -> dict[str, Any]:
+    """Append a harness-observed implementation evidence entry (JSONL)."""
+    project = Path(project_dir).expanduser().resolve(strict=False)
+    resolved_workflow_id = workflow_id
+    state: dict[str, Any] = {}
+    if resolved_workflow_id is None:
+        active = _active_large_story_workflow(project)
+        if active is None:
+            return _failure(
+                "blocked_no_active_workflow",
+                "Evidence recording is blocked: no active large-story workflow.",
+            )
+        resolved_workflow_id, state = active
+    else:
+        state = _load_yaml_dict(_workflow_state_path(project, resolved_workflow_id))
+
+    entry: dict[str, Any] = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "tool": tool,
+        "phase": str(state.get("phase") or "UNKNOWN"),
+        "workflow_id": resolved_workflow_id,
+    }
+    if file_path:
+        rel = _project_relative(project, file_path)
+        entry["file_path"] = str(rel) if rel is not None else file_path
+    if command:
+        entry["command"] = command
+
+    log_rel = _evidence_log_rel(resolved_workflow_id)
+    log_path = project / log_rel
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+    total = sum(1 for _ in log_path.open(encoding="utf-8"))
+    return {
+        "ok": True,
+        "workflow_id": resolved_workflow_id,
+        "evidence_log_path": str(log_rel),
+        "entries": total,
+    }
+
+
+def _evidence_log_rel(workflow_id: str) -> Path:
+    return (
+        Path(".sweetclaude")
+        / "reports"
+        / "large-story"
+        / workflow_id
+        / "implementation"
+        / "evidence.jsonl"
+    )
+
+
+def _evidence_log_entries(project: Path, workflow_id: str) -> list[dict[str, Any]]:
+    log_path = project / _evidence_log_rel(workflow_id)
+    if not log_path.exists():
+        return []
+    entries: list[dict[str, Any]] = []
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            entries.append(data)
+    return entries
+
+
+def _implementation_record_present(project: Path, workflow_id: str) -> bool:
+    record = (
+        project
+        / ".sweetclaude"
+        / "reports"
+        / "large-story"
+        / workflow_id
+        / "implementation"
+        / "implementation-record.md"
+    )
+    return record.exists() and record.stat().st_size > 0
+
+
+def _project_relative(project: Path, file_path: str) -> Path | None:
+    candidate = Path(file_path)
+    if not candidate.is_absolute():
+        candidate = project / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        return resolved.relative_to(project)
+    except ValueError:
+        return None
+
+
+def _workflow_state_path(project: Path, workflow_id: str) -> Path:
+    return project / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+
+
+def _load_yaml_dict(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _active_large_story_workflow(project: Path) -> tuple[str, dict[str, Any]] | None:
+    phase_data = _load_yaml_dict(project / ".sweetclaude" / "state" / "phase.yaml")
+    active_item = phase_data.get("active_work_item")
+    workflow_id: str | None = None
+    if isinstance(active_item, dict) and active_item.get("entry_category") == "large-story":
+        candidate = active_item.get("id")
+        if isinstance(candidate, str) and candidate:
+            workflow_id = candidate
+    if workflow_id is None:
+        workflow_id = _workflow_id_from_state(project)
+    if workflow_id is None:
+        return None
+    state = _load_yaml_dict(_workflow_state_path(project, workflow_id))
+    if not state or not state.get("requires_success_criteria_contract"):
+        return None
+    if state.get("status") == "complete":
+        return None
+    return workflow_id, state
+
+
+def _sync_phase_yaml(project: Path, workflow_id: str, phase: str) -> None:
+    phase_path = project / ".sweetclaude" / "state" / "phase.yaml"
+    phase_path.parent.mkdir(parents=True, exist_ok=True)
+    data = _load_yaml_dict(phase_path)
+    if "schema_version" not in data:
+        data["schema_version"] = 2
+    active_item = data.get("active_work_item")
+    if not isinstance(active_item, dict):
+        active_item = {}
+    active_item.update({"id": workflow_id, "phase": phase, "entry_category": "large-story"})
+    data["active_work_item"] = active_item
+    phase_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def _set_workflow_phase(project: Path, workflow_id: str, phase: str) -> None:
+    workflow_path = _workflow_state_path(project, workflow_id)
+    workflow_path.parent.mkdir(parents=True, exist_ok=True)
+    data = _load_yaml_dict(workflow_path)
+    data.update({"workflow_id": workflow_id, "phase": phase})
+    workflow_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    _sync_phase_yaml(project, workflow_id, phase)
+
+
+def _check_state_phase_consistency(project: Path, workflow_id: str) -> dict[str, Any] | None:
+    workflow_phase = _load_yaml_dict(_workflow_state_path(project, workflow_id)).get("phase")
+    phase_data = _load_yaml_dict(project / ".sweetclaude" / "state" / "phase.yaml")
+    active_item = phase_data.get("active_work_item")
+    if not isinstance(workflow_phase, str) or not isinstance(active_item, dict):
+        return None
+    if active_item.get("id") != workflow_id:
+        return None
+    item_phase = active_item.get("phase")
+    if isinstance(item_phase, str) and item_phase != workflow_phase:
+        return {
+            **_failure("blocked_state_inconsistent", BLOCKED_STATE_INCONSISTENT_MESSAGE),
+            "workflow_phase": workflow_phase,
+            "phase_yaml_phase": item_phase,
+            "workflow_id": workflow_id,
+        }
+    return None
+
+
+def _replace_record_section(text: str, heading: str, values: list[str]) -> str:
+    pattern = re.compile(rf"(## {re.escape(heading)}\n\n)(.*?)(\n\n## )", re.DOTALL)
+    body = "\n".join(_markdown_list(values))
+    return pattern.sub(lambda match: f"{match.group(1)}{body}{match.group(3)}", text, count=1)
+
+
+def _record_section_items(text: str, heading: str) -> list[str]:
+    pattern = re.compile(rf"## {re.escape(heading)}\n\n(.*?)\n\n## ", re.DOTALL)
+    match = pattern.search(text)
+    if not match:
+        return []
+    items = [
+        line[2:].strip()
+        for line in match.group(1).splitlines()
+        if line.startswith("- ")
+    ]
+    return [item for item in items if item and item != "none recorded"]
 
 
 def validate_ledger_evidence_paths(
@@ -994,6 +1441,12 @@ def _blocked_summary(code: str) -> str:
         return "Large-story SHIP is blocked because VERIFY did not produce valid ledger evidence."
     if code == "blocked_ship_closeout_missing":
         return "Large-story is blocked because SHIP/closeout has not written durable closeout evidence."
+    if code == "blocked_state_inconsistent":
+        return "Large-story is blocked because phase state files disagree; controller-owned state must be repaired."
+    if code == "blocked_ledger_path_divergent":
+        return "Large-story is blocked because workflow state points to a non-canonical ledger path."
+    if code == "blocked_implementation_evidence_empty":
+        return "Large-story is blocked because no harness-observed implementation evidence was recorded."
     return "Large-story is blocked by controller state."
 
 
@@ -1094,6 +1547,22 @@ def main(argv: list[str] | None = None) -> int:
     verify = sub.add_parser("verify")
     verify.add_argument("--workflow-id")
     verify.add_argument("--criterion-result-json", default="")
+    verify.add_argument("--allow-no-file-changes", action="store_true")
+
+    init_parser = sub.add_parser("init")
+    init_parser.add_argument("--workflow-id", required=True)
+    init_parser.add_argument("--contract-path")
+
+    gate_parser = sub.add_parser("gate")
+    gate_parser.add_argument("--tool", required=True)
+    gate_parser.add_argument("--file")
+    gate_parser.add_argument("--command", dest="bash_command")
+
+    record_parser = sub.add_parser("record-evidence")
+    record_parser.add_argument("--tool", required=True)
+    record_parser.add_argument("--file")
+    record_parser.add_argument("--command", dest="bash_command")
+    record_parser.add_argument("--workflow-id")
 
     ship = sub.add_parser("ship")
     ship.add_argument("--workflow-id")
@@ -1155,6 +1624,34 @@ def main(argv: list[str] | None = None) -> int:
                 project_dir=args.project_dir,
                 workflow_id=args.workflow_id,
                 criterion_results=criterion_results,
+                allow_no_file_changes=args.allow_no_file_changes,
+            )
+        )
+    if args.command == "init":
+        return _json_print(
+            init_workflow(
+                project_dir=args.project_dir,
+                workflow_id=args.workflow_id,
+                contract_path=args.contract_path,
+            )
+        )
+    if args.command == "gate":
+        return _json_print(
+            gate_tool_use(
+                project_dir=args.project_dir,
+                tool=args.tool,
+                file_path=args.file,
+                command=args.bash_command,
+            )
+        )
+    if args.command == "record-evidence":
+        return _json_print(
+            record_evidence(
+                project_dir=args.project_dir,
+                tool=args.tool,
+                file_path=args.file,
+                command=args.bash_command,
+                workflow_id=args.workflow_id,
             )
         )
     if args.command == "ship":

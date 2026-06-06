@@ -232,6 +232,8 @@ def validate_success_criteria_workflow(
     try:
         if stage in {"draft", "define-exit"}:
             result = validate_success_criteria_contract(resolved_contract)
+            if stage == "define-exit":
+                _validate_current_surface_measurability(resolved_contract)
         elif stage == "completion":
             result = validate_success_criteria_ledger(
                 contract_path=resolved_contract,
@@ -470,6 +472,42 @@ def _validate_outcomes(contract: dict[str, Any]) -> None:
             "statement",
             context=f"Success criteria contract expected_outcomes[{index}]",
         )
+
+
+SURFACE_UNSUPPORTED_EVIDENCE_OWNERS = {"human", "external_system"}
+SURFACE_UNSUPPORTED_MEASUREMENT_PHASES = {"terminal-review"}
+
+
+def _validate_current_surface_measurability(contract_path: str | Path) -> None:
+    """Reject contracts the current large-story surface cannot convert into ledger evidence.
+
+    GUARD-CONTRACT-EVIDENCE-OWNER-CURRENT-SURFACE: terminal review is not
+    implemented, so criteria requiring terminal-review measurement or
+    human/external evidence owners would be unverifiable and must be rejected
+    at define-exit (route them to backlog or rewrite them as
+    controller/test-measurable criteria).
+    """
+    contract = _load_yaml_object(Path(contract_path), context="Success criteria contract")
+    for criterion in contract.get("success_criteria") or []:
+        if not isinstance(criterion, dict):
+            continue
+        criterion_id = criterion.get("id", "<unknown>")
+        owner = criterion.get("evidence_owner")
+        if owner in SURFACE_UNSUPPORTED_EVIDENCE_OWNERS:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract criterion {criterion_id} has evidence_owner "
+                f"'{owner}', which the current large-story surface cannot convert into "
+                "controller ledger evidence. Use a controller- or test-owned criterion, "
+                "or route this concern to backlog."
+            )
+        phase = criterion.get("allowed_phase_to_measure")
+        if phase in SURFACE_UNSUPPORTED_MEASUREMENT_PHASES:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract criterion {criterion_id} requires "
+                f"allowed_phase_to_measure '{phase}', but terminal-review is not "
+                "implemented on the current large-story surface. Use an "
+                "implementation-measurable criterion or route this concern to backlog."
+            )
 
 
 def _validate_criteria(contract: dict[str, Any]) -> None:
