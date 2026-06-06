@@ -100,11 +100,15 @@ def test_large_story_4x_canonical_entrypoint_is_large_story_skill():
     assert "Users start complete large/high-rigor story workflows through `/sweetclaude:go`" in process_controls
     assert "internal `sweetclaude:large-story` workflow" in process_controls
     assert "Invoke `sweetclaude:find-skill` with the user's request as context" in go
+    assert "scripts/large_story_controller.py route --route-surface /sweetclaude:go" in go
     assert "user-invocable: false" in large_story
     assert "Users start this through `/sweetclaude:go` using natural language." in large_story
+    assert "scripts/large_story_controller.py finalize" in large_story
+    assert "scripts/large_story_controller.py render-status" in large_story
     assert "| **Large Story** |" not in skills_reference
     assert "`/sweetclaude:large-story`" not in skills_reference
-    assert "| Large story / high-rigor story | DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP | `sweetclaude:large-story` |" in find_skill_routes
+    assert "DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP/closeout" in find_skill_routes
+    assert "product readiness blocked" in find_skill_routes
 
     for forbidden in ("john-wick", "John Wick", "sweetclaude:john-wick"):
         assert forbidden not in large_story
@@ -133,6 +137,7 @@ def test_large_story_entrypoint_requires_contract_before_downstream_work():
         "Create or locate a frozen `success_criteria_contract`",
         "Run `python3 scripts/success_criteria_contracts.py validate-workflow --stage define-exit`",
         "If validation fails, stop. Do not continue downstream",
+        "scripts/large_story_controller.py design --workflow-id {workflow_id}",
         "No review, caucus, verification, release, or completion step may add completion criteria",
     ):
         assert phrase in large_story

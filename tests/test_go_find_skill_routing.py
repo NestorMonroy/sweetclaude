@@ -21,6 +21,7 @@ def test_go_delegates_natural_language_requests_to_find_skill():
     assert "If the user passes a request after `/sweetclaude:go`" in text
     assert "Do not require the user to know a skill name" in text
     assert "Invoke `sweetclaude:find-skill` with the user's request as context" in text
+    assert "scripts/large_story_controller.py route --route-surface /sweetclaude:go" in text
     assert "/sweetclaude:go start a large story for the billing rewrite" in text
 
 
@@ -28,7 +29,9 @@ def test_find_skill_can_route_large_story_requests():
     text = _read("skills/find-skill/routing-tables.md")
 
     assert "| Large story / high-rigor story |" in text
-    assert "| Large story / high-rigor story | DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP | `sweetclaude:large-story` |" in text
+    assert "DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP/closeout" in text
+    assert "product readiness blocked" in text
+    assert "`sweetclaude:large-story`" in text
 
 
 def test_large_story_is_not_publicly_invocable():
@@ -38,6 +41,10 @@ def test_large_story_is_not_publicly_invocable():
     assert "user-invocable: false" in frontmatter
     assert "Internal bounded, evidence-gated large-story workflow." in frontmatter
     assert "Users start this through `/sweetclaude:go` using natural language." in text
+    assert "scripts/large_story_controller.py" in text
+    assert "currently supports DEFINE, DESIGN, PLAN, IMPLEMENT" in text
+    assert "VERIFY, SHIP/closeout, final status rendering, and automated end-to-end" in text
+    assert "Fresh disposable execution remains blocked until the next" in text
 
 
 def test_large_story_removed_from_public_skills_reference():

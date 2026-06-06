@@ -28,8 +28,14 @@ bounded `/sweetclaude:code-feature`, `/sweetclaude:code-issue`, or
 
 ## Current Product Surface
 
-This Slice 0 surface defines the production start/resume contract. Later slices
-will implement the full downstream workflow.
+This Track B surface currently supports DEFINE, DESIGN, PLAN, IMPLEMENT,
+VERIFY, SHIP/closeout, final status rendering, and automated end-to-end
+regression coverage. Fresh disposable execution remains blocked until the next
+Track B slice.
+
+All route, transition, status, and completion responses for this skill are
+controller-owned. Do not bypass `scripts/large_story_controller.py` for
+large-story status or completion language.
 
 On start or resume, maintain large-story state in
 `.sweetclaude/state/large-story.yaml` or
@@ -55,13 +61,43 @@ evaluation starts:
 4. Create or locate a frozen `success_criteria_contract`.
 5. Run `python3 scripts/success_criteria_contracts.py validate-workflow --stage define-exit`.
 6. If validation fails, stop. Do not continue downstream.
-7. If validation passes, store the required state fields and stop until the
-   next productized slice is implemented.
+7. If validation passes, store the required state fields.
+8. Run `python3 scripts/large_story_controller.py design --workflow-id {workflow_id} --design-summary "{summary}"` before entering DESIGN.
+9. Run `python3 scripts/large_story_controller.py plan --workflow-id {workflow_id} --plan-summary "{summary}"` before entering PLAN.
+10. Run `python3 scripts/large_story_controller.py implement --workflow-id {workflow_id} --implementation-summary "{summary}"` before entering IMPLEMENT.
+11. Run `python3 scripts/large_story_controller.py verify --workflow-id {workflow_id}` before entering VERIFY.
+12. Run `python3 scripts/large_story_controller.py ship --workflow-id {workflow_id}` before entering SHIP.
+
+Do not enter terminal review or claim product readiness yet. If the user asks
+for final workflow status after SHIP, run:
+
+```bash
+python3 scripts/large_story_controller.py finalize --workflow-id {workflow_id}
+```
+
+Then report the controller result. Do not continue around it.
 
 ## Completion Authority
 
-Completion is valid only when `success-criteria-ledger.json` evaluates every
-frozen criterion and reports `all_success_criteria_passed == true`.
+Completion is valid only when the SHIP/closeout controller exists, runs, and
+accepts a `success-criteria-ledger.json` that evaluates every frozen criterion
+and reports `all_success_criteria_passed == true`.
+
+Before any final large-story status or completion response, run:
+
+```bash
+python3 scripts/large_story_controller.py finalize
+```
+
+If completion is not being requested but status is being rendered, run:
+
+```bash
+python3 scripts/large_story_controller.py render-status
+```
+
+Do not say "all success criteria pass", "story complete", "done", or equivalent
+large-story completion language unless the controller returns completion
+allowed.
 
 No review, caucus, verification, release, or completion step may add completion
 criteria. New concerns route to backlog, amendment request, split story, or

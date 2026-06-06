@@ -27,6 +27,13 @@ For `/sweetclaude:go <request>`:
 3. Let `find-skill` classify, confirm, write work state when appropriate, and
    invoke the matched skill.
 
+If the request is classified as a large/high-rigor story, the matched
+large-story path currently supports DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY,
+and SHIP/closeout. It must
+route through `python3 scripts/large_story_controller.py route --route-surface /sweetclaude:go`
+and may not claim full product readiness while the remaining Track B
+regression/status-renderer tasks are incomplete.
+
 Examples:
 
 - `/sweetclaude:go I need to fix the auth bug`
