@@ -80,15 +80,27 @@ entered them into the ledger.
 2. Define expected outcomes.
 3. Define non-goals.
 4. Create or locate a frozen `success_criteria_contract` at
-   `.sweetclaude/contracts/success-criteria-contract.yaml`. Criteria must be
-   binary and controller- or test-measurable; human-judged and
-   terminal-review criteria are rejected on this surface — route those
-   concerns to backlog.
-5. Run `python3 scripts/success_criteria_contracts.py validate-workflow --stage define-exit`.
+   `.sweetclaude/contracts/success-criteria-contract.yaml`. Do NOT hand-author
+   the YAML — generate a schema-valid skeleton:
+   `python3 "$CONTRACTS" init-contract --project-dir . --story-id {workflow_id} --title "{title}" --criteria {n}`.
+   Then replace every PLACEHOLDER with the agreed objective, outcomes,
+   non-goals, statements, and binary predicates. Evidence paths and enum
+   fields are pre-filled — do not change them. Criteria must be binary and
+   controller- or test-measurable; human-judged and terminal-review criteria
+   are rejected on this surface — route those concerns to backlog.
+5. Freeze it: `python3 "$CONTRACTS" freeze-contract --project-dir .`
+   (computes and writes the contract hash — never compute the hash yourself).
+   Run `python3 scripts/success_criteria_contracts.py validate-workflow --stage define-exit`.
 6. If validation fails, stop. Do not continue downstream.
 7. If validation passes, initialize controller-owned workflow state:
    `python3 scripts/large_story_controller.py init --workflow-id {workflow_id}`.
    Do not write the workflow state file yourself.
+
+After `init`, the contract is frozen and human-gated: any attempt to edit it
+raises an approval prompt that only the user can answer (denied outright in
+auto-approval permission modes). If the user approves an amendment, re-run
+freeze-contract and init to rebind the workflow to the new hash — all phase
+artifacts must then be regenerated through the controller.
 
 ### DESIGN → PLAN → IMPLEMENT
 

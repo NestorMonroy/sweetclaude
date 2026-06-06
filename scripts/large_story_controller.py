@@ -109,7 +109,16 @@ PROTECTED_BASH_TOKENS = (
     ".sweetclaude/state/workflows",
     ".sweetclaude/state/phase.yaml",
     ".sweetclaude/reports",
+    ".sweetclaude/contracts",
     "record-evidence",
+)
+PROTECTED_CONTRACTS_REL = Path(".sweetclaude") / "contracts"
+CONTRACT_AMENDMENT_MESSAGE = (
+    "Frozen success criteria contract amendment requires explicit human "
+    "approval. The contract was frozen when the workflow was initialized; "
+    "amendments after freeze are human-gated (amendment_policy: "
+    "human_approved_only). If approved, re-run freeze-contract and init to "
+    "rebind the workflow to the new contract hash."
 )
 
 VALID_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
@@ -949,6 +958,7 @@ def gate_tool_use(
         return {
             "allow": True,
             "ok": True,
+            "decision": "allow",
             "reason": "No active large-story workflow; gate does not apply.",
             "workflow_id": None,
             "phase": None,
@@ -957,6 +967,7 @@ def gate_tool_use(
         return {
             "allow": False,
             "ok": False,
+            "decision": "deny",
             "reason": (
                 "Large-story workflow state is ambiguous: multiple active "
                 f"workflows found ({', '.join(item[0] for item in actives)}). "
@@ -968,10 +979,11 @@ def gate_tool_use(
     workflow_id, state = actives[0]
     phase = str(state.get("phase") or "DEFINE")
 
-    def _decision(allow: bool, reason: str) -> dict[str, Any]:
+    def _decision(allow: bool, reason: str, decision: str | None = None) -> dict[str, Any]:
         return {
             "allow": allow,
             "ok": allow,
+            "decision": decision or ("allow" if allow else "deny"),
             "reason": reason,
             "workflow_id": workflow_id,
             "phase": phase,
@@ -1000,6 +1012,8 @@ def gate_tool_use(
                 False,
                 f"{BLOCKED_GATE_MESSAGE} {rel} is controller-owned state or evidence.",
             )
+        if PROTECTED_CONTRACTS_REL in rel.parents or rel == PROTECTED_CONTRACTS_REL:
+            return _decision(False, CONTRACT_AMENDMENT_MESSAGE, decision="ask")
         if rel.parts and rel.parts[0] == ".sweetclaude":
             return _decision(True, f"{rel} is non-protected SweetClaude project state.")
         if phase == "IMPLEMENT" and _implementation_record_present(project, workflow_id):

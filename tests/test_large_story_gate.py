@@ -314,14 +314,22 @@ def test_gate_denies_bash_touching_protected_paths(tmp_path):
     assert benign["allow"] is True
 
 
-def test_gate_allows_contract_write_during_define(tmp_path):
+def test_gate_contract_write_is_ungated_before_init_and_asks_after(tmp_path):
+    drafting = gate_tool_use(
+        project_dir=tmp_path,
+        tool="Write",
+        file_path=".sweetclaude/contracts/success-criteria-contract.yaml",
+    )
+    assert drafting["allow"] is True
+
     project = _init_project(tmp_path)
-    result = gate_tool_use(
+    frozen = gate_tool_use(
         project_dir=project,
         tool="Write",
         file_path=".sweetclaude/contracts/success-criteria-contract.yaml",
     )
-    assert result["allow"] is True
+    assert frozen["allow"] is False
+    assert frozen["decision"] == "ask"
 
 
 def test_gate_allows_after_terminal_closeout(tmp_path):
@@ -511,3 +519,105 @@ def test_status_and_finalize_resolve_terminal_workflow_without_explicit_id(tmp_p
     finalize = finalize_large_story(project_dir=project)
     assert finalize["ok"] is True
     assert finalize["completion_claim_allowed"] is True
+
+
+# --- Human-gated contract amendment + contract authoring commands -------------
+
+
+def test_gate_asks_for_contract_amendment_when_workflow_active(tmp_path):
+    project = _init_project(tmp_path)
+    result = gate_tool_use(
+        project_dir=project,
+        tool="Write",
+        file_path=".sweetclaude/contracts/success-criteria-contract.yaml",
+    )
+    assert result["allow"] is False
+    assert result["decision"] == "ask"
+    assert "amendment" in result["reason"].lower()
+
+
+def test_gate_decision_field_present_for_allow_and_deny(tmp_path):
+    project = _init_project(tmp_path)
+    _advance_to_implement(project)
+    allowed = gate_tool_use(project_dir=project, tool="Write", file_path="app.py")
+    assert allowed["decision"] == "allow"
+    denied = gate_tool_use(project_dir=project, tool="Write", file_path=".sweetclaude/state/phase.yaml")
+    assert denied["decision"] == "deny"
+
+
+def test_gate_denies_bash_referencing_contracts(tmp_path):
+    project = _init_project(tmp_path)
+    result = gate_tool_use(
+        project_dir=project,
+        tool="Bash",
+        command="cat extra.yaml >> .sweetclaude/contracts/success-criteria-contract.yaml",
+    )
+    assert result["allow"] is False
+    assert result["decision"] == "deny"
+
+
+def test_init_contract_skeleton_freezes_and_validates(tmp_path):
+    from success_criteria_contracts import freeze_contract, init_contract
+
+    created = init_contract(project_dir=tmp_path, story_id="WI-001", criteria_count=3)
+    assert created["ok"], created
+    frozen = freeze_contract(project_dir=tmp_path)
+    assert frozen["ok"], frozen
+    assert frozen["contract_hash"].startswith("sha256:")
+    result = validate_success_criteria_workflow(
+        project_dir=tmp_path, workflow_id=None, stage="define-exit"
+    )
+    assert result["ok"] is True, result
+    assert result["criterion_ids"] == ["SC-001", "SC-002", "SC-003"]
+
+
+def test_init_contract_evidence_paths_match_controller_format(tmp_path):
+    from success_criteria_contracts import init_contract
+
+    init_contract(project_dir=tmp_path, story_id="WI-001", criteria_count=2)
+    contract = yaml.safe_load(
+        (tmp_path / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml").read_text(encoding="utf-8")
+    )
+    for index, criterion in enumerate(contract["success_criteria"], start=1):
+        assert criterion["evidence_artifact"] == (
+            f".sweetclaude/reports/large-story/WI-001/evidence/SC-{index:03d}.json"
+        )
+        assert criterion["evidence_owner"] == "controller"
+        assert criterion["allowed_phase_to_measure"] == "implementation"
+
+
+def test_init_contract_refuses_overwrite_when_workflow_active(tmp_path):
+    from success_criteria_contracts import init_contract
+
+    project = _init_project(tmp_path)
+    result = init_contract(project_dir=project, story_id="WI-001", criteria_count=1, force=True)
+    assert result["ok"] is False
+    assert "active" in result["error"].lower()
+
+
+def test_init_contract_requires_force_to_overwrite_draft(tmp_path):
+    from success_criteria_contracts import init_contract
+
+    assert init_contract(project_dir=tmp_path, story_id="WI-001")["ok"]
+    again = init_contract(project_dir=tmp_path, story_id="WI-001")
+    assert again["ok"] is False
+    forced = init_contract(project_dir=tmp_path, story_id="WI-001", force=True)
+    assert forced["ok"] is True
+
+
+def test_freeze_contract_recomputes_hash_after_edit(tmp_path):
+    from success_criteria_contracts import freeze_contract, init_contract
+
+    init_contract(project_dir=tmp_path, story_id="WI-001", criteria_count=1)
+    first = freeze_contract(project_dir=tmp_path)
+    contract_path = tmp_path / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml"
+    contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
+    contract["success_criteria"][0]["statement"] = "The index route returns HTTP status 200."
+    contract_path.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
+    second = freeze_contract(project_dir=tmp_path)
+    assert second["ok"]
+    assert second["contract_hash"] != first["contract_hash"]
+    result = validate_success_criteria_workflow(
+        project_dir=tmp_path, workflow_id=None, stage="define-exit"
+    )
+    assert result["ok"] is True, result

@@ -35,15 +35,22 @@ import os
 import sys
 
 
-def deny(reason: str) -> None:
+def emit(permission_decision: str, reason: str) -> None:
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
+            "permissionDecision": permission_decision,
             "permissionDecisionReason": reason,
         }
     }))
     sys.exit(0)
+
+
+def deny(reason: str) -> None:
+    emit("deny", reason)
+
+
+AUTO_APPROVAL_MODES = {"bypassPermissions", "dontAsk", "acceptEdits", "auto"}
 
 
 try:
@@ -74,7 +81,20 @@ except BaseException as exc:  # noqa: BLE001 — fail closed on ANY failure,
         "the controller status."
     )
 
-if not result.get("allow"):
-    deny(str(result.get("reason") or "Large-story gate denied this tool use."))
+decision = str(result.get("decision") or ("allow" if result.get("allow") else "deny"))
+reason = str(result.get("reason") or "Large-story gate denied this tool use.")
+if decision == "ask":
+    # Human-gated amendment: in auto-approval permission modes the ask would
+    # be answered without a human, so fail closed instead.
+    mode = str(data.get("permission_mode") or "")
+    if mode in AUTO_APPROVAL_MODES:
+        deny(
+            f"{reason} (Session permission mode '{mode}' would auto-approve; "
+            "switch to default permission mode so a human can approve the "
+            "amendment.)"
+        )
+    emit("ask", reason)
+elif decision != "allow":
+    deny(reason)
 PYEOF
 exit 0

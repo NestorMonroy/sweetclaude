@@ -375,3 +375,31 @@ def test_gate_hook_survives_oversized_content(tmp_path):
     decision = _deny_decision(result)
     assert decision is not None
     assert decision["permissionDecision"] == "deny"
+
+
+def test_gate_hook_asks_for_contract_amendment_in_default_mode(tmp_path):
+    project = _project_with_workflow(tmp_path)
+    payload = _pretool_payload(
+        project, "Write",
+        file_path=".sweetclaude/contracts/success-criteria-contract.yaml",
+        content="amended",
+    )
+    result = _run_hook(GATE_HOOK, project, payload)
+    assert result.returncode == 0
+    decision = json.loads(result.stdout)["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "ask"
+    assert "amendment" in decision["permissionDecisionReason"].lower()
+
+
+def test_gate_hook_denies_contract_amendment_in_auto_approval_modes(tmp_path):
+    project = _project_with_workflow(tmp_path)
+    for mode in ("bypassPermissions", "dontAsk", "acceptEdits", "auto"):
+        payload = _pretool_payload(
+            project, "Write",
+            file_path=".sweetclaude/contracts/success-criteria-contract.yaml",
+            content="amended",
+        )
+        payload["permission_mode"] = mode
+        result = _run_hook(GATE_HOOK, project, payload)
+        decision = json.loads(result.stdout)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny", mode
