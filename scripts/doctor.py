@@ -215,6 +215,9 @@ def _build_terminal_fallback(maintenance_route: dict) -> dict:
                 "no_data_loss": True,
                 "snapshot_first": True,
                 "capability": "adopt",
+                "executable": "scripts/recovery/re_adopt.py",
+                "plan_first": "recovery.re_adopt.plan_re_adopt",
+                "reversible": "recovery.re_adopt.reverse_re_adopt",
             },
         ],
     }
