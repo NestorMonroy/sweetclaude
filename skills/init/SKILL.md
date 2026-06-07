@@ -290,14 +290,14 @@ SweetClaude Initialized
 > {- CLAUDE.md (if created)}
 > {- `pre-sweetclaude` git branch (if existing project)}
 >
-> Next: Run `/sweetclaude:setup` to start a product discovery session, or jump straight to `/sweetclaude:go` if you already know what you're building."
+> Next: run `/sweetclaude:go` and describe what you want to do — it routes new products into product discovery and existing work to the right skill."
 
 ---
 
 ## Rules
 
 - Never overwrite files that already exist — skip and report.
-- Never run product discovery — that is `sweetclaude:setup`'s job.
+- Never run product discovery — that belongs to `sweetclaude:product-discovery`, reached through `/sweetclaude:go`.
 - Ask project type once; do not re-ask.
 - For CLAUDE.md: present before writing (unless autonomous deference).
 - If `.sweetclaude/disabled` exists: warn "SweetClaude is disabled for this project (`.sweetclaude/disabled` exists). Remove it to proceed." Stop.

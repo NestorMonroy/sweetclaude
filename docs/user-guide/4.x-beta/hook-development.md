@@ -1,6 +1,6 @@
 # Hook Development
 
-**Version:** 1.0 / **Date:** 2026-05-19
+**Version:** 1.1 / **Date:** 2026-06-07
 
 ## Recovery
 
@@ -79,6 +79,45 @@ If the repo is also broken and no backup exists:
 1. Re-install SweetClaude from the plugin marketplace
 2. Or: check out a known-good git tag and copy hooks manually:
    `git checkout v3.68.6 -- hooks/ && cp hooks/*.sh ~/.claude/plugins/cache/.../hooks/`
+
+## Testing Unreleased Hooks (`--plugin-dir`)
+
+When you add or change a hook and want to test it before it ships, you will
+run the repo copy with `--plugin-dir`. **Do not run it alongside the installed
+plugin** — both are named `sweetclaude`, and Claude Code deduplicates hooks by
+command string across plugin sources. With two same-named `sweetclaude`
+plugins active, hook registration is unreliable: some events register and
+others are silently dropped, so your new hook may never fire even though the
+script is correct. `/hooks` will show fewer hooks than `hooks.json` defines.
+
+Run the repo copy as the **only** `sweetclaude` plugin, one of two ways:
+
+**A — clean config dir (least disruptive, recommended):**
+
+    CLAUDE_CONFIG_DIR=/tmp/sc-clean claude --plugin-dir /path/to/sweetclaude
+
+No installed plugins load, so there is no name collision. Verify with `/hooks`
+that the counts match `hooks.json` (e.g. PreToolUse, PostToolUse, Stop groups
+all present).
+
+**B — uninstall the marketplace copy for the duration:**
+
+    # in a normal session
+    /plugin            # uninstall sweetclaude@sweetclaude
+    # quit, then:
+    claude --plugin-dir /path/to/sweetclaude
+    # ...test... then reinstall afterward via /plugin
+
+**Confirm hooks loaded before trusting a test:** run `/hooks` and check that
+every event group your change touches is present and the counts match
+`hooks.json`. A hook that does not appear is not loaded — fix loading before
+concluding anything about behavior. (`claude --debug hooks` logs hook
+evaluation live if you need detail.)
+
+The large-story workflow has a built-in guard for exactly this failure: it
+runs an enforcement self-check before IMPLEMENT and refuses to proceed if its
+gate hook is not actually loaded — so a dropped hook fails loud rather than
+letting the workflow run unprotected.
 
 ## What to Read Next
 

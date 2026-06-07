@@ -36,7 +36,7 @@ If no explicit override, classify by dominant signal in `$ARGUMENTS`:
 | Big picture / full status | "big picture", "whole project", "full status", "project overview", "where is everything", "show me everything", "full project status", "what's the full state" | `sweetclaude:big-picture` |
 | Status / review | "where are we", "what's done", "show me status", "what's next", "what have we done" | Surface status from `sweetclaude.yaml` inline — show project · version_stage · active work · last 3 history items |
 | Help / explain | "how do I", "explain", "what is", "help me understand", "show me how" | `sweetclaude:help` |
-| Large/high-rigor story | "large story", "large-story", "high rigor story", "multi-phase story" | `sweetclaude:large-story` |
+| Large/high-rigor story | "large story", "large-story", "high rigor story", "multi-phase story" | `sweetclaude:large-story` through `python3 scripts/large_story_controller.py route --route-surface sweetclaude:_route`; DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP/closeout; controller-enforced phase gates, hook-verified enforcement |
 | Build / feature | "build", "add", "implement", "create", "new feature", "I want to" | `sweetclaude:code-feature` |
 | Bug / fix | "bug", "fix", "broken", "wrong", "regression", "not working as expected" | `sweetclaude:code-issue` |
 | Refactor / debt | "refactor", "clean up", "restructure", "tech debt", "messy", "untangle" | `sweetclaude:code-debt` |

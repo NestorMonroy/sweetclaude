@@ -232,6 +232,8 @@ def validate_success_criteria_workflow(
     try:
         if stage in {"draft", "define-exit"}:
             result = validate_success_criteria_contract(resolved_contract)
+            if stage == "define-exit":
+                _validate_current_surface_measurability(resolved_contract)
         elif stage == "completion":
             result = validate_success_criteria_ledger(
                 contract_path=resolved_contract,
@@ -472,6 +474,42 @@ def _validate_outcomes(contract: dict[str, Any]) -> None:
         )
 
 
+SURFACE_UNSUPPORTED_EVIDENCE_OWNERS = {"human", "external_system"}
+SURFACE_UNSUPPORTED_MEASUREMENT_PHASES = {"terminal-review"}
+
+
+def _validate_current_surface_measurability(contract_path: str | Path) -> None:
+    """Reject contracts the current large-story surface cannot convert into ledger evidence.
+
+    GUARD-CONTRACT-EVIDENCE-OWNER-CURRENT-SURFACE: terminal review is not
+    implemented, so criteria requiring terminal-review measurement or
+    human/external evidence owners would be unverifiable and must be rejected
+    at define-exit (route them to backlog or rewrite them as
+    controller/test-measurable criteria).
+    """
+    contract = _load_yaml_object(Path(contract_path), context="Success criteria contract")
+    for criterion in contract.get("success_criteria") or []:
+        if not isinstance(criterion, dict):
+            continue
+        criterion_id = criterion.get("id", "<unknown>")
+        owner = criterion.get("evidence_owner")
+        if owner in SURFACE_UNSUPPORTED_EVIDENCE_OWNERS:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract criterion {criterion_id} has evidence_owner "
+                f"'{owner}', which the current large-story surface cannot convert into "
+                "controller ledger evidence. Use a controller- or test-owned criterion, "
+                "or route this concern to backlog."
+            )
+        phase = criterion.get("allowed_phase_to_measure")
+        if phase in SURFACE_UNSUPPORTED_MEASUREMENT_PHASES:
+            raise SuccessCriteriaValidationError(
+                f"Success criteria contract criterion {criterion_id} requires "
+                f"allowed_phase_to_measure '{phase}', but terminal-review is not "
+                "implemented on the current large-story surface. Use an "
+                "implementation-measurable criterion or route this concern to backlog."
+            )
+
+
 def _validate_criteria(contract: dict[str, Any]) -> None:
     criteria = _require_non_empty_list(
         contract,
@@ -499,6 +537,19 @@ def _validate_criteria(contract: dict[str, Any]) -> None:
         "amendment_policy",
         "backlog_routing",
     )
+    # Report all compound-predicate criteria at once — fixing them one refreeze
+    # at a time was a recurring source of churn.
+    compound = [
+        str(c.get("id") or f"index {i}")
+        for i, c in enumerate(criteria)
+        if isinstance(c, dict) and _has_multiple_outcomes(c)
+    ]
+    if compound:
+        raise SuccessCriteriaValidationError(
+            "Success criteria contract criteria have multiple outcomes "
+            f"(split each into one observable behavior): {', '.join(compound)}"
+        )
+
     for index, criterion in enumerate(criteria):
         context = f"Success criteria contract success_criteria[{index}]"
         if not isinstance(criterion, dict):
@@ -542,10 +593,6 @@ def _validate_criteria(contract: dict[str, Any]) -> None:
         if str(criterion["pass_condition"]).strip() == str(criterion["fail_condition"]).strip():
             raise SuccessCriteriaValidationError(
                 f"Success criteria contract criterion {criterion_id} pass/fail conditions must differ"
-            )
-        if _has_multiple_outcomes(criterion):
-            raise SuccessCriteriaValidationError(
-                f"Success criteria contract criterion {criterion_id} has multiple outcomes"
             )
         if _has_vague_unmeasured_language(criterion):
             raise SuccessCriteriaValidationError(
@@ -725,6 +772,152 @@ def _workflow_recovery_hint(stage: str, error: str) -> str:
     return "Do not claim completion. Re-run validation after correcting success-criteria artifacts."
 
 
+def _active_workflow_exists(project: Path) -> bool:
+    workflows_dir = project / ".sweetclaude" / "state" / "workflows"
+    if not workflows_dir.exists():
+        return False
+    for candidate in workflows_dir.glob("*.yaml"):
+        try:
+            state = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            continue
+        if (
+            isinstance(state, dict)
+            and state.get("requires_success_criteria_contract")
+            and state.get("status") != "complete"
+        ):
+            return True
+    return False
+
+
+def _skeleton_criterion(story_id: str, index: int) -> dict[str, Any]:
+    criterion_id = f"SC-{index:03d}"
+    return {
+        "id": criterion_id,
+        "outcome_id": "OUTCOME-001",
+        "statement": f"PLACEHOLDER criterion {index}: replace with one observable behavior.",
+        "binary_predicate": f"placeholder measurement command {index} exits with code 0",
+        "measurement_type": "command",
+        "measurement_procedure": f"Run the criterion {index} measurement command; record the exit code.",
+        "evidence_artifact": f".sweetclaude/reports/large-story/{story_id}/evidence/{criterion_id}.json",
+        "evidence_owner": "controller",
+        "pass_condition": "Exit code equals 0",
+        "fail_condition": "Exit code differs from 0",
+        "allowed_phase_to_measure": "implementation",
+        "amendment_policy": "human_approved_only",
+        "backlog_routing": "Route new concerns to backlog; this criterion is frozen.",
+    }
+
+
+def init_contract(
+    *,
+    project_dir: str | Path = ".",
+    story_id: str,
+    title: str = "",
+    objective: str = "",
+    criteria_count: int = 3,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Write a schema-valid success criteria contract skeleton.
+
+    Evidence paths, enum fields, and structure are pre-filled so DEFINE only
+    has to replace the placeholder statements/predicates, then run
+    freeze-contract. Refuses to overwrite while a workflow is active —
+    post-freeze amendment is human-gated at the file layer.
+    """
+    project = Path(project_dir).expanduser().resolve(strict=False)
+    contract_path = project / DEFAULT_CONTRACT_PATH
+    if _active_workflow_exists(project):
+        return {
+            "ok": False,
+            "error": (
+                "init-contract is blocked: an active large-story workflow exists. "
+                "Frozen contract amendment is human-gated; do not regenerate the "
+                "contract under an active workflow."
+            ),
+        }
+    if contract_path.exists() and contract_path.stat().st_size > 0 and not force:
+        return {
+            "ok": False,
+            "error": f"Contract already exists at {DEFAULT_CONTRACT_PATH}; pass --force to overwrite the draft.",
+        }
+    if criteria_count < 1:
+        return {"ok": False, "error": "criteria_count must be at least 1."}
+
+    skeleton = {
+        "story_id": story_id,
+        "story_title": title or f"PLACEHOLDER title for {story_id}",
+        "story_objective": objective or (
+            "PLACEHOLDER objective: replace with what this story must achieve, "
+            "stated in one or two sentences."
+        ),
+        "expected_outcomes": [
+            {
+                "id": "OUTCOME-001",
+                "statement": "PLACEHOLDER outcome: replace with the observable end state.",
+            }
+        ],
+        "non_goals": [
+            {"id": "NONGOAL-001", "statement": "PLACEHOLDER non-goal: replace with one exclusion."}
+        ],
+        "success_criteria": [
+            _skeleton_criterion(story_id, index) for index in range(1, criteria_count + 1)
+        ],
+        "contract_freeze": {
+            "frozen_at": "",
+            "frozen_by": "",
+            "contract_hash": "",
+        },
+    }
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(yaml.safe_dump(skeleton, sort_keys=False), encoding="utf-8")
+    return {
+        "ok": True,
+        "contract_path": str(DEFAULT_CONTRACT_PATH),
+        "story_id": story_id,
+        "criterion_ids": [criterion["id"] for criterion in skeleton["success_criteria"]],
+        "next_step": (
+            "Replace every PLACEHOLDER, then run freeze-contract, then "
+            "validate-workflow --stage define-exit."
+        ),
+    }
+
+
+def freeze_contract(
+    *,
+    project_dir: str | Path = ".",
+    contract_path: str | Path | None = None,
+    frozen_by: str = "user",
+) -> dict[str, Any]:
+    """Compute and write the freeze hash for the current contract content.
+
+    Safe to run at any time: it only certifies existing content. Content
+    changes are what is gated (human-approved file edits).
+    """
+    project = Path(project_dir).expanduser().resolve(strict=False)
+    target = Path(contract_path) if contract_path else Path(DEFAULT_CONTRACT_PATH)
+    resolved = target if target.is_absolute() else project / target
+    if not resolved.exists():
+        return {"ok": False, "error": f"Contract not found: {target}"}
+    contract = _load_yaml_object(resolved, context="Success criteria contract")
+    freeze = contract.get("contract_freeze")
+    if not isinstance(freeze, dict):
+        freeze = {}
+    freeze["frozen_at"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    freeze["frozen_by"] = frozen_by
+    contract["contract_freeze"] = freeze
+    contract_hash = compute_success_criteria_contract_hash(contract)
+    freeze["contract_hash"] = contract_hash
+    resolved.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
+    return {
+        "ok": True,
+        "contract_path": str(target),
+        "contract_hash": contract_hash,
+        "frozen_at": freeze["frozen_at"],
+        "frozen_by": frozen_by,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -743,6 +936,19 @@ def main(argv: list[str] | None = None) -> int:
     p_workflow.add_argument("--contract")
     p_workflow.add_argument("--ledger")
 
+    p_init = sub.add_parser("init-contract")
+    p_init.add_argument("--project-dir", default=".")
+    p_init.add_argument("--story-id", required=True)
+    p_init.add_argument("--title", default="")
+    p_init.add_argument("--objective", default="")
+    p_init.add_argument("--criteria", type=int, default=3)
+    p_init.add_argument("--force", action="store_true")
+
+    p_freeze = sub.add_parser("freeze-contract")
+    p_freeze.add_argument("--project-dir", default=".")
+    p_freeze.add_argument("--contract")
+    p_freeze.add_argument("--frozen-by", default="user")
+
     args = parser.parse_args(argv)
     try:
         if args.cmd == "validate-contract":
@@ -759,6 +965,21 @@ def main(argv: list[str] | None = None) -> int:
                 stage=args.stage,
                 contract_path=args.contract,
                 ledger_path=args.ledger,
+            )
+        elif args.cmd == "init-contract":
+            result = init_contract(
+                project_dir=args.project_dir,
+                story_id=args.story_id,
+                title=args.title,
+                objective=args.objective,
+                criteria_count=args.criteria,
+                force=args.force,
+            )
+        elif args.cmd == "freeze-contract":
+            result = freeze_contract(
+                project_dir=args.project_dir,
+                contract_path=args.contract,
+                frozen_by=args.frozen_by,
             )
         else:
             raise SuccessCriteriaValidationError(f"Unknown command: {args.cmd}")

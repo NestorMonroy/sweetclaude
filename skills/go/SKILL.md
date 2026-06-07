@@ -27,6 +27,14 @@ For `/sweetclaude:go <request>`:
 3. Let `find-skill` classify, confirm, write work state when appropriate, and
    invoke the matched skill.
 
+If the request is classified as a large/high-rigor story, the matched
+large-story path runs DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, and
+SHIP/closeout with controller-enforced phase gates and hook-verified
+enforcement. It must route through
+`python3 scripts/large_story_controller.py route --route-surface /sweetclaude:go`.
+Completion language is controller-owned — never claim completion the
+controller has not authorized.
+
 Examples:
 
 - `/sweetclaude:go I need to fix the auth bug`

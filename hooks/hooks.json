@@ -74,6 +74,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/wip-limit.sh"
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/large-story-gate.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -112,6 +121,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/plan-tracker.sh"
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/large-story-evidence.sh"
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -120,6 +138,16 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/migration-decision-reminder.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/large-story-stop-guard.sh"
           }
         ]
       }

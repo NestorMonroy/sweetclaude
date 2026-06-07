@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "description": "Declares every hook script and how it is registered. scope: plugin-native = declared in hooks/hooks.json and auto-loaded by Claude Code's plugin system (the variable ${CLAUDE_PLUGIN_ROOT} resolves there); scope: project = registered in .claude/settings.local.json via sweetclaude:on; scope: global = registered in ~/.claude/settings.json (rare — only for hooks that cannot be plugin-native). command_path: the ${CLAUDE_PLUGIN_ROOT}-rooted path used when registering this hook.",
+  "description": "Declares every hook script and how it is registered. scope: plugin-native = declared in hooks/hooks.json and auto-loaded by Claude Code's plugin system (the variable ${CLAUDE_PLUGIN_ROOT} resolves there); scope: project = registered in .claude/settings.local.json via sweetclaude:on; scope: global = registered in ~/.claude/settings.json (rare \u2014 only for hooks that cannot be plugin-native). command_path: the ${CLAUDE_PLUGIN_ROOT}-rooted path used when registering this hook.",
   "hooks": [
     {
       "file": "session-preflight.sh",
@@ -158,6 +158,33 @@
       "required": false,
       "purpose": "Shell library (source'd by skills). Not an event hook.",
       "command_path": null
+    },
+    {
+      "file": "large-story-gate.sh",
+      "event": "PreToolUse",
+      "matcher": "Write|Edit|NotebookEdit|Bash",
+      "required": true,
+      "scope": "plugin-native",
+      "purpose": "Track C: denies project writes outside controller-entered IMPLEMENT and all direct writes to controller-owned state/reports while a large-story workflow is active",
+      "command_path": "${CLAUDE_PLUGIN_ROOT}/hooks/large-story-gate.sh"
+    },
+    {
+      "file": "large-story-evidence.sh",
+      "event": "PostToolUse",
+      "matcher": "Write|Edit|NotebookEdit|Bash",
+      "required": true,
+      "scope": "plugin-native",
+      "purpose": "Track C: appends harness-observed implementation evidence (evidence.jsonl) during large-story IMPLEMENT; VERIFY fails closed without it",
+      "command_path": "${CLAUDE_PLUGIN_ROOT}/hooks/large-story-evidence.sh"
+    },
+    {
+      "file": "large-story-stop-guard.sh",
+      "event": "Stop",
+      "matcher": "",
+      "required": true,
+      "scope": "plugin-native",
+      "purpose": "Track C: blocks session end once while a large-story workflow is non-terminal, forcing controller-rendered status into the conversation",
+      "command_path": "${CLAUDE_PLUGIN_ROOT}/hooks/large-story-stop-guard.sh"
     }
   ]
 }
