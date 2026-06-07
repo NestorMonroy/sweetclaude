@@ -4,6 +4,38 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.1.15-beta] — 2026-06-07 (4.x beta channel)
+
+### Added
+
+- **Large-story harness-level enforcement.** The large-story workflow now
+  enforces its discipline through Claude Code hooks rather than skill
+  instructions, so an agent cannot produce a plausible result while skipping
+  the evidence trail:
+  - PreToolUse gate denies project-file writes outside a controller-entered
+    IMPLEMENT phase, and denies all direct writes to controller-owned state,
+    reports, and the frozen success-criteria contract.
+  - PostToolUse evidence recorder captures implementation evidence by
+    observation (not model self-report); VERIFY fails closed without it.
+  - Stop guard blocks session end while a workflow is non-terminal.
+  - Hook-load self-check: the workflow verifies the gate is actually loaded
+    before IMPLEMENT and refuses to proceed unprotected (fails loud).
+  - Contract authoring commands (`init-contract`, `freeze-contract`) remove
+    the schema trial-and-error and hand-computed hashes.
+  - Frozen-contract amendment is blocked; legitimate amendment is a human
+    action. Completed-story history is immutable.
+
+### Fixed
+
+- `init` closing message and the SessionStart not-configured message now point
+  to valid onboarding commands.
+- Compound success-criteria are reported in a single validation error instead
+  of one refreeze cycle per criterion; `verify` accepts a list payload.
+
+### Notes
+
+- Beta channel only. Not part of the stable 3.x release.
+
 ## [Unreleased]
 
 ### Changed
