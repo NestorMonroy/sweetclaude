@@ -4,6 +4,36 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.1.16-beta] — 2026-06-07 (4.x beta channel)
+
+### Fixed / Added — doctor totality invariant
+
+Doctor can no longer leave a project in an indeterminate state without
+no-data-loss guidance. Hardening, prompted by a real incident where a
+load-bearing `.sweetclaude/product` bridge symlink was mistaken for duplicate
+dead weight and deleted, blinding a project's dashboard:
+
+- **Symlink awareness:** doctor stops and explains when a symlink sits where a
+  real directory is expected; it never treats the contents as duplicates/
+  orphans and never offers to delete it.
+- **Cache base_path:** `cache.py` now honors `artifact-privacy.yaml` base_path
+  (like doctor), so relocated-base projects need no bridge symlink and the
+  dashboard cache finds artifacts directly. Eliminates the symlink-bridge class.
+- **Executable contract:** doctor never presents a fix it cannot run; any
+  auto/prompted finding with an unsupported action downgrades to report-only
+  with manual guidance.
+- **Totality classifier:** every finding routes to one of auto-fixable /
+  guided-manual / accepted-no-action / terminal-fallback — nothing dangles.
+- **Re-adopt backstop:** an executable, snapshot-first, reversible,
+  no-data-loss terminal fallback (`scripts/recovery/re_adopt.py`), the
+  universal recovery when no validated migrator exists.
+- **Version currency:** when the framework is behind latest, doctor advises
+  updating first — some findings may already be resolved in a newer release.
+
+### Notes
+
+- Beta channel only. Not part of the stable 3.x release.
+
 ## [4.1.15-beta] — 2026-06-07 (4.x beta channel)
 
 ### Added
