@@ -114,11 +114,13 @@ PROTECTED_BASH_TOKENS = (
 )
 PROTECTED_CONTRACTS_REL = Path(".sweetclaude") / "contracts"
 CONTRACT_AMENDMENT_MESSAGE = (
-    "Frozen success criteria contract amendment requires explicit human "
-    "approval. The contract was frozen when the workflow was initialized; "
-    "amendments after freeze are human-gated (amendment_policy: "
-    "human_approved_only). If approved, re-run freeze-contract and init to "
-    "rebind the workflow to the new contract hash."
+    "Frozen success criteria contract amendment is blocked. The contract was "
+    "frozen at workflow init and is human-gated (amendment_policy: "
+    "human_approved_only); the model may not edit it. To amend, the USER must "
+    "run the contract commands directly (edit the YAML, then "
+    "`success_criteria_contracts.py freeze-contract` and "
+    "`large_story_controller.py init`) to rebind the workflow to the new "
+    "hash. Otherwise route the concern to backlog or a new story."
 )
 
 VALID_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
@@ -1020,7 +1022,7 @@ def gate_tool_use(
                 f"{BLOCKED_GATE_MESSAGE} {rel} is controller-owned state or evidence.",
             )
         if PROTECTED_CONTRACTS_REL in rel.parents or rel == PROTECTED_CONTRACTS_REL:
-            return _decision(False, CONTRACT_AMENDMENT_MESSAGE, decision="ask")
+            return _decision(False, CONTRACT_AMENDMENT_MESSAGE, decision="deny")
         if rel.parts and rel.parts[0] == ".sweetclaude":
             return _decision(True, f"{rel} is non-protected SweetClaude project state.")
         if phase == "IMPLEMENT" and _implementation_record_present(project, workflow_id):
@@ -1225,11 +1227,11 @@ def _gate_terminal_history(
         if PROTECTED_CONTRACTS_REL in rel.parents or rel == PROTECTED_CONTRACTS_REL:
             return _decision(
                 False,
-                "The success criteria contract belongs to a completed story. "
-                "Modifying it requires explicit human approval — typically this "
-                "means drafting the next story's contract (init-contract) "
-                "rather than amending closed history.",
-                decision="ask",
+                "The success criteria contract belongs to a completed story "
+                "and may not be modified by the model. Closed history is "
+                "immutable; draft the next story's contract (init-contract) "
+                "instead.",
+                decision="deny",
             )
         return _decision(True, "Project files are unrestricted after story completion.")
     if tool == "Bash" and command:

@@ -329,7 +329,7 @@ def test_gate_contract_write_is_ungated_before_init_and_asks_after(tmp_path):
         file_path=".sweetclaude/contracts/success-criteria-contract.yaml",
     )
     assert frozen["allow"] is False
-    assert frozen["decision"] == "ask"
+    assert frozen["decision"] == "deny"
 
 
 def test_gate_allows_after_terminal_closeout(tmp_path):
@@ -524,7 +524,7 @@ def test_status_and_finalize_resolve_terminal_workflow_without_explicit_id(tmp_p
 # --- Human-gated contract amendment + contract authoring commands -------------
 
 
-def test_gate_asks_for_contract_amendment_when_workflow_active(tmp_path):
+def test_gate_denies_contract_amendment_when_workflow_active(tmp_path):
     project = _init_project(tmp_path)
     result = gate_tool_use(
         project_dir=project,
@@ -532,7 +532,7 @@ def test_gate_asks_for_contract_amendment_when_workflow_active(tmp_path):
         file_path=".sweetclaude/contracts/success-criteria-contract.yaml",
     )
     assert result["allow"] is False
-    assert result["decision"] == "ask"
+    assert result["decision"] == "deny"
     assert "amendment" in result["reason"].lower()
 
 
@@ -646,7 +646,7 @@ def test_gate_denies_history_writes_after_terminal_closeout(tmp_path):
         assert result["decision"] == "deny"
 
 
-def test_gate_asks_for_contract_edit_after_terminal_closeout(tmp_path):
+def test_gate_denies_contract_edit_after_terminal_closeout(tmp_path):
     project = _init_project(tmp_path)
     _ship_story(project)
     result = gate_tool_use(
@@ -655,7 +655,7 @@ def test_gate_asks_for_contract_edit_after_terminal_closeout(tmp_path):
         file_path=".sweetclaude/contracts/success-criteria-contract.yaml",
     )
     assert result["allow"] is False
-    assert result["decision"] == "ask"
+    assert result["decision"] == "deny"
 
 
 def test_gate_allows_app_and_phase_writes_after_terminal_closeout(tmp_path):

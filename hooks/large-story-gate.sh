@@ -78,14 +78,13 @@ except BaseException as exc:  # noqa: BLE001 — fail closed on ANY failure,
         "the controller status."
     )
 
-decision = str(result.get("decision") or ("allow" if result.get("allow") else "deny"))
 reason = str(result.get("reason") or "Large-story gate denied this tool use.")
-if decision == "ask":
-    # Hook "ask" always escalates to a real user permission dialog in every
-    # permission mode (verified against official docs 2026-06-06) — the model
-    # cannot answer it.
-    emit("ask", reason)
-elif decision != "allow":
+if not result.get("allow"):
+    # deny is the only runtime-independent hard stop: hook "ask"/"defer" are
+    # not reliably surfaced in auto permission mode (observed in Claude Code
+    # 2.1.168, 2026-06-06). Frozen-contract amendment is therefore blocked
+    # outright; a legitimate amendment is a human action (run the contract
+    # commands directly), not a model action.
     deny(reason)
 PYEOF
 exit 0
