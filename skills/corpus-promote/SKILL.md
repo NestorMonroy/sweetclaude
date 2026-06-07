@@ -4,9 +4,9 @@ user-invocable: true
 description: "Finalize approved documents from corpus/working/."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:corpus-promote" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:corpus-promote"`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
 
 <preflight-guard>
 STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Tell the user: "This project is not set up for SweetClaude. Run `/sweetclaude:setup` first." Then stop.

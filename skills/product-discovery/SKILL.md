@@ -4,9 +4,9 @@ user-invocable: true
 description: "Establish what is being built, for whom, and why — at the depth appropriate for the project type."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:product-discovery" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:product-discovery"`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
 
 # Product Discovery
 

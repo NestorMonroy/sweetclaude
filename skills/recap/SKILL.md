@@ -4,7 +4,7 @@ user-invocable: true
 description: "Produce a concise 'where we are' summary: current phase, active work item, last 3 commits, checkpoint state, and any open flags."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:recap" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:recap"`
 
 # Recap
 

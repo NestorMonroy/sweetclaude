@@ -4,9 +4,9 @@ user-invocable: true
 description: "Manage themes — optional domain-grouping labels on stories."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-themes" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-themes"`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
 
 ```bash
 _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"

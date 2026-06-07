@@ -5,9 +5,9 @@ description: "Write a Product Requirements Document — functional requirements,
 category: product
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:product-prd" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:product-prd"`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
 
 # Product PRD
 

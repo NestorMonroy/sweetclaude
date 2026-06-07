@@ -4,7 +4,7 @@ description: "Interview user and recommend a SweetClaude project mode (Flow, Kan
 version: 1.0.0
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-assess-shape" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-assess-shape"`
 
 # project-assess-shape
 

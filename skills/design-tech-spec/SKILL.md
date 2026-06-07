@@ -5,9 +5,9 @@ description: "Technical specification — every decision a developer needs befor
 category: technical
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:design-tech-spec" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:design-tech-spec"`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
 
 # Design Tech Spec
 

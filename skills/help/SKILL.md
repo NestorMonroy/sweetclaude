@@ -4,7 +4,7 @@ user-invocable: true
 description: "SweetClaude help and skill discovery."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:help" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:help"`
 
 # SweetClaude Help
 

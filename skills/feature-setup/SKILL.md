@@ -4,7 +4,7 @@ user-invocable: true
 description: "Deploy local repo to installed locations and rebuild the project cache."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:feature-setup" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:feature-setup"`
 
 # Feature Setup
 

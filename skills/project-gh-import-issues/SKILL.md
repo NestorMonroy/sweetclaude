@@ -4,7 +4,7 @@ user-invocable: true
 description: "Import open GitHub Issues into the local issue store as v4 story files."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-gh-import-issues" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-gh-import-issues"`
 
 ## MIGRATION GUARD
 

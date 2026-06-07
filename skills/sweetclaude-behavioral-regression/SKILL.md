@@ -4,7 +4,7 @@ description: "Validates that mode enforcement is working correctly across all fo
 version: 1.0.0
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:sweetclaude-behavioral-regression" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:sweetclaude-behavioral-regression"`
 
 # SweetClaude Behavioral Regression
 

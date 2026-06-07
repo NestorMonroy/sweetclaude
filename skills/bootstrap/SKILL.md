@@ -4,9 +4,9 @@ user-invocable: false
 description: "Session startup skill — pre-flight checks, drift/update offers, and initial routing."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:bootstrap" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:bootstrap"`
 
-!`cat .sweetclaude/state/sweetclaude.yaml 2>/dev/null || echo "SC_YAML_NOT_FOUND"`
+!`bash ~/.claude/hooks/sweetclaude/read-state.sh sweetclaude SC_YAML_NOT_FOUND`
 
 # SweetClaude
 

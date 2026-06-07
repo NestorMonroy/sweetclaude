@@ -4,7 +4,7 @@ user-invocable: true
 description: "Run verification before claiming work is complete."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:code-verify" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:code-verify"`
 
 # Code Verify
 

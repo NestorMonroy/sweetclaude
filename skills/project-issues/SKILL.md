@@ -4,7 +4,7 @@ user-invocable: true
 description: "Manage project issues — list, view, create, update, and close."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-issues" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-issues"`
 
 ## MIGRATION GUARD
 

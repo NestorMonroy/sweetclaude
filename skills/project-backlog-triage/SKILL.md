@@ -4,7 +4,7 @@ user-invocable: true
 description: "Structured backlog grooming session."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-backlog-triage" 2>/dev/null || true`
+!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-backlog-triage"`
 
 ## MIGRATION GUARD
 
