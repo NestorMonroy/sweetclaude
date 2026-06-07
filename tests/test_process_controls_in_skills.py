@@ -108,7 +108,7 @@ def test_large_story_4x_canonical_entrypoint_is_large_story_skill():
     assert "| **Large Story** |" not in skills_reference
     assert "`/sweetclaude:large-story`" not in skills_reference
     assert "DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP/closeout" in find_skill_routes
-    assert "product readiness blocked" in find_skill_routes
+    assert "controller-enforced phase gates" in find_skill_routes
 
     for forbidden in ("john-wick", "John Wick", "sweetclaude:john-wick"):
         assert forbidden not in large_story

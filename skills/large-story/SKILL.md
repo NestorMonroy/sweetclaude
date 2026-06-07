@@ -30,10 +30,9 @@ Use this workflow when a work item is too large or high-risk for a single
 bounded `/sweetclaude:code-feature`, `/sweetclaude:code-issue`, or
 `/sweetclaude:code-tdd` pass.
 
-This Track C surface currently supports DEFINE, DESIGN, PLAN, IMPLEMENT,
-VERIFY, SHIP/closeout, final status rendering, and automated end-to-end
-regression coverage. Fresh disposable execution remains blocked until the next
-acceptance gate passes (Track C TASK-C8, user-observed).
+This workflow runs DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP/closeout, and
+final status rendering, with controller-enforced phase gates and hook-verified
+enforcement (the gate, evidence recorder, and stop guard).
 
 ## Controller Path Resolution (do this first)
 

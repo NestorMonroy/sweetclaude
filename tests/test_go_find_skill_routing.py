@@ -30,7 +30,7 @@ def test_find_skill_can_route_large_story_requests():
 
     assert "| Large story / high-rigor story |" in text
     assert "DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP/closeout" in text
-    assert "product readiness blocked" in text
+    assert "controller-enforced phase gates" in text
     assert "`sweetclaude:large-story`" in text
 
 
@@ -42,9 +42,9 @@ def test_large_story_is_not_publicly_invocable():
     assert "Internal bounded, evidence-gated large-story workflow." in frontmatter
     assert "Users start this through `/sweetclaude:go` using natural language." in text
     assert "scripts/large_story_controller.py" in text
-    assert "currently supports DEFINE, DESIGN, PLAN, IMPLEMENT" in text
-    assert "VERIFY, SHIP/closeout, final status rendering, and automated end-to-end" in text
-    assert "Fresh disposable execution remains blocked until the next" in text
+    assert "runs DEFINE, DESIGN, PLAN, IMPLEMENT" in text
+    assert "VERIFY, SHIP/closeout" in text
+    assert "controller-enforced phase gates and hook-verified" in text
 
 
 def test_large_story_removed_from_public_skills_reference():
