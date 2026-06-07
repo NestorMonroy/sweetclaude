@@ -64,7 +64,7 @@ emit_block() {
 # ── Step 2: Project gate ──────────────────────────────────────────────────────
 
 if [ ! -d "$PROJECT_DIR/.sweetclaude" ]; then
-  emit_ctx "SweetClaude not used for this project." "SweetClaude is not configured for this project."
+  emit_ctx "SweetClaude is not set up for this project. Run /sweetclaude:init to start a new or existing project, or just /sweetclaude:go and describe what you want to do." "SweetClaude is not configured for this project. To onboard it, run /sweetclaude:init (routes new vs. existing projects) or /sweetclaude:go with a plain-language request."
   exit 0
 fi
 
