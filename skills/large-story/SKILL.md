@@ -97,8 +97,8 @@ entered them into the ledger.
    Do not write the workflow state file yourself.
 
 After `init`, the contract is frozen and human-gated: any attempt to edit it
-raises an approval prompt that only the user can answer (denied outright in
-auto-approval permission modes). If the user approves an amendment, re-run
+raises an approval prompt that only the user can answer, in every permission
+mode. If the user approves an amendment, re-run
 freeze-contract and init to rebind the workflow to the new hash — all phase
 artifacts must then be regenerated through the controller.
 

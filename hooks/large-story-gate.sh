@@ -50,9 +50,6 @@ def deny(reason: str) -> None:
     emit("deny", reason)
 
 
-AUTO_APPROVAL_MODES = {"bypassPermissions", "dontAsk", "acceptEdits", "auto"}
-
-
 try:
     sys.path.insert(0, os.environ["GATE_SCRIPTS_DIR"])
     from large_story_controller import gate_tool_use
@@ -84,15 +81,9 @@ except BaseException as exc:  # noqa: BLE001 — fail closed on ANY failure,
 decision = str(result.get("decision") or ("allow" if result.get("allow") else "deny"))
 reason = str(result.get("reason") or "Large-story gate denied this tool use.")
 if decision == "ask":
-    # Human-gated amendment: in auto-approval permission modes the ask would
-    # be answered without a human, so fail closed instead.
-    mode = str(data.get("permission_mode") or "")
-    if mode in AUTO_APPROVAL_MODES:
-        deny(
-            f"{reason} (Session permission mode '{mode}' would auto-approve; "
-            "switch to default permission mode so a human can approve the "
-            "amendment.)"
-        )
+    # Hook "ask" always escalates to a real user permission dialog in every
+    # permission mode (verified against official docs 2026-06-06) — the model
+    # cannot answer it.
     emit("ask", reason)
 elif decision != "allow":
     deny(reason)

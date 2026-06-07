@@ -391,9 +391,11 @@ def test_gate_hook_asks_for_contract_amendment_in_default_mode(tmp_path):
     assert "amendment" in decision["permissionDecisionReason"].lower()
 
 
-def test_gate_hook_denies_contract_amendment_in_auto_approval_modes(tmp_path):
+def test_gate_hook_asks_for_contract_amendment_in_every_mode(tmp_path):
+    """Hook 'ask' escalates to a real user dialog in all permission modes
+    (official docs) — the hook must never downgrade it to deny by mode."""
     project = _project_with_workflow(tmp_path)
-    for mode in ("bypassPermissions", "dontAsk", "acceptEdits", "auto"):
+    for mode in ("default", "plan", "bypassPermissions", "dontAsk", "acceptEdits", "auto"):
         payload = _pretool_payload(
             project, "Write",
             file_path=".sweetclaude/contracts/success-criteria-contract.yaml",
@@ -402,4 +404,4 @@ def test_gate_hook_denies_contract_amendment_in_auto_approval_modes(tmp_path):
         payload["permission_mode"] = mode
         result = _run_hook(GATE_HOOK, project, payload)
         decision = json.loads(result.stdout)["hookSpecificOutput"]
-        assert decision["permissionDecision"] == "deny", mode
+        assert decision["permissionDecision"] == "ask", mode
