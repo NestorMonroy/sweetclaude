@@ -1228,9 +1228,83 @@ def check_derived_status(state: ProjectState) -> list[Finding]:
     return findings
 
 
+def check_structure_anomalies(state: ProjectState) -> list[Finding]:
+    """Flag symlinks where SweetClaude expects real directories.
+
+    A symlink in the artifact tree is unusual and is often LOAD-BEARING — e.g.
+    a bridge between a scanner that hardcodes `.sweetclaude/product/` and an
+    artifact base relocated elsewhere via artifact-privacy. Doctor must never
+    treat such a path's contents as duplicates/orphans, and must never offer to
+    delete it: walking a symlink shows files identical to its target, which
+    looks exactly like "duplicate dead weight" but is the opposite of safe to
+    remove. This check stops and explains; resolution is left to a human.
+    """
+    findings: list[Finding] = []
+    sc = state.project_dir / ".sweetclaude"
+    candidates = [
+        sc / "product",
+        sc / "stories",
+        state.product_base,
+        state.product_base / "backlog",
+        state.product_base / "roadmap",
+        state.product_base / "stories",
+        state.product_base / "milestones",
+        state.product_base / "epics",
+    ]
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            is_link = path.is_symlink()
+        except OSError:
+            continue
+        if not is_link:
+            continue
+        try:
+            target = os.readlink(path)
+        except OSError:
+            target = "<unreadable>"
+        try:
+            rel = path.relative_to(state.project_dir)
+        except ValueError:
+            rel = path
+        findings.append(Finding(
+            id=f"structure-anomaly:unexpected-symlink:{rel}",
+            category="structure_anomalies",
+            severity="warning",
+            summary=(
+                f"{rel} is a symlink, not a real directory — unusual and "
+                "possibly load-bearing; doctor will not auto-change it"
+            ),
+            detail=(
+                f"unexpected-symlink: {rel} -> {target}. SweetClaude expects a "
+                "real directory here. A symlink is commonly a bridge (for "
+                "example, the dashboard cache scanner hardcodes "
+                ".sweetclaude/product/ while artifact-privacy relocates the "
+                "product base elsewhere). Its contents will mirror the target "
+                "exactly — that resemblance is the SIGNATURE OF A SYMLINK, not "
+                "duplicate dead weight. Doctor will NOT treat it as a duplicate "
+                "or orphan and will NOT remove it. Guidance: determine what the "
+                "symlink bridges before changing anything. If it connects a "
+                "hardcoded scanner path to a relocated base, deleting it blinds "
+                "the cache/dashboard with no data loss but with broken views. "
+                "Resolve by aligning the scanner and base_path, then remove the "
+                "bridge deliberately — or keep it. No automatic action is safe."
+            ),
+            file_paths=[str(path)],
+            fix_type="report-only",
+            fix_recipe={},
+        ))
+    return findings
+
+
 CHECKS: dict[str, Callable[[ProjectState], list[Finding]]] = {
     "state_integrity":    check_state_integrity,
     "hook_health":        check_hook_health,
+    "structure_anomalies": check_structure_anomalies,
     "storage_lint":       check_storage_lint,
     "migration_currency": check_migration_currency,
     "config_compat":      check_config_compat,

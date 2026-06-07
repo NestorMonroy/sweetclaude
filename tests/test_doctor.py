@@ -6252,9 +6252,10 @@ class TestChecksRegistry:
 
     def test_checks_dict_contains_all_categories(self):
         expected = {
-            "state_integrity", "hook_health", "storage_lint",
-            "migration_currency", "config_compat", "file_diagnostics",
-            "onboarding_state", "env_wiring", "derived_status",
+            "state_integrity", "hook_health", "structure_anomalies",
+            "storage_lint", "migration_currency", "config_compat",
+            "file_diagnostics", "onboarding_state", "env_wiring",
+            "derived_status",
         }
         assert set(CHECKS.keys()) == expected
 
@@ -6749,3 +6750,63 @@ class TestCheckDerivedStatus:
             ])
         findings = check_derived_status(state)
         assert findings[0].fix_type == "auto"
+
+
+# --- structure anomaly: symlink where a real directory is expected -----------
+# Regression for the syncog incident: a `.sweetclaude/product -> docs/product`
+# bridge symlink was scanned as a normal dir, its files read as cross-location
+# duplicates, and a cleanup pass deleted the "duplicate" — breaking the cache.
+# Doctor must STOP and explain an unexpected symlink, never treat it as
+# deletable/duplicate.
+
+def _project_with_product_symlink(tmp_path):
+    project = build_fixture(
+        tmp_path,
+        overrides={
+            "artifact_privacy": {"categories": {"product": {"base_path": "docs/product"}}},
+            "session_state": {"paths": {"product_base": "docs/product"}},
+        },
+    )
+    # real data lives at docs/product
+    real = project / "docs" / "product"
+    (real / "backlog").mkdir(parents=True, exist_ok=True)
+    (real / "backlog" / "ISSUE-001-x.md").write_text("---\nid: ISSUE-001\n---\n")
+    # bridge symlink the cache scanner depends on
+    link = project / ".sweetclaude" / "product"
+    if link.exists() or link.is_symlink():
+        import shutil
+        shutil.rmtree(link, ignore_errors=True)
+    link.symlink_to(Path("../docs/product"))
+    return project
+
+
+def test_doctor_flags_unexpected_symlink_as_anomaly(tmp_path, fake_home):
+    from doctor import build_project_state, check_structure_anomalies
+    project = _project_with_product_symlink(tmp_path)
+    findings = check_structure_anomalies(build_project_state(project))
+    sym = [f for f in findings if f.id.startswith("structure-anomaly:")]
+    assert sym, "expected a structure-anomaly finding for the product symlink"
+    f = sym[0]
+    assert ".sweetclaude/product" in (f.detail + " " + " ".join(f.file_paths))
+    assert "docs/product" in f.detail  # names the target
+    assert f.severity in ("warning", "error")
+
+
+def test_doctor_never_offers_to_delete_a_symlink(tmp_path, fake_home):
+    from doctor import build_project_state, check_structure_anomalies
+    project = _project_with_product_symlink(tmp_path)
+    findings = check_structure_anomalies(build_project_state(project))
+    for f in findings:
+        if f.id.startswith("structure-anomaly:"):
+            assert f.fix_recipe.get("action") != "delete_file"
+            assert f.fix_type == "report-only"
+
+
+def test_symlinked_product_not_flagged_as_cross_location_duplicate(tmp_path, fake_home):
+    from doctor import build_project_state, check_storage_lint
+    project = _project_with_product_symlink(tmp_path)
+    # if storage_lint scanned through the symlink it could phantom-duplicate;
+    # it must not emit cross-location-duplicate from symlinked content.
+    findings = check_storage_lint(build_project_state(project))
+    dups = [f for f in findings if "cross-location-duplicate" in f.id]
+    assert dups == []
