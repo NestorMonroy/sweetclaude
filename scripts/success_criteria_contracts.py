@@ -537,6 +537,19 @@ def _validate_criteria(contract: dict[str, Any]) -> None:
         "amendment_policy",
         "backlog_routing",
     )
+    # Report all compound-predicate criteria at once — fixing them one refreeze
+    # at a time was a recurring source of churn.
+    compound = [
+        str(c.get("id") or f"index {i}")
+        for i, c in enumerate(criteria)
+        if isinstance(c, dict) and _has_multiple_outcomes(c)
+    ]
+    if compound:
+        raise SuccessCriteriaValidationError(
+            "Success criteria contract criteria have multiple outcomes "
+            f"(split each into one observable behavior): {', '.join(compound)}"
+        )
+
     for index, criterion in enumerate(criteria):
         context = f"Success criteria contract success_criteria[{index}]"
         if not isinstance(criterion, dict):
@@ -580,10 +593,6 @@ def _validate_criteria(contract: dict[str, Any]) -> None:
         if str(criterion["pass_condition"]).strip() == str(criterion["fail_condition"]).strip():
             raise SuccessCriteriaValidationError(
                 f"Success criteria contract criterion {criterion_id} pass/fail conditions must differ"
-            )
-        if _has_multiple_outcomes(criterion):
-            raise SuccessCriteriaValidationError(
-                f"Success criteria contract criterion {criterion_id} has multiple outcomes"
             )
         if _has_vague_unmeasured_language(criterion):
             raise SuccessCriteriaValidationError(

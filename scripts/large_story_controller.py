@@ -1977,6 +1977,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "verify":
         criterion_results = json.loads(args.criterion_result_json) if args.criterion_result_json else None
+        # Accept either a dict keyed by criterion id or a list of entries
+        # carrying their own id — callers reach for both.
+        if isinstance(criterion_results, list):
+            criterion_results = {
+                str(e.get("criterion_id") or e.get("id")): {k: v for k, v in e.items() if k not in ("criterion_id", "id")}
+                for e in criterion_results
+                if isinstance(e, dict) and (e.get("criterion_id") or e.get("id"))
+            }
         return _json_print(
             enter_verify_phase(
                 project_dir=args.project_dir,

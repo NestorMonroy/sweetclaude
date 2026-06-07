@@ -397,3 +397,57 @@ def test_cli_validate_workflow_completion_returns_json_failure(tmp_path):
     assert payload["workflow_id"] == "STORY-123"
     assert payload["blocking"] is True
     assert payload["blocking_failures"]
+
+
+def test_validate_contract_reports_all_compound_criteria_at_once(tmp_path):
+    contract = _valid_contract()
+    contract["success_criteria"][0]["statement"] = "The root page loads."
+    contract["success_criteria"][0]["binary_predicate"] = "GET / returns 200 and body has a title"
+    contract["success_criteria"][1]["statement"] = "The seed populates rows."
+    contract["success_criteria"][1]["binary_predicate"] = "seed runs and rows exist"
+    contract["contract_freeze"]["contract_hash"] = compute_success_criteria_contract_hash(contract)
+    cp = tmp_path / "c.yaml"
+    cp.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
+    with pytest.raises(SuccessCriteriaValidationError) as exc:
+        validate_success_criteria_contract(cp)
+    msg = str(exc.value)
+    assert "SC-001" in msg and "SC-002" in msg
+
+
+def test_verify_cli_accepts_list_of_criterion_results(tmp_path):
+    from large_story_controller import enter_verify_phase
+    # reuse the controller test's project builder via a minimal inline setup
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT / "scripts"))
+    from large_story_controller import (
+        arm_enforcement_probe, check_enforcement_probe,
+        enter_design_phase, enter_plan_phase, enter_implement_phase, init_workflow,
+        record_evidence,
+    )
+    contract = _valid_contract()
+    contract["success_criteria"] = [contract["success_criteria"][0]]
+    contract["contract_freeze"]["contract_hash"] = compute_success_criteria_contract_hash(contract)
+    cp = tmp_path / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml"
+    cp.parent.mkdir(parents=True, exist_ok=True)
+    cp.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
+    assert init_workflow(project_dir=tmp_path, workflow_id="STORY-123")["ok"]
+    enter_design_phase(project_dir=tmp_path, workflow_id="STORY-123", design_summary="d")
+    enter_plan_phase(project_dir=tmp_path, workflow_id="STORY-123", plan_summary="p")
+    arm_enforcement_probe(project_dir=tmp_path, workflow_id="STORY-123")
+    (tmp_path / ".sweetclaude" / ".enforcement-control").write_text("ok\n", encoding="utf-8")
+    check_enforcement_probe(project_dir=tmp_path, workflow_id="STORY-123")
+    enter_implement_phase(project_dir=tmp_path, workflow_id="STORY-123", implementation_summary="i")
+    record_evidence(project_dir=tmp_path, tool="Write", file_path="app.py", workflow_id="STORY-123")
+    # CLI with a LIST payload (the recurring stumble) must not crash
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT.parent / "large_story_controller.py"),
+         "--project-dir", str(tmp_path), "verify", "--workflow-id", "STORY-123",
+         "--criterion-result-json", json.dumps([{"criterion_id": "SC-001", "status": "pass"}])],
+        capture_output=True, text=True, cwd=str(SCRIPT.parent),
+    )
+    # the recurring defect was a traceback/crash on a list payload; assert it
+    # is parsed into structured JSON with no traceback.
+    assert result.returncode in (0, 1), result.stderr
+    payload = json.loads(result.stdout)
+    assert "Traceback" not in result.stderr
+    assert isinstance(payload, dict) and "ok" in payload
