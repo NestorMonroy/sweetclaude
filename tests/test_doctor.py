@@ -6863,3 +6863,54 @@ def test_no_emitted_auto_finding_survives_with_unrunnable_action(tmp_path, fake_
     for f in result["findings"]:
         if f["fix_type"] in ("auto", "prompted"):
             assert f["fix_recipe"].get("action", "prompt") in EXECUTOR_SUPPORTED_ACTIONS, f
+
+
+# --- totality classifier: every finding routes; terminal fallback always there
+
+def _mk(fix_type, action=None, category="storage_lint", severity="warning", detail="d"):
+    from doctor import Finding
+    return Finding(id=f"t:{fix_type}:{action}", category=category, severity=severity,
+                   summary="s", detail=detail, file_paths=[],
+                   fix_type=fix_type, fix_recipe=({"action": action} if action else {}))
+
+
+def test_classify_covers_all_four_classes():
+    from doctor import (classify_resolution, RESOLUTION_AUTO, RESOLUTION_GUIDED,
+                        RESOLUTION_ACCEPTED, RESOLUTION_FALLBACK)
+    assert classify_resolution(_mk("auto", "write_field")) == RESOLUTION_AUTO
+    assert classify_resolution(_mk("prompted", "prompt")) == RESOLUTION_GUIDED
+    assert classify_resolution(_mk("report-only", None, severity="info")) == RESOLUTION_ACCEPTED
+    assert classify_resolution(_mk("report-only", None, category="compatibility_mode")) == RESOLUTION_ACCEPTED
+    # report-only, non-info, no guidance -> never dangles, routes to fallback
+    assert classify_resolution(_mk("report-only", None, severity="error", detail="bare problem")) == RESOLUTION_FALLBACK
+    # report-only WITH guidance -> guided
+    assert classify_resolution(_mk("report-only", None, detail="Resolve by running python3 ...")) == RESOLUTION_GUIDED
+
+
+def test_unknown_fix_type_routes_to_fallback_not_dangling():
+    from doctor import classify_resolution, RESOLUTION_FALLBACK
+    assert classify_resolution(_mk("something-new", None)) == RESOLUTION_FALLBACK
+
+
+def test_terminal_fallback_always_offers_readopt():
+    from doctor import _build_terminal_fallback
+    # migration blocked
+    tf = _build_terminal_fallback({"status": "compatibility-mode"})
+    opts = {o["id"]: o for o in tf["options"]}
+    assert opts["re-adopt"]["available"] is True
+    assert opts["re-adopt"]["no_data_loss"] is True
+    assert opts["full-migration"]["available"] is False
+    assert opts["full-migration"]["blocked_reason"]
+    # migration available
+    tf2 = _build_terminal_fallback({"status": "supported-migration-available"})
+    assert {o["id"]: o for o in tf2["options"]}["full-migration"]["available"] is True
+
+
+def test_scan_result_routes_every_finding_and_has_fallback(tmp_path, fake_home):
+    from doctor import _scan, build_project_state
+    valid = {"auto-fixable", "guided-manual", "accepted-no-action", "terminal-fallback"}
+    result = _scan(build_project_state(build_fixture(tmp_path)))
+    assert "resolution_summary" in result
+    assert result["resolution_summary"]["terminal_fallback"]["always_available"] is True
+    for f in result["findings"]:
+        assert f.get("resolution_class") in valid, f

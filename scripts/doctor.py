@@ -152,6 +152,94 @@ _UNSUPPORTED_ACTION_GUIDANCE = {
 }
 
 
+RESOLUTION_AUTO = "auto-fixable"
+RESOLUTION_GUIDED = "guided-manual"
+RESOLUTION_ACCEPTED = "accepted-no-action"
+RESOLUTION_FALLBACK = "terminal-fallback"
+
+
+def classify_resolution(finding: Finding) -> str:
+    """Map a finding to its resolution path. Total by construction — every
+    finding gets a class, worst case the terminal fallback. Nothing dangles.
+
+    Runs AFTER _enforce_executable_contract, so any auto/prompted finding here
+    has an executable action.
+    """
+    action = (finding.fix_recipe or {}).get("action", "")
+    if finding.fix_type == "auto" and action in EXECUTOR_SUPPORTED_ACTIONS:
+        return RESOLUTION_AUTO
+    if finding.fix_type == "prompted":
+        return RESOLUTION_GUIDED
+    if finding.fix_type == "report-only":
+        if finding.category == "compatibility_mode" or finding.severity == "info":
+            return RESOLUTION_ACCEPTED
+        if _report_only_has_guidance(finding):
+            return RESOLUTION_GUIDED
+        return RESOLUTION_FALLBACK
+    return RESOLUTION_FALLBACK
+
+
+_GUIDANCE_MARKERS = ("executable-contract:", "Guidance:", "guidance:", "Resolve", "python3", "run ")
+
+
+def _report_only_has_guidance(finding: Finding) -> bool:
+    return any(m in (finding.detail or "") for m in _GUIDANCE_MARKERS)
+
+
+def _build_terminal_fallback(maintenance_route: dict) -> dict:
+    """The guaranteed no-data-loss exits when nothing else resolves a finding.
+
+    Re-adopt is the universal backstop: it works even when a layout has no
+    validated migrator. Both snapshot first.
+    """
+    migration_available = maintenance_route.get("status") == "supported-migration-available"
+    return {
+        "always_available": True,
+        "options": [
+            {
+                "id": "full-migration",
+                "label": "Full migration to the current taxonomy",
+                "available": migration_available,
+                "blocked_reason": (
+                    None if migration_available
+                    else "No validated migrator for this layout; use re-adopt."
+                ),
+                "no_data_loss": True,
+                "snapshot_first": True,
+                "capability": "migrate",
+            },
+            {
+                "id": "re-adopt",
+                "label": "Re-adopt the project (archive existing state, re-onboard, port content)",
+                "available": True,
+                "no_data_loss": True,
+                "snapshot_first": True,
+                "capability": "adopt",
+            },
+        ],
+    }
+
+
+def _classify_all(findings: list[Finding], maintenance_route: dict) -> tuple[dict, dict]:
+    """Return (resolution_summary, per_finding_class). Totality guarantee:
+    every finding maps to a class; if any is unresolved, the terminal fallback
+    is present."""
+    per_id: dict[str, str] = {}
+    by_class: dict[str, int] = {}
+    for f in findings:
+        cls = classify_resolution(f)
+        per_id[f.id] = cls
+        by_class[cls] = by_class.get(cls, 0) + 1
+    summary = {
+        "total": len(findings),
+        "by_class": by_class,
+        "unresolved_count": by_class.get(RESOLUTION_FALLBACK, 0),
+        "all_findings_routed": True,  # true by construction of classify_resolution
+        "terminal_fallback": _build_terminal_fallback(maintenance_route),
+    }
+    return summary, per_id
+
+
 def _enforce_executable_contract(findings: list[Finding]) -> tuple[list[Finding], dict]:
     """Downgrade any auto/prompted finding whose action the executor cannot run.
 
@@ -2006,8 +2094,16 @@ def _scan(
         active, project_state, maintenance_route,
     )
 
+    resolution_summary, _resolution_by_id = _classify_all(active, maintenance_route)
+    finding_dicts = []
+    for f in active:
+        d = asdict(f)
+        d["resolution_class"] = _resolution_by_id[f.id]
+        finding_dicts.append(d)
+
     result = {
-        "findings": [asdict(f) for f in active],
+        "findings": finding_dicts,
+        "resolution_summary": resolution_summary,
         "skipped_categories": skipped,
         "suppressions_resolved": sorted(resolved_ids),
         "project_state_summary": build_state_summary(project_state),
