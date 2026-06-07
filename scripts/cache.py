@@ -94,8 +94,36 @@ def parse_frontmatter(path):
         return None
 
 
+def resolve_product_base(project_dir):
+    """Resolve the product artifact base, honoring artifact-privacy base_path.
+
+    Mirrors doctor's _resolve_product_base so the cache scanner and doctor
+    agree on where artifacts live. Without this, a project that relocated its
+    product base (e.g. to docs/product) needs a .sweetclaude/product bridge
+    symlink for the cache to find anything — a fragile workaround that, when
+    removed, silently blinds the dashboard.
+    """
+    ap_path = os.path.join(project_dir, '.sweetclaude', 'artifact-privacy.yaml')
+    try:
+        with open(ap_path, encoding='utf-8') as handle:
+            ap = yaml.safe_load(handle) or {}
+        base = (
+            (ap.get('categories') or {})
+            .get('product', {})
+            .get('base_path', '')
+        )
+        if base:
+            base = base.rstrip('/')
+            if os.path.isabs(base):
+                return base
+            return os.path.join(project_dir, base)
+    except (OSError, yaml.YAMLError):
+        pass
+    return os.path.join(project_dir, '.sweetclaude', 'product')
+
+
 def scan_files(project_dir):
-    base_product = os.path.join(project_dir, '.sweetclaude', 'product')
+    base_product = resolve_product_base(project_dir)
     scan_bases = [
         os.path.join(base_product, 'backlog'),
         os.path.join(base_product, 'roadmap', 'issues'),

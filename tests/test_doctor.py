@@ -6252,9 +6252,10 @@ class TestChecksRegistry:
 
     def test_checks_dict_contains_all_categories(self):
         expected = {
-            "state_integrity", "hook_health", "storage_lint",
-            "migration_currency", "config_compat", "file_diagnostics",
-            "onboarding_state", "env_wiring", "derived_status",
+            "state_integrity", "hook_health", "version_currency",
+            "structure_anomalies", "storage_lint", "migration_currency",
+            "config_compat", "file_diagnostics", "onboarding_state",
+            "env_wiring", "derived_status",
         }
         assert set(CHECKS.keys()) == expected
 
@@ -6749,3 +6750,210 @@ class TestCheckDerivedStatus:
             ])
         findings = check_derived_status(state)
         assert findings[0].fix_type == "auto"
+
+
+# --- structure anomaly: symlink where a real directory is expected -----------
+# Regression for the syncog incident: a `.sweetclaude/product -> docs/product`
+# bridge symlink was scanned as a normal dir, its files read as cross-location
+# duplicates, and a cleanup pass deleted the "duplicate" — breaking the cache.
+# Doctor must STOP and explain an unexpected symlink, never treat it as
+# deletable/duplicate.
+
+def _project_with_product_symlink(tmp_path):
+    project = build_fixture(
+        tmp_path,
+        overrides={
+            "artifact_privacy": {"categories": {"product": {"base_path": "docs/product"}}},
+            "session_state": {"paths": {"product_base": "docs/product"}},
+        },
+    )
+    # real data lives at docs/product
+    real = project / "docs" / "product"
+    (real / "backlog").mkdir(parents=True, exist_ok=True)
+    (real / "backlog" / "ISSUE-001-x.md").write_text("---\nid: ISSUE-001\n---\n")
+    # bridge symlink the cache scanner depends on
+    link = project / ".sweetclaude" / "product"
+    if link.exists() or link.is_symlink():
+        import shutil
+        shutil.rmtree(link, ignore_errors=True)
+    link.symlink_to(Path("../docs/product"))
+    return project
+
+
+def test_doctor_flags_unexpected_symlink_as_anomaly(tmp_path, fake_home):
+    from doctor import build_project_state, check_structure_anomalies
+    project = _project_with_product_symlink(tmp_path)
+    findings = check_structure_anomalies(build_project_state(project))
+    sym = [f for f in findings if f.id.startswith("structure-anomaly:")]
+    assert sym, "expected a structure-anomaly finding for the product symlink"
+    f = sym[0]
+    assert ".sweetclaude/product" in (f.detail + " " + " ".join(f.file_paths))
+    assert "docs/product" in f.detail  # names the target
+    assert f.severity in ("warning", "error")
+
+
+def test_doctor_never_offers_to_delete_a_symlink(tmp_path, fake_home):
+    from doctor import build_project_state, check_structure_anomalies
+    project = _project_with_product_symlink(tmp_path)
+    findings = check_structure_anomalies(build_project_state(project))
+    for f in findings:
+        if f.id.startswith("structure-anomaly:"):
+            assert f.fix_recipe.get("action") != "delete_file"
+            assert f.fix_type == "report-only"
+
+
+def test_symlinked_product_not_flagged_as_cross_location_duplicate(tmp_path, fake_home):
+    from doctor import build_project_state, check_storage_lint
+    project = _project_with_product_symlink(tmp_path)
+    # if storage_lint scanned through the symlink it could phantom-duplicate;
+    # it must not emit cross-location-duplicate from symlinked content.
+    findings = check_storage_lint(build_project_state(project))
+    dups = [f for f in findings if "cross-location-duplicate" in f.id]
+    assert dups == []
+
+
+# --- executable-contract: doctor never offers a fix it cannot run ------------
+# Regression for the syncog #3 class: derived-status emitted a fix_type="auto"
+# recipe action="sync_parent_status" that the executor had no branch for.
+
+def test_executor_supported_actions_match_dispatch():
+    # Every action the executor's run path can dispatch must be declared
+    # supported, and vice versa (guards against drift).
+    from doctor import EXECUTOR_SUPPORTED_ACTIONS
+    # actions execute_recipe handles + prompt (presented, not executed)
+    dispatched = {
+        "run_script", "rebuild_cache", "create_dir", "delete_file",
+        "write_field", "write_frontmatter_field", "prompt",
+    }
+    assert set(EXECUTOR_SUPPORTED_ACTIONS) == dispatched
+
+
+def test_unsupported_auto_action_is_downgraded():
+    from doctor import Finding, _enforce_executable_contract
+    bad = Finding(
+        id="x:y", category="derived_status", severity="warning",
+        summary="s", detail="d", file_paths=[],
+        fix_type="auto", fix_recipe={"action": "sync_parent_status", "file": "p"},
+    )
+    out, report = _enforce_executable_contract([bad])
+    assert out[0].fix_type == "report-only"
+    assert out[0].fix_recipe == {}
+    assert "status.py set" in out[0].detail  # actionable manual guidance
+    assert report["downgraded_count"] == 1
+
+
+def test_supported_auto_action_is_untouched():
+    from doctor import Finding, _enforce_executable_contract
+    ok = Finding(
+        id="x:z", category="state_integrity", severity="warning",
+        summary="s", detail="d", file_paths=[],
+        fix_type="auto", fix_recipe={"action": "write_field", "file": "p"},
+    )
+    out, report = _enforce_executable_contract([ok])
+    assert out[0].fix_type == "auto"
+    assert report["downgraded_count"] == 0
+
+
+def test_no_emitted_auto_finding_survives_with_unrunnable_action(tmp_path, fake_home):
+    # End to end: a project that triggers the derived-status auto finding must
+    # not surface any auto/prompted finding with an unsupported action.
+    from doctor import _scan, build_project_state, EXECUTOR_SUPPORTED_ACTIONS
+    project = build_fixture(tmp_path)
+    result = _scan(build_project_state(project))
+    for f in result["findings"]:
+        if f["fix_type"] in ("auto", "prompted"):
+            assert f["fix_recipe"].get("action", "prompt") in EXECUTOR_SUPPORTED_ACTIONS, f
+
+
+# --- totality classifier: every finding routes; terminal fallback always there
+
+def _mk(fix_type, action=None, category="storage_lint", severity="warning", detail="d"):
+    from doctor import Finding
+    return Finding(id=f"t:{fix_type}:{action}", category=category, severity=severity,
+                   summary="s", detail=detail, file_paths=[],
+                   fix_type=fix_type, fix_recipe=({"action": action} if action else {}))
+
+
+def test_classify_covers_all_four_classes():
+    from doctor import (classify_resolution, RESOLUTION_AUTO, RESOLUTION_GUIDED,
+                        RESOLUTION_ACCEPTED, RESOLUTION_FALLBACK)
+    assert classify_resolution(_mk("auto", "write_field")) == RESOLUTION_AUTO
+    assert classify_resolution(_mk("prompted", "prompt")) == RESOLUTION_GUIDED
+    assert classify_resolution(_mk("report-only", None, severity="info")) == RESOLUTION_ACCEPTED
+    assert classify_resolution(_mk("report-only", None, category="compatibility_mode")) == RESOLUTION_ACCEPTED
+    # report-only, non-info, no guidance -> never dangles, routes to fallback
+    assert classify_resolution(_mk("report-only", None, severity="error", detail="bare problem")) == RESOLUTION_FALLBACK
+    # report-only WITH guidance -> guided
+    assert classify_resolution(_mk("report-only", None, detail="Resolve by running python3 ...")) == RESOLUTION_GUIDED
+
+
+def test_unknown_fix_type_routes_to_fallback_not_dangling():
+    from doctor import classify_resolution, RESOLUTION_FALLBACK
+    assert classify_resolution(_mk("something-new", None)) == RESOLUTION_FALLBACK
+
+
+def test_terminal_fallback_always_offers_readopt():
+    from doctor import _build_terminal_fallback
+    # migration blocked
+    tf = _build_terminal_fallback({"status": "compatibility-mode"})
+    opts = {o["id"]: o for o in tf["options"]}
+    assert opts["re-adopt"]["available"] is True
+    assert opts["re-adopt"]["no_data_loss"] is True
+    assert opts["full-migration"]["available"] is False
+    assert opts["full-migration"]["blocked_reason"]
+    # migration available
+    tf2 = _build_terminal_fallback({"status": "supported-migration-available"})
+    assert {o["id"]: o for o in tf2["options"]}["full-migration"]["available"] is True
+
+
+def test_scan_result_routes_every_finding_and_has_fallback(tmp_path, fake_home):
+    from doctor import _scan, build_project_state
+    valid = {"auto-fixable", "guided-manual", "accepted-no-action", "terminal-fallback"}
+    result = _scan(build_project_state(build_fixture(tmp_path)))
+    assert "resolution_summary" in result
+    assert result["resolution_summary"]["terminal_fallback"]["always_available"] is True
+    for f in result["findings"]:
+        assert f.get("resolution_class") in valid, f
+
+
+# --- version currency: behind-latest advisory (the syncog short-circuit) -----
+
+def test_version_currency_flags_behind_latest(tmp_path, fake_home):
+    from doctor import build_project_state, check_version_currency
+    project = build_fixture(tmp_path, overrides={"sweetclaude_yaml": {
+        "phase_schema_version": 2,
+        "framework": {"installed_version": "4.1.2-beta",
+                      "update": {"available": "4.1.14-beta"}},
+    }})
+    findings = check_version_currency(build_project_state(project))
+    assert any(f.id == "version-currency:behind-latest" for f in findings)
+    f = [x for x in findings if x.id == "version-currency:behind-latest"][0]
+    assert "4.1.2-beta" in f.detail and "4.1.14-beta" in f.detail
+    assert "update" in f.detail.lower()  # actionable guidance
+
+
+def test_version_currency_silent_when_current(tmp_path, fake_home):
+    from doctor import build_project_state, check_version_currency
+    project = build_fixture(tmp_path, overrides={"sweetclaude_yaml": {
+        "phase_schema_version": 2,
+        "framework": {"installed_version": "4.1.14-beta",
+                      "update": {"available": "4.1.14-beta"}},
+    }})
+    assert check_version_currency(build_project_state(project)) == []
+
+
+def test_version_currency_silent_when_no_update_info(tmp_path, fake_home):
+    from doctor import build_project_state, check_version_currency
+    project = build_fixture(tmp_path)  # default: no update block
+    assert check_version_currency(build_project_state(project)) == []
+
+
+def test_version_currency_advisory_classifies_as_guided(tmp_path, fake_home):
+    from doctor import build_project_state, check_version_currency, classify_resolution, RESOLUTION_GUIDED
+    project = build_fixture(tmp_path, overrides={"sweetclaude_yaml": {
+        "phase_schema_version": 2,
+        "framework": {"installed_version": "4.1.2-beta",
+                      "update": {"available": "4.1.14-beta"}},
+    }})
+    f = check_version_currency(build_project_state(project))[0]
+    assert classify_resolution(f) == RESOLUTION_GUIDED

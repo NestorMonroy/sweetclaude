@@ -35,7 +35,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
@@ -125,6 +125,152 @@ RUN_SCRIPT_ALLOWLIST = {
     "cache.py",
     "generate-session-state.sh",
 }
+
+# Actions execute_recipe can actually perform. Any finding presented as
+# auto/prompted MUST use one of these (or "prompt", which is presented for
+# approval rather than executed). Enforced at runtime by
+# _enforce_executable_contract so doctor can never offer a fix it cannot run.
+EXECUTOR_SUPPORTED_ACTIONS = frozenset({
+    "run_script",
+    "rebuild_cache",
+    "create_dir",
+    "delete_file",
+    "write_field",
+    "write_frontmatter_field",
+    "prompt",
+})
+
+# Manual guidance for known-unsupported actions, surfaced when an auto/prompted
+# finding is downgraded. Keeps the no-data-loss path actionable instead of
+# leaving a dangling, unrunnable fix.
+_UNSUPPORTED_ACTION_GUIDANCE = {
+    "sync_parent_status": (
+        "Doctor cannot auto-apply this. To sync the parent's derived status by "
+        "hand (no data loss): python3 scripts/status.py set --file <parent> "
+        "--status <derived-status> --source auto --actor you"
+    ),
+}
+
+
+RESOLUTION_AUTO = "auto-fixable"
+RESOLUTION_GUIDED = "guided-manual"
+RESOLUTION_ACCEPTED = "accepted-no-action"
+RESOLUTION_FALLBACK = "terminal-fallback"
+
+
+def classify_resolution(finding: Finding) -> str:
+    """Map a finding to its resolution path. Total by construction — every
+    finding gets a class, worst case the terminal fallback. Nothing dangles.
+
+    Runs AFTER _enforce_executable_contract, so any auto/prompted finding here
+    has an executable action.
+    """
+    action = (finding.fix_recipe or {}).get("action", "")
+    if finding.fix_type == "auto" and action in EXECUTOR_SUPPORTED_ACTIONS:
+        return RESOLUTION_AUTO
+    if finding.fix_type == "prompted":
+        return RESOLUTION_GUIDED
+    if finding.fix_type == "report-only":
+        if finding.category == "compatibility_mode" or finding.severity == "info":
+            return RESOLUTION_ACCEPTED
+        if _report_only_has_guidance(finding):
+            return RESOLUTION_GUIDED
+        return RESOLUTION_FALLBACK
+    return RESOLUTION_FALLBACK
+
+
+_GUIDANCE_MARKERS = ("executable-contract:", "Guidance:", "guidance:", "Resolve", "python3", "run ")
+
+
+def _report_only_has_guidance(finding: Finding) -> bool:
+    return any(m in (finding.detail or "") for m in _GUIDANCE_MARKERS)
+
+
+def _build_terminal_fallback(maintenance_route: dict) -> dict:
+    """The guaranteed no-data-loss exits when nothing else resolves a finding.
+
+    Re-adopt is the universal backstop: it works even when a layout has no
+    validated migrator. Both snapshot first.
+    """
+    migration_available = maintenance_route.get("status") == "supported-migration-available"
+    return {
+        "always_available": True,
+        "options": [
+            {
+                "id": "full-migration",
+                "label": "Full migration to the current taxonomy",
+                "available": migration_available,
+                "blocked_reason": (
+                    None if migration_available
+                    else "No validated migrator for this layout; use re-adopt."
+                ),
+                "no_data_loss": True,
+                "snapshot_first": True,
+                "capability": "migrate",
+            },
+            {
+                "id": "re-adopt",
+                "label": "Re-adopt the project (archive existing state, re-onboard, port content)",
+                "available": True,
+                "no_data_loss": True,
+                "snapshot_first": True,
+                "capability": "adopt",
+                "executable": "scripts/recovery/re_adopt.py",
+                "plan_first": "recovery.re_adopt.plan_re_adopt",
+                "reversible": "recovery.re_adopt.reverse_re_adopt",
+            },
+        ],
+    }
+
+
+def _classify_all(findings: list[Finding], maintenance_route: dict) -> tuple[dict, dict]:
+    """Return (resolution_summary, per_finding_class). Totality guarantee:
+    every finding maps to a class; if any is unresolved, the terminal fallback
+    is present."""
+    per_id: dict[str, str] = {}
+    by_class: dict[str, int] = {}
+    for f in findings:
+        cls = classify_resolution(f)
+        per_id[f.id] = cls
+        by_class[cls] = by_class.get(cls, 0) + 1
+    summary = {
+        "total": len(findings),
+        "by_class": by_class,
+        "unresolved_count": by_class.get(RESOLUTION_FALLBACK, 0),
+        "all_findings_routed": True,  # true by construction of classify_resolution
+        "terminal_fallback": _build_terminal_fallback(maintenance_route),
+    }
+    return summary, per_id
+
+
+def _enforce_executable_contract(findings: list[Finding]) -> tuple[list[Finding], dict]:
+    """Downgrade any auto/prompted finding whose action the executor cannot run.
+
+    This is the structural guarantee that doctor never presents a fix it cannot
+    perform (the syncog sync_parent_status class). Unsupported actions become
+    report-only with explicit manual guidance, rather than a dangling
+    'auto' fix that silently fails.
+    """
+    adjusted: list[Finding] = []
+    downgraded: list[str] = []
+    for f in findings:
+        action = (f.fix_recipe or {}).get("action", "")
+        if f.fix_type in ("auto", "prompted") and action not in EXECUTOR_SUPPORTED_ACTIONS:
+            guidance = _UNSUPPORTED_ACTION_GUIDANCE.get(
+                action,
+                f"Doctor cannot auto-apply action '{action}'. Resolve manually; "
+                "no automatic fix is available for this finding.",
+            )
+            downgraded.append(f.id)
+            adjusted.append(replace(
+                f,
+                fix_type="report-only",
+                detail=f"{f.detail} | executable-contract: {guidance}",
+                fix_recipe={},
+            ))
+        else:
+            adjusted.append(f)
+    return adjusted, {"downgraded_count": len(downgraded), "downgraded_ids": downgraded}
 
 
 def _script_has_cli_entrypoint(path: Path) -> bool:
@@ -1228,9 +1374,125 @@ def check_derived_status(state: ProjectState) -> list[Finding]:
     return findings
 
 
+def check_structure_anomalies(state: ProjectState) -> list[Finding]:
+    """Flag symlinks where SweetClaude expects real directories.
+
+    A symlink in the artifact tree is unusual and is often LOAD-BEARING — e.g.
+    a bridge between a scanner that hardcodes `.sweetclaude/product/` and an
+    artifact base relocated elsewhere via artifact-privacy. Doctor must never
+    treat such a path's contents as duplicates/orphans, and must never offer to
+    delete it: walking a symlink shows files identical to its target, which
+    looks exactly like "duplicate dead weight" but is the opposite of safe to
+    remove. This check stops and explains; resolution is left to a human.
+    """
+    findings: list[Finding] = []
+    sc = state.project_dir / ".sweetclaude"
+    candidates = [
+        sc / "product",
+        sc / "stories",
+        state.product_base,
+        state.product_base / "backlog",
+        state.product_base / "roadmap",
+        state.product_base / "stories",
+        state.product_base / "milestones",
+        state.product_base / "epics",
+    ]
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            is_link = path.is_symlink()
+        except OSError:
+            continue
+        if not is_link:
+            continue
+        try:
+            target = os.readlink(path)
+        except OSError:
+            target = "<unreadable>"
+        try:
+            rel = path.relative_to(state.project_dir)
+        except ValueError:
+            rel = path
+        findings.append(Finding(
+            id=f"structure-anomaly:unexpected-symlink:{rel}",
+            category="structure_anomalies",
+            severity="warning",
+            summary=(
+                f"{rel} is a symlink, not a real directory — unusual and "
+                "possibly load-bearing; doctor will not auto-change it"
+            ),
+            detail=(
+                f"unexpected-symlink: {rel} -> {target}. SweetClaude expects a "
+                "real directory here. A symlink is commonly a bridge (for "
+                "example, the dashboard cache scanner hardcodes "
+                ".sweetclaude/product/ while artifact-privacy relocates the "
+                "product base elsewhere). Its contents will mirror the target "
+                "exactly — that resemblance is the SIGNATURE OF A SYMLINK, not "
+                "duplicate dead weight. Doctor will NOT treat it as a duplicate "
+                "or orphan and will NOT remove it. Guidance: determine what the "
+                "symlink bridges before changing anything. If it connects a "
+                "hardcoded scanner path to a relocated base, deleting it blinds "
+                "the cache/dashboard with no data loss but with broken views. "
+                "Resolve by aligning the scanner and base_path, then remove the "
+                "bridge deliberately — or keep it. No automatic action is safe."
+            ),
+            file_paths=[str(path)],
+            fix_type="report-only",
+            fix_recipe={},
+        ))
+    return findings
+
+
+def _semver_tuple(v: object) -> tuple[int, int, int] | None:
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)", str(v or ""))
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+
+def check_version_currency(state: ProjectState) -> list[Finding]:
+    """Advise updating when the framework is behind latest and findings exist.
+
+    Doctor's own checks and recovery improve between releases — a stale doctor
+    can surface findings a newer one already resolves (the syncog 4.1.2-beta
+    case dumped 639 raw findings that 4.1.6+ collapses). When behind latest,
+    say so first: update may resolve some findings before acting on them.
+    """
+    fw = (state.sweetclaude_yaml or {}).get("framework", {}) or {}
+    installed = fw.get("installed_version")
+    available = (fw.get("update") or {}).get("available")
+    it, at = _semver_tuple(installed), _semver_tuple(available)
+    if not (it and at and at > it):
+        return []
+    return [Finding(
+        id="version-currency:behind-latest",
+        category="version_currency",
+        severity="warning",
+        summary=(
+            f"Doctor is running an older SweetClaude ({installed}); "
+            f"{available} is available"
+        ),
+        detail=(
+            f"version-currency: installed={installed}, available={available}. "
+            "Doctor's checks and recovery improve between releases, so some "
+            "findings here may already be resolved in the newer version. "
+            "Guidance: update first — run /sweetclaude:update (beta: update the "
+            "plugin package and restart, then /sweetclaude:update) — then re-run "
+            "doctor before acting on other findings."
+        ),
+        file_paths=[],
+        fix_type="report-only",
+        fix_recipe={},
+    )]
+
+
 CHECKS: dict[str, Callable[[ProjectState], list[Finding]]] = {
     "state_integrity":    check_state_integrity,
     "hook_health":        check_hook_health,
+    "version_currency":   check_version_currency,
+    "structure_anomalies": check_structure_anomalies,
     "storage_lint":       check_storage_lint,
     "migration_currency": check_migration_currency,
     "config_compat":      check_config_compat,
@@ -1866,6 +2128,7 @@ def _scan(
 
     maintenance_route = build_maintenance_route(project_state)
     active = [f for f in all_findings if f.id not in suppressed_ids]
+    active, executable_contract = _enforce_executable_contract(active)
     active, compatibility_adjustments = _apply_compatibility_mode_policy(
         active, maintenance_route,
     )
@@ -1876,8 +2139,16 @@ def _scan(
         active, project_state, maintenance_route,
     )
 
+    resolution_summary, _resolution_by_id = _classify_all(active, maintenance_route)
+    finding_dicts = []
+    for f in active:
+        d = asdict(f)
+        d["resolution_class"] = _resolution_by_id[f.id]
+        finding_dicts.append(d)
+
     result = {
-        "findings": [asdict(f) for f in active],
+        "findings": finding_dicts,
+        "resolution_summary": resolution_summary,
         "skipped_categories": skipped,
         "suppressions_resolved": sorted(resolved_ids),
         "project_state_summary": build_state_summary(project_state),
@@ -1885,6 +2156,7 @@ def _scan(
         "maintenance_route": maintenance_route,
         "compatibility_adjustments": compatibility_adjustments,
         "manifest_migration_policy": manifest_migration_policy,
+        "executable_contract": executable_contract,
     }
     if categories:
         result["scanned_categories"] = sorted(checks_to_run.keys())
