@@ -6810,3 +6810,56 @@ def test_symlinked_product_not_flagged_as_cross_location_duplicate(tmp_path, fak
     findings = check_storage_lint(build_project_state(project))
     dups = [f for f in findings if "cross-location-duplicate" in f.id]
     assert dups == []
+
+
+# --- executable-contract: doctor never offers a fix it cannot run ------------
+# Regression for the syncog #3 class: derived-status emitted a fix_type="auto"
+# recipe action="sync_parent_status" that the executor had no branch for.
+
+def test_executor_supported_actions_match_dispatch():
+    # Every action the executor's run path can dispatch must be declared
+    # supported, and vice versa (guards against drift).
+    from doctor import EXECUTOR_SUPPORTED_ACTIONS
+    # actions execute_recipe handles + prompt (presented, not executed)
+    dispatched = {
+        "run_script", "rebuild_cache", "create_dir", "delete_file",
+        "write_field", "write_frontmatter_field", "prompt",
+    }
+    assert set(EXECUTOR_SUPPORTED_ACTIONS) == dispatched
+
+
+def test_unsupported_auto_action_is_downgraded():
+    from doctor import Finding, _enforce_executable_contract
+    bad = Finding(
+        id="x:y", category="derived_status", severity="warning",
+        summary="s", detail="d", file_paths=[],
+        fix_type="auto", fix_recipe={"action": "sync_parent_status", "file": "p"},
+    )
+    out, report = _enforce_executable_contract([bad])
+    assert out[0].fix_type == "report-only"
+    assert out[0].fix_recipe == {}
+    assert "status.py set" in out[0].detail  # actionable manual guidance
+    assert report["downgraded_count"] == 1
+
+
+def test_supported_auto_action_is_untouched():
+    from doctor import Finding, _enforce_executable_contract
+    ok = Finding(
+        id="x:z", category="state_integrity", severity="warning",
+        summary="s", detail="d", file_paths=[],
+        fix_type="auto", fix_recipe={"action": "write_field", "file": "p"},
+    )
+    out, report = _enforce_executable_contract([ok])
+    assert out[0].fix_type == "auto"
+    assert report["downgraded_count"] == 0
+
+
+def test_no_emitted_auto_finding_survives_with_unrunnable_action(tmp_path, fake_home):
+    # End to end: a project that triggers the derived-status auto finding must
+    # not surface any auto/prompted finding with an unsupported action.
+    from doctor import _scan, build_project_state, EXECUTOR_SUPPORTED_ACTIONS
+    project = build_fixture(tmp_path)
+    result = _scan(build_project_state(project))
+    for f in result["findings"]:
+        if f["fix_type"] in ("auto", "prompted"):
+            assert f["fix_recipe"].get("action", "prompt") in EXECUTOR_SUPPORTED_ACTIONS, f

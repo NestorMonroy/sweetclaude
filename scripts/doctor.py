@@ -35,7 +35,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
@@ -125,6 +125,61 @@ RUN_SCRIPT_ALLOWLIST = {
     "cache.py",
     "generate-session-state.sh",
 }
+
+# Actions execute_recipe can actually perform. Any finding presented as
+# auto/prompted MUST use one of these (or "prompt", which is presented for
+# approval rather than executed). Enforced at runtime by
+# _enforce_executable_contract so doctor can never offer a fix it cannot run.
+EXECUTOR_SUPPORTED_ACTIONS = frozenset({
+    "run_script",
+    "rebuild_cache",
+    "create_dir",
+    "delete_file",
+    "write_field",
+    "write_frontmatter_field",
+    "prompt",
+})
+
+# Manual guidance for known-unsupported actions, surfaced when an auto/prompted
+# finding is downgraded. Keeps the no-data-loss path actionable instead of
+# leaving a dangling, unrunnable fix.
+_UNSUPPORTED_ACTION_GUIDANCE = {
+    "sync_parent_status": (
+        "Doctor cannot auto-apply this. To sync the parent's derived status by "
+        "hand (no data loss): python3 scripts/status.py set --file <parent> "
+        "--status <derived-status> --source auto --actor you"
+    ),
+}
+
+
+def _enforce_executable_contract(findings: list[Finding]) -> tuple[list[Finding], dict]:
+    """Downgrade any auto/prompted finding whose action the executor cannot run.
+
+    This is the structural guarantee that doctor never presents a fix it cannot
+    perform (the syncog sync_parent_status class). Unsupported actions become
+    report-only with explicit manual guidance, rather than a dangling
+    'auto' fix that silently fails.
+    """
+    adjusted: list[Finding] = []
+    downgraded: list[str] = []
+    for f in findings:
+        action = (f.fix_recipe or {}).get("action", "")
+        if f.fix_type in ("auto", "prompted") and action not in EXECUTOR_SUPPORTED_ACTIONS:
+            guidance = _UNSUPPORTED_ACTION_GUIDANCE.get(
+                action,
+                f"Doctor cannot auto-apply action '{action}'. Resolve manually; "
+                "no automatic fix is available for this finding.",
+            )
+            downgraded.append(f.id)
+            adjusted.append(replace(
+                f,
+                fix_type="report-only",
+                detail=f"{f.detail} | executable-contract: {guidance}",
+                fix_recipe={},
+            ))
+        else:
+            adjusted.append(f)
+    return adjusted, {"downgraded_count": len(downgraded), "downgraded_ids": downgraded}
 
 
 def _script_has_cli_entrypoint(path: Path) -> bool:
@@ -1940,6 +1995,7 @@ def _scan(
 
     maintenance_route = build_maintenance_route(project_state)
     active = [f for f in all_findings if f.id not in suppressed_ids]
+    active, executable_contract = _enforce_executable_contract(active)
     active, compatibility_adjustments = _apply_compatibility_mode_policy(
         active, maintenance_route,
     )
@@ -1959,6 +2015,7 @@ def _scan(
         "maintenance_route": maintenance_route,
         "compatibility_adjustments": compatibility_adjustments,
         "manifest_migration_policy": manifest_migration_policy,
+        "executable_contract": executable_contract,
     }
     if categories:
         result["scanned_categories"] = sorted(checks_to_run.keys())
