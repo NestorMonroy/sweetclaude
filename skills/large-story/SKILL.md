@@ -102,10 +102,26 @@ mode. If the user approves an amendment, re-run
 freeze-contract and init to rebind the workflow to the new hash — all phase
 artifacts must then be regenerated through the controller.
 
-### DESIGN → PLAN → IMPLEMENT
+### DESIGN → PLAN → ENFORCEMENT CHECK → IMPLEMENT
 
 - Enter DESIGN: `python3 scripts/large_story_controller.py design --workflow-id {workflow_id} --design-summary "{summary}"`
 - Enter PLAN: `python3 scripts/large_story_controller.py plan --workflow-id {workflow_id} --plan-summary "{summary}"`
+
+**Before IMPLEMENT, verify enforcement is live.** The controller blocks
+IMPLEMENT until this passes — it confirms the gate hook is actually loaded, so
+the workflow never runs unprotected without anyone noticing:
+
+1. `python3 scripts/large_story_controller.py enforcement-probe --arm --workflow-id {workflow_id}`
+2. Write a one-line file at `.sweetclaude/.enforcement-control` (the gate
+   allows this — it should succeed).
+3. Attempt a Write at `.sweetclaude/state/workflows/.enforcement-canary` (the
+   gate MUST deny this — the write should be blocked).
+4. `python3 scripts/large_story_controller.py enforcement-probe --check --workflow-id {workflow_id}`
+5. If `verified: false`, STOP and report the controller's reason to the user.
+   Do not proceed to IMPLEMENT — enforcement is not active and the evidence
+   gate cannot be trusted. (Usual cause: hooks not loaded; see the large-story
+   dev-testing notes.)
+
 - Enter IMPLEMENT: `python3 scripts/large_story_controller.py implement --workflow-id {workflow_id} --implementation-summary "{summary}"`
 
 Project files can only be created or modified after the IMPLEMENT entry

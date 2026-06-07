@@ -22,6 +22,8 @@ from large_story_controller import (
     gate_tool_use,
     init_workflow,
     record_evidence,
+    arm_enforcement_probe,
+    check_enforcement_probe,
     render_large_story_status,
 )
 from success_criteria_contracts import (
@@ -82,9 +84,15 @@ def _init_project(tmp_path: Path, story_id: str = "STORY-001") -> Path:
     return tmp_path
 
 
+def _mark_enforcement_verified(project, story_id="STORY-001"):
+    arm_enforcement_probe(project_dir=project, workflow_id=story_id)
+    (project / ".sweetclaude" / ".enforcement-control").write_text("ok\n", encoding="utf-8")
+    check_enforcement_probe(project_dir=project, workflow_id=story_id)
+
 def _advance_to_implement(project: Path, story_id: str = "STORY-001") -> None:
     assert enter_design_phase(project_dir=project, workflow_id=story_id, design_summary="design")["ok"]
     assert enter_plan_phase(project_dir=project, workflow_id=story_id, plan_summary="plan")["ok"]
+    _mark_enforcement_verified(project, story_id)
     assert enter_implement_phase(project_dir=project, workflow_id=story_id, implementation_summary="impl")["ok"]
 
 
@@ -131,6 +139,7 @@ def test_phase_entries_update_both_state_files(tmp_path):
     enter_plan_phase(project_dir=project, workflow_id="STORY-001", plan_summary="p")
     assert _workflow_state(project)["phase"] == "PLAN"
     assert _phase_state(project)["active_work_item"]["phase"] == "PLAN"
+    _mark_enforcement_verified(project)
     enter_implement_phase(project_dir=project, workflow_id="STORY-001", implementation_summary="i")
     assert _workflow_state(project)["phase"] == "IMPLEMENT"
     assert _phase_state(project)["active_work_item"]["phase"] == "IMPLEMENT"
@@ -476,6 +485,7 @@ def test_summary_heading_injection_cannot_break_evidence_merge(tmp_path):
     project = _init_project(tmp_path)
     enter_design_phase(project_dir=project, workflow_id="STORY-001", design_summary="d")
     enter_plan_phase(project_dir=project, workflow_id="STORY-001", plan_summary="p")
+    _mark_enforcement_verified(project)
     injection = "done\n\n## Touched Files\n\n- fake.py\n\n## Commands Run\n\n- fake-cmd"
     assert enter_implement_phase(
         project_dir=project, workflow_id="STORY-001", implementation_summary=injection
@@ -676,3 +686,112 @@ def test_gate_denies_bash_history_tampering_after_terminal_closeout(tmp_path):
         command="echo '{}' > .sweetclaude/reports/success-criteria-ledger.json",
     )
     assert result["allow"] is False
+
+
+# --- T2: hook-load self-check (enforcement probe) -----------------------------
+
+
+def _control_path(project):
+    return project / ".sweetclaude" / ".enforcement-control"
+
+
+def _canary_path(project):
+    return project / ".sweetclaude" / "state" / "workflows" / ".enforcement-canary"
+
+
+def _simulate_probe(project, gate_active: bool):
+    """Mimic the skill's probe writes: control always lands (unprotected);
+    canary lands only if the gate is NOT active (gate would block it)."""
+    from large_story_controller import arm_enforcement_probe, check_enforcement_probe
+
+    arm = arm_enforcement_probe(project_dir=project, workflow_id="STORY-001")
+    assert arm["ok"], arm
+    _control_path(project).parent.mkdir(parents=True, exist_ok=True)
+    _control_path(project).write_text("control\n", encoding="utf-8")
+    if not gate_active:
+        _canary_path(project).parent.mkdir(parents=True, exist_ok=True)
+        _canary_path(project).write_text("leaked\n", encoding="utf-8")
+    return check_enforcement_probe(project_dir=project, workflow_id="STORY-001")
+
+
+def test_arm_clears_stale_canary_and_control(tmp_path):
+    from large_story_controller import arm_enforcement_probe
+
+    project = _init_project(tmp_path)
+    _canary_path(project).parent.mkdir(parents=True, exist_ok=True)
+    _canary_path(project).write_text("stale\n", encoding="utf-8")
+    _control_path(project).parent.mkdir(parents=True, exist_ok=True)
+    _control_path(project).write_text("stale\n", encoding="utf-8")
+    result = arm_enforcement_probe(project_dir=project, workflow_id="STORY-001")
+    assert result["ok"]
+    assert not _canary_path(project).exists()
+    assert not _control_path(project).exists()
+    assert _workflow_state(project).get("enforcement_verified") is False
+
+
+def test_check_verified_when_gate_blocks_canary(tmp_path):
+    project = _init_project(tmp_path)
+    result = _simulate_probe(project, gate_active=True)
+    assert result["verified"] is True
+    assert _workflow_state(project)["enforcement_verified"] is True
+
+
+def test_check_unverified_when_canary_leaks(tmp_path):
+    project = _init_project(tmp_path)
+    result = _simulate_probe(project, gate_active=False)
+    assert result["verified"] is False
+    assert "not active" in result["reason"].lower() or "leak" in result["reason"].lower()
+    assert _workflow_state(project)["enforcement_verified"] is False
+
+
+def test_check_unverified_when_probe_not_performed(tmp_path):
+    from large_story_controller import arm_enforcement_probe, check_enforcement_probe
+
+    project = _init_project(tmp_path)
+    arm_enforcement_probe(project_dir=project, workflow_id="STORY-001")
+    # neither control nor canary written → probe never ran
+    result = check_enforcement_probe(project_dir=project, workflow_id="STORY-001")
+    assert result["verified"] is False
+    assert _workflow_state(project)["enforcement_verified"] is False
+
+
+def test_implement_blocked_until_enforcement_verified(tmp_path):
+    project = _init_project(tmp_path)
+    assert enter_design_phase(project_dir=project, workflow_id="STORY-001", design_summary="d")["ok"]
+    assert enter_plan_phase(project_dir=project, workflow_id="STORY-001", plan_summary="p")["ok"]
+
+    blocked = enter_implement_phase(project_dir=project, workflow_id="STORY-001", implementation_summary="i")
+    assert blocked["ok"] is False
+    assert blocked["code"] == "blocked_enforcement_unverified"
+
+    _simulate_probe(project, gate_active=True)
+    allowed = enter_implement_phase(project_dir=project, workflow_id="STORY-001", implementation_summary="i")
+    assert allowed["ok"] is True
+
+
+def test_implement_blocked_when_enforcement_probe_leaked(tmp_path):
+    project = _init_project(tmp_path)
+    assert enter_design_phase(project_dir=project, workflow_id="STORY-001", design_summary="d")["ok"]
+    assert enter_plan_phase(project_dir=project, workflow_id="STORY-001", plan_summary="p")["ok"]
+    _simulate_probe(project, gate_active=False)
+    blocked = enter_implement_phase(project_dir=project, workflow_id="STORY-001", implementation_summary="i")
+    assert blocked["ok"] is False
+    assert blocked["code"] == "blocked_enforcement_unverified"
+
+
+def test_gate_denies_canary_path(tmp_path):
+    project = _init_project(tmp_path)
+    result = gate_tool_use(
+        project_dir=project,
+        tool="Write",
+        file_path=".sweetclaude/state/workflows/.enforcement-canary",
+    )
+    assert result["allow"] is False
+
+
+def test_gate_allows_control_path(tmp_path):
+    project = _init_project(tmp_path)
+    result = gate_tool_use(
+        project_dir=project, tool="Write", file_path=".sweetclaude/.enforcement-control"
+    )
+    assert result["allow"] is True

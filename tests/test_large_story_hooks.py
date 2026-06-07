@@ -30,6 +30,8 @@ from large_story_controller import (
     enter_verify_phase,
     init_workflow,
     record_evidence,
+    arm_enforcement_probe,
+    check_enforcement_probe,
 )
 from success_criteria_contracts import compute_success_criteria_contract_hash
 
@@ -82,9 +84,16 @@ def _project_with_workflow(tmp_path: Path, story_id: str = "STORY-001") -> Path:
     return tmp_path
 
 
+def _mark_enforcement_verified(project: Path, story_id: str = "STORY-001") -> None:
+    arm_enforcement_probe(project_dir=project, workflow_id=story_id)
+    (project / ".sweetclaude" / ".enforcement-control").write_text("ok\n", encoding="utf-8")
+    check_enforcement_probe(project_dir=project, workflow_id=story_id)
+
+
 def _advance_to_implement(project: Path, story_id: str = "STORY-001") -> None:
     assert enter_design_phase(project_dir=project, workflow_id=story_id, design_summary="d")["ok"]
     assert enter_plan_phase(project_dir=project, workflow_id=story_id, plan_summary="p")["ok"]
+    _mark_enforcement_verified(project, story_id)
     assert enter_implement_phase(project_dir=project, workflow_id=story_id, implementation_summary="i")["ok"]
 
 

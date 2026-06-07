@@ -19,6 +19,8 @@ from large_story_controller import (
     enter_ship_phase,
     enter_verify_phase,
     record_evidence,
+    arm_enforcement_probe,
+    check_enforcement_probe,
     route_large_story,
     transition_large_story,
     finalize_large_story,
@@ -32,6 +34,13 @@ CRUD_SQLITE_PROMPT = (
     "/sweetclaude:large-story build a prototype CRUD-style web application "
     "with no authentication, using SQLite for the data."
 )
+
+
+def _mark_enforcement_verified(project, story_id="STORY-001"):
+    """Simulate a passed enforcement probe (gate active: canary blocked)."""
+    arm_enforcement_probe(project_dir=project, workflow_id=story_id)
+    (project / ".sweetclaude" / ".enforcement-control").write_text("ok\n", encoding="utf-8")
+    check_enforcement_probe(project_dir=project, workflow_id=story_id)
 
 
 def _contract(story_id: str = "STORY-001") -> dict:
@@ -181,6 +190,7 @@ def _write_define_ready_project(tmp_path: Path, story_id: str = "STORY-001") -> 
         ),
         encoding="utf-8",
     )
+    _mark_enforcement_verified(project, story_id)
     return project
 
 
@@ -226,6 +236,7 @@ def _write_contract_project(project: Path, contract: dict) -> Path:
         encoding="utf-8",
     )
     prompt_path.write_text(CRUD_SQLITE_PROMPT + "\n", encoding="utf-8")
+    _mark_enforcement_verified(project, contract['story_id'])
     return project
 
 

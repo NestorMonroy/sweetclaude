@@ -436,6 +436,24 @@ def enter_implement_phase(
             "next_allowed_stage": "blocked",
         }
 
+    # Enforcement self-check (T2): only after structural gates pass, refuse to
+    # enter IMPLEMENT — where project writes are unlocked — unless the gate
+    # hook was verified live this session via the enforcement probe.
+    if _load_yaml_dict(_workflow_state_path(project, resolved_workflow_id)).get("enforcement_verified") is not True:
+        return {
+            **_failure(
+                "blocked_enforcement_unverified",
+                "Large-story IMPLEMENT is blocked: enforcement hooks have not "
+                "been verified live this session. Run the enforcement probe "
+                "(enforcement-probe --arm, perform the two probe writes, "
+                "enforcement-probe --check) and confirm 'verified' before "
+                "IMPLEMENT. If the probe reports the gate is not active, the "
+                "workflow cannot guarantee its evidence gate — fix hook loading "
+                "rather than proceeding unprotected.",
+            ),
+            "next_allowed_stage": "blocked",
+        }
+
     files = _clean_list(touched_files)
     commands = _clean_list(commands_run)
     deps = _clean_list(dependency_changes)
@@ -1152,6 +1170,85 @@ def _project_relative(project: Path, file_path: str) -> Path | None:
         return None
 
 
+ENFORCEMENT_CONTROL_REL = Path(".sweetclaude") / ".enforcement-control"
+ENFORCEMENT_CANARY_REL = Path(".sweetclaude") / "state" / "workflows" / ".enforcement-canary"
+
+
+def arm_enforcement_probe(
+    *,
+    project_dir: str | Path = ".",
+    workflow_id: str | None = None,
+) -> dict[str, Any]:
+    """Clear stale probe files and mark enforcement unverified.
+
+    The skill then writes the control path (gate allows) and attempts the
+    canary path (gate denies if loaded). check_enforcement_probe reads the
+    filesystem result. The model cannot fake verification: 'verified' requires
+    the protected canary to be ABSENT, which only an active gate produces.
+    """
+    project = Path(project_dir).expanduser().resolve(strict=False)
+    resolved = workflow_id or _workflow_id_from_state(project)
+    if not _valid_workflow_id(resolved):
+        return _failure("blocked_enforcement_probe", "Enforcement probe is blocked: workflow_id is required.")
+    for rel in (ENFORCEMENT_CONTROL_REL, ENFORCEMENT_CANARY_REL):
+        target = project / rel
+        if target.exists():
+            target.unlink()
+    state = _load_yaml_dict(_workflow_state_path(project, resolved))
+    state["enforcement_verified"] = False
+    _write_workflow_dict(project, resolved, state)
+    return {
+        "ok": True,
+        "workflow_id": resolved,
+        "control_path": str(ENFORCEMENT_CONTROL_REL),
+        "canary_path": str(ENFORCEMENT_CANARY_REL),
+        "instructions": (
+            "Write a short file at control_path (the gate allows it), then "
+            "attempt a Write at canary_path (the gate must deny it). Then run "
+            "enforcement-probe --check."
+        ),
+    }
+
+
+def check_enforcement_probe(
+    *,
+    project_dir: str | Path = ".",
+    workflow_id: str | None = None,
+) -> dict[str, Any]:
+    """Decide whether the large-story gate is live, from filesystem evidence."""
+    project = Path(project_dir).expanduser().resolve(strict=False)
+    resolved = workflow_id or _workflow_id_from_state(project)
+    if not _valid_workflow_id(resolved):
+        return _failure("blocked_enforcement_probe", "Enforcement probe is blocked: workflow_id is required.")
+    control_present = (project / ENFORCEMENT_CONTROL_REL).exists()
+    canary_present = (project / ENFORCEMENT_CANARY_REL).exists()
+    if not control_present:
+        verified, reason = False, (
+            "Enforcement unverified: the probe control write was not observed, "
+            "so the probe did not run. Re-arm and perform both probe writes."
+        )
+    elif canary_present:
+        verified, reason = False, (
+            "Enforcement NOT active: the protected canary write was not blocked. "
+            "The large-story gate hook is not loaded in this session. Fix hook "
+            "loading before trusting the workflow (see large-story dev-testing doc)."
+        )
+    else:
+        verified, reason = True, "Enforcement active: the gate blocked the protected canary write."
+    state = _load_yaml_dict(_workflow_state_path(project, resolved))
+    state["enforcement_verified"] = verified
+    state["enforcement_checked_at"] = datetime.now(timezone.utc).isoformat()
+    _write_workflow_dict(project, resolved, state)
+    # Leave control/canary in place; arm cleans them on the next probe.
+    return {"ok": verified, "verified": verified, "reason": reason, "workflow_id": resolved}
+
+
+def _write_workflow_dict(project: Path, workflow_id: str, state: dict[str, Any]) -> None:
+    path = _workflow_state_path(project, workflow_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(state, sort_keys=False), encoding="utf-8")
+
+
 def _workflow_state_path(project: Path, workflow_id: str) -> Path:
     return project / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
 
@@ -1804,6 +1901,12 @@ def main(argv: list[str] | None = None) -> int:
     verify.add_argument("--criterion-result-json", default="")
     verify.add_argument("--allow-no-file-changes", action="store_true")
 
+    probe = sub.add_parser("enforcement-probe")
+    probe.add_argument("--workflow-id")
+    probe_mode = probe.add_mutually_exclusive_group(required=True)
+    probe_mode.add_argument("--arm", action="store_true")
+    probe_mode.add_argument("--check", action="store_true")
+
     init_parser = sub.add_parser("init")
     init_parser.add_argument("--workflow-id", required=True)
     init_parser.add_argument("--contract-path")
@@ -1882,6 +1985,10 @@ def main(argv: list[str] | None = None) -> int:
                 allow_no_file_changes=args.allow_no_file_changes,
             )
         )
+    if args.command == "enforcement-probe":
+        if args.arm:
+            return _json_print(arm_enforcement_probe(project_dir=args.project_dir, workflow_id=args.workflow_id))
+        return _json_print(check_enforcement_probe(project_dir=args.project_dir, workflow_id=args.workflow_id))
     if args.command == "init":
         return _json_print(
             init_workflow(

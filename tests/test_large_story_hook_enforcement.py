@@ -175,6 +175,14 @@ def _stop_attempt(project: Path) -> dict | None:
     return json.loads(result.stdout)
 
 
+def _verify_enforcement_cli(project: Path) -> None:
+    """Mark enforcement verified without a live gate (control present, canary
+    absent = simulated active gate), for tests not exercising the real hook."""
+    _controller(project, "enforcement-probe", "--arm", "--workflow-id", STORY_ID)
+    (project / ".sweetclaude" / ".enforcement-control").write_text("ok\n", encoding="utf-8")
+    _controller(project, "enforcement-probe", "--check", "--workflow-id", STORY_ID)
+
+
 def _write_contract(project: Path) -> None:
     contract_path = project / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml"
     contract_path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,6 +217,17 @@ def test_full_fresh_disposable_sequence_with_real_hooks_and_cli(tmp_path):
     stop = _stop_attempt(project)
     assert stop is not None and stop["decision"] == "block"
     assert STORY_ID in stop["reason"]
+
+    # --- Enforcement self-check via the REAL gate -----------------------------
+    # IMPLEMENT is blocked until the gate is verified live.
+    blocked = _controller(project, "implement", "--workflow-id", STORY_ID, "--implementation-summary", "premature")
+    assert blocked["ok"] is False and blocked["code"] == "blocked_enforcement_unverified"
+    assert _controller(project, "enforcement-probe", "--arm", "--workflow-id", STORY_ID)["ok"]
+    # control write (gate allows) lands; canary write (gate denies) does not.
+    assert _simulated_agent_write(project, ".sweetclaude/.enforcement-control", "ok")
+    assert not _simulated_agent_write(project, ".sweetclaude/state/workflows/.enforcement-canary", "leak")
+    probe = _controller(project, "enforcement-probe", "--check", "--workflow-id", STORY_ID)
+    assert probe["verified"] is True, probe
 
     # --- IMPLEMENT: writes allowed AND observed --------------------------------
     assert _controller(project, "implement", "--workflow-id", STORY_ID, "--implementation-summary", "Build CRUD app files.")["ok"]
@@ -305,6 +324,7 @@ def test_verify_without_observed_evidence_is_blocked_via_cli(tmp_path):
     assert _controller(project, "init", "--workflow-id", STORY_ID)["ok"]
     assert _controller(project, "design", "--workflow-id", STORY_ID, "--design-summary", "d")["ok"]
     assert _controller(project, "plan", "--workflow-id", STORY_ID, "--plan-summary", "p")["ok"]
+    _verify_enforcement_cli(project)
     assert _controller(project, "implement", "--workflow-id", STORY_ID, "--implementation-summary", "i")["ok"]
 
     (project / "app.py").write_text("written without evidence hook\n", encoding="utf-8")
