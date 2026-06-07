@@ -4,9 +4,8 @@ user-invocable: true
 description: "Deactivate SweetClaude for the current project."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:off"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # Deactivate SweetClaude
 

@@ -4,13 +4,15 @@ user-invocable: false
 description: "Session startup skill — pre-flight checks, drift/update offers, and initial routing."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:bootstrap"`
-
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh sweetclaude SC_YAML_NOT_FOUND`
-
 # SweetClaude
 
-State pre-loaded above. One read. Make a decision. Delegate.
+Load state, then make a decision. Delegate.
+
+```bash
+cat .sweetclaude/state/sweetclaude.yaml 2>/dev/null || echo "SC_YAML_NOT_FOUND"
+```
+
+If the output is `SC_YAML_NOT_FOUND`, the state file does not exist. Otherwise parse the output as YAML.
 
 ---
 

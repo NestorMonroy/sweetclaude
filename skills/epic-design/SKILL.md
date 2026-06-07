@@ -4,9 +4,8 @@ user-invocable: true
 description: "Produce a complete, ordered story list for an epic."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:epic-design"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # Epic Design
 

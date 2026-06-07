@@ -4,9 +4,8 @@ user-invocable: true
 description: "Compliance control testing and evidence collection."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:testing-compliance"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 ```bash
 COMPLIANCE_FILE="$PWD/.sweetclaude/state/compliance.yaml"

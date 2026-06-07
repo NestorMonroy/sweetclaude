@@ -4,9 +4,8 @@ user-invocable: true
 description: "Move an approved mockup from the sandbox into the main application."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:mockup-graduate"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # SweetClaude Mockup Graduate
 

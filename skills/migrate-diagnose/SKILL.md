@@ -3,7 +3,6 @@ name: sweetclaude:migrate-diagnose
 description: "Redirects to sweetclaude:doctor. File diagnostics are now part of the doctor system."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:migrate-diagnose"`
 
 # Migrate Diagnose
 

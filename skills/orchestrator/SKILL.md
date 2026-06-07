@@ -4,10 +4,9 @@ user-invocable: false
 description: "Orchestrator main loop — executes tracked workflow steps via subagents."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:orchestrator"`
 
 <preflight-state>
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh sweetclaude STATE_NOT_FOUND`
+!`cat .sweetclaude/state/sweetclaude.yaml`
 </preflight-state>
 
 # Orchestrator

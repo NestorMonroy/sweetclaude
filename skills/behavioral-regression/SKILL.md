@@ -4,9 +4,8 @@ user-invocable: false
 description: "Run SweetClaude's behavioral regression test suite."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:behavioral-regression"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # SweetClaude Behavioral Regression Tests
 

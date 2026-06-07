@@ -4,7 +4,6 @@ user-invocable: true
 description: "Launch a local web dashboard showing roadmap, releases, epics, backlog, dependencies, git history, and skill activity."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:dashboard"`
 
 # Dashboard
 

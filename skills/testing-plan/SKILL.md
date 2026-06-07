@@ -4,9 +4,8 @@ user-invocable: true
 description: "Define and maintain a test strategy for a feature or release."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:testing-plan"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 ```bash
 ls .sweetclaude/testing/plans/TP-*.md 2>/dev/null | wc -l | xargs -I{} echo "PLAN_COUNT={}"

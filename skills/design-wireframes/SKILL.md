@@ -5,9 +5,8 @@ description: "Generate HTML/CSS wireframes from user flows."
 category: design
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:design-wireframes"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # Design Wireframes
 

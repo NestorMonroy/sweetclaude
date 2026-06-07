@@ -43,8 +43,16 @@ fi
 # ── Metrics recording ─────────────────────────────────────────────────────────
 if [ -f "$METRICS_CONFIG" ] && grep -q "enabled: true" "$METRICS_CONFIG" 2>/dev/null; then
   TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  printf -- '---\ntimestamp: %s\nevent: skill_invoked\nskill: %s\n' \
-    "$TIMESTAMP" "$SKILL_NAME" >> "$EVENTS_LOG"
+  PHASE=$(python3 -c "
+import yaml
+try:
+    d = yaml.safe_load(open('$PROJECT_DIR/.sweetclaude/state/sweetclaude.yaml')) or {}
+    print(d.get('work', {}).get('active', {}).get('phase') or 'none')
+except Exception:
+    print('none')
+" 2>/dev/null || echo "none")
+  printf -- '---\ntimestamp: %s\nevent: skill_invoked\nskill: %s\nphase: %s\n' \
+    "$TIMESTAMP" "$SKILL_NAME" "$PHASE" >> "$EVENTS_LOG"
 fi
 
 exit 0

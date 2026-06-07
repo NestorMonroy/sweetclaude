@@ -4,7 +4,6 @@ user-invocable: false
 description: "Migration orchestrator. Wraps the runner with snapshot, recovery menus, and end-of-session report."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:_migrate"`
 
 # SweetClaude Migration
 

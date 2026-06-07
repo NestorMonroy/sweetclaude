@@ -4,9 +4,8 @@ user-invocable: true
 description: "Define and maintain project scope."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-scope"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 ```bash
 SCOPE_FILE="$PWD/.sweetclaude/state/scope.yaml"

@@ -4,9 +4,8 @@ user-invocable: false
 description: "Disable the Protocol Guardian for the current session"
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:guardian-off"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # Protocol Guardian — Disable
 

@@ -4,9 +4,8 @@ user-invocable: true
 description: "Guided milestone planning workshop."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:product-milestone-planning"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # SweetClaude Milestone Planning
 

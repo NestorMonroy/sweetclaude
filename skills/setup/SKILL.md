@@ -4,7 +4,6 @@ user-invocable: false
 description: "Consolidated onboarding skill."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:setup"`
 
 # SweetClaude Setup
 

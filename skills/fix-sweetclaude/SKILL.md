@@ -4,7 +4,6 @@ user-invocable: true
 description: "Redirects to sweetclaude:doctor. This skill has been absorbed into the doctor diagnostic system."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:fix-sweetclaude"`
 
 # Fix SweetClaude
 

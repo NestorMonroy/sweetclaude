@@ -4,9 +4,8 @@ user-invocable: true
 description: "Export a Claude.ai session as a complete, portable package."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:session-export"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # Session Export Skill
 
