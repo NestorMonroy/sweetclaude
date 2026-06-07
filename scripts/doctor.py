@@ -1447,9 +1447,51 @@ def check_structure_anomalies(state: ProjectState) -> list[Finding]:
     return findings
 
 
+def _semver_tuple(v: object) -> tuple[int, int, int] | None:
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)", str(v or ""))
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+
+def check_version_currency(state: ProjectState) -> list[Finding]:
+    """Advise updating when the framework is behind latest and findings exist.
+
+    Doctor's own checks and recovery improve between releases — a stale doctor
+    can surface findings a newer one already resolves (the syncog 4.1.2-beta
+    case dumped 639 raw findings that 4.1.6+ collapses). When behind latest,
+    say so first: update may resolve some findings before acting on them.
+    """
+    fw = (state.sweetclaude_yaml or {}).get("framework", {}) or {}
+    installed = fw.get("installed_version")
+    available = (fw.get("update") or {}).get("available")
+    it, at = _semver_tuple(installed), _semver_tuple(available)
+    if not (it and at and at > it):
+        return []
+    return [Finding(
+        id="version-currency:behind-latest",
+        category="version_currency",
+        severity="warning",
+        summary=(
+            f"Doctor is running an older SweetClaude ({installed}); "
+            f"{available} is available"
+        ),
+        detail=(
+            f"version-currency: installed={installed}, available={available}. "
+            "Doctor's checks and recovery improve between releases, so some "
+            "findings here may already be resolved in the newer version. "
+            "Guidance: update first — run /sweetclaude:update (beta: update the "
+            "plugin package and restart, then /sweetclaude:update) — then re-run "
+            "doctor before acting on other findings."
+        ),
+        file_paths=[],
+        fix_type="report-only",
+        fix_recipe={},
+    )]
+
+
 CHECKS: dict[str, Callable[[ProjectState], list[Finding]]] = {
     "state_integrity":    check_state_integrity,
     "hook_health":        check_hook_health,
+    "version_currency":   check_version_currency,
     "structure_anomalies": check_structure_anomalies,
     "storage_lint":       check_storage_lint,
     "migration_currency": check_migration_currency,

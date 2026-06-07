@@ -6252,10 +6252,10 @@ class TestChecksRegistry:
 
     def test_checks_dict_contains_all_categories(self):
         expected = {
-            "state_integrity", "hook_health", "structure_anomalies",
-            "storage_lint", "migration_currency", "config_compat",
-            "file_diagnostics", "onboarding_state", "env_wiring",
-            "derived_status",
+            "state_integrity", "hook_health", "version_currency",
+            "structure_anomalies", "storage_lint", "migration_currency",
+            "config_compat", "file_diagnostics", "onboarding_state",
+            "env_wiring", "derived_status",
         }
         assert set(CHECKS.keys()) == expected
 
@@ -6914,3 +6914,46 @@ def test_scan_result_routes_every_finding_and_has_fallback(tmp_path, fake_home):
     assert result["resolution_summary"]["terminal_fallback"]["always_available"] is True
     for f in result["findings"]:
         assert f.get("resolution_class") in valid, f
+
+
+# --- version currency: behind-latest advisory (the syncog short-circuit) -----
+
+def test_version_currency_flags_behind_latest(tmp_path, fake_home):
+    from doctor import build_project_state, check_version_currency
+    project = build_fixture(tmp_path, overrides={"sweetclaude_yaml": {
+        "phase_schema_version": 2,
+        "framework": {"installed_version": "4.1.2-beta",
+                      "update": {"available": "4.1.14-beta"}},
+    }})
+    findings = check_version_currency(build_project_state(project))
+    assert any(f.id == "version-currency:behind-latest" for f in findings)
+    f = [x for x in findings if x.id == "version-currency:behind-latest"][0]
+    assert "4.1.2-beta" in f.detail and "4.1.14-beta" in f.detail
+    assert "update" in f.detail.lower()  # actionable guidance
+
+
+def test_version_currency_silent_when_current(tmp_path, fake_home):
+    from doctor import build_project_state, check_version_currency
+    project = build_fixture(tmp_path, overrides={"sweetclaude_yaml": {
+        "phase_schema_version": 2,
+        "framework": {"installed_version": "4.1.14-beta",
+                      "update": {"available": "4.1.14-beta"}},
+    }})
+    assert check_version_currency(build_project_state(project)) == []
+
+
+def test_version_currency_silent_when_no_update_info(tmp_path, fake_home):
+    from doctor import build_project_state, check_version_currency
+    project = build_fixture(tmp_path)  # default: no update block
+    assert check_version_currency(build_project_state(project)) == []
+
+
+def test_version_currency_advisory_classifies_as_guided(tmp_path, fake_home):
+    from doctor import build_project_state, check_version_currency, classify_resolution, RESOLUTION_GUIDED
+    project = build_fixture(tmp_path, overrides={"sweetclaude_yaml": {
+        "phase_schema_version": 2,
+        "framework": {"installed_version": "4.1.2-beta",
+                      "update": {"available": "4.1.14-beta"}},
+    }})
+    f = check_version_currency(build_project_state(project))[0]
+    assert classify_resolution(f) == RESOLUTION_GUIDED
