@@ -955,11 +955,18 @@ def gate_tool_use(
     project = Path(project_dir).expanduser().resolve(strict=False)
     actives = _active_large_story_workflows(project)
     if not actives:
+        if _any_large_story_workflow_exists(project):
+            # Completed stories: their evidence is permanent history. Project
+            # files and shared session state are free again, but
+            # controller-owned reports/state stay immutable and contract
+            # changes remain human-gated (micro-probe finding, 2026-06-06:
+            # an agent retroactively invalidated a closed story's record).
+            return _gate_terminal_history(project, tool, file_path, command)
         return {
             "allow": True,
             "ok": True,
             "decision": "allow",
-            "reason": "No active large-story workflow; gate does not apply.",
+            "reason": "No large-story workflow state in this project; gate does not apply.",
             "workflow_id": None,
             "phase": None,
         }
@@ -1167,6 +1174,71 @@ def _is_active_workflow_state(state: dict[str, Any]) -> bool:
         and state.get("requires_success_criteria_contract")
         and state.get("status") != "complete"
     )
+
+
+def _any_large_story_workflow_exists(project: Path) -> bool:
+    workflows_dir = project / ".sweetclaude" / "state" / "workflows"
+    if not workflows_dir.exists():
+        return False
+    for candidate in workflows_dir.glob("*.yaml"):
+        if _load_yaml_dict(candidate).get("requires_success_criteria_contract"):
+            return True
+    return False
+
+
+def _gate_terminal_history(
+    project: Path,
+    tool: str,
+    file_path: str | None,
+    command: str | None,
+) -> dict[str, Any]:
+    """Gate decisions when only completed large-story workflows exist."""
+
+    def _decision(allow: bool, reason: str, decision: str | None = None) -> dict[str, Any]:
+        return {
+            "allow": allow,
+            "ok": allow,
+            "decision": decision or ("allow" if allow else "deny"),
+            "reason": reason,
+            "workflow_id": None,
+            "phase": "TERMINAL",
+        }
+
+    history_message = (
+        "This project contains completed large-story workflows. Their "
+        "controller-owned evidence (reports, workflow state) is permanent "
+        "history and may not be modified. New concerns belong to a new story."
+    )
+    if tool in {"Write", "Edit", "NotebookEdit"}:
+        if not file_path:
+            return _decision(False, f"{history_message} {tool} call without a file path is anomalous.")
+        rel = _project_relative(project, file_path)
+        if rel is None:
+            return _decision(True, "Target is outside the project; terminal-history gate does not apply.")
+        if (
+            PROTECTED_REPORTS_REL in rel.parents
+            or rel == PROTECTED_REPORTS_REL
+            or PROTECTED_WORKFLOWS_REL in rel.parents
+            or rel == PROTECTED_WORKFLOWS_REL
+        ):
+            return _decision(False, f"{history_message} {rel} is closed-story evidence.")
+        if PROTECTED_CONTRACTS_REL in rel.parents or rel == PROTECTED_CONTRACTS_REL:
+            return _decision(
+                False,
+                "The success criteria contract belongs to a completed story. "
+                "Modifying it requires explicit human approval — typically this "
+                "means drafting the next story's contract (init-contract) "
+                "rather than amending closed history.",
+                decision="ask",
+            )
+        return _decision(True, "Project files are unrestricted after story completion.")
+    if tool == "Bash" and command:
+        lowered = command.lower()
+        for token in (".sweetclaude/reports", ".sweetclaude/state/workflows", ".sweetclaude/contracts"):
+            if token in lowered:
+                return _decision(False, f"{history_message} Command references {token}.")
+        return _decision(True, "Command does not reference closed-story history.")
+    return _decision(True, "Tool is not gated after story completion.")
 
 
 def _active_large_story_workflows(project: Path) -> list[tuple[str, dict[str, Any]]]:

@@ -621,3 +621,58 @@ def test_freeze_contract_recomputes_hash_after_edit(tmp_path):
         project_dir=tmp_path, workflow_id=None, stage="define-exit"
     )
     assert result["ok"] is True, result
+
+
+# --- Post-terminal history protection (TASK-C8 micro-probe finding) -----------
+
+
+def _ship_story(project, story_id="STORY-001"):
+    _advance_to_implement(project, story_id)
+    record_evidence(project_dir=project, tool="Write", file_path="app.py", workflow_id=story_id)
+    assert enter_verify_phase(project_dir=project, workflow_id=story_id)["ok"]
+    assert enter_ship_phase(project_dir=project, workflow_id=story_id)["ok"]
+
+
+def test_gate_denies_history_writes_after_terminal_closeout(tmp_path):
+    project = _init_project(tmp_path)
+    _ship_story(project)
+    for path in (
+        ".sweetclaude/reports/success-criteria-ledger.json",
+        ".sweetclaude/reports/large-story/STORY-001/ship/closeout.json",
+        ".sweetclaude/state/workflows/STORY-001.yaml",
+    ):
+        result = gate_tool_use(project_dir=project, tool="Write", file_path=path)
+        assert result["allow"] is False, path
+        assert result["decision"] == "deny"
+
+
+def test_gate_asks_for_contract_edit_after_terminal_closeout(tmp_path):
+    project = _init_project(tmp_path)
+    _ship_story(project)
+    result = gate_tool_use(
+        project_dir=project,
+        tool="Write",
+        file_path=".sweetclaude/contracts/success-criteria-contract.yaml",
+    )
+    assert result["allow"] is False
+    assert result["decision"] == "ask"
+
+
+def test_gate_allows_app_and_phase_writes_after_terminal_closeout(tmp_path):
+    project = _init_project(tmp_path)
+    _ship_story(project)
+    assert gate_tool_use(project_dir=project, tool="Write", file_path="app.py")["allow"] is True
+    assert gate_tool_use(
+        project_dir=project, tool="Edit", file_path=".sweetclaude/state/phase.yaml"
+    )["allow"] is True
+
+
+def test_gate_denies_bash_history_tampering_after_terminal_closeout(tmp_path):
+    project = _init_project(tmp_path)
+    _ship_story(project)
+    result = gate_tool_use(
+        project_dir=project,
+        tool="Bash",
+        command="echo '{}' > .sweetclaude/reports/success-criteria-ledger.json",
+    )
+    assert result["allow"] is False
