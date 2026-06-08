@@ -1171,6 +1171,22 @@ body {
 
 .story-rows.expanded { display: block; }
 
+.hidden-section .hidden-items { display: none; }
+.hidden-section.revealed .hidden-items { display: block; }
+.hidden-section.revealed > .show-link { display: none; }
+.hidden-section:not(.revealed) > .show-link { display: inline; }
+.toggle-hidden-link {
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+  display: inline-block;
+}
+.toggle-hidden-link.show-link { color: var(--green-dim); }
+.toggle-hidden-link.show-link:hover { color: var(--green); text-decoration: underline; }
+.toggle-hidden-link.hide-link { color: var(--text-dim); }
+.toggle-hidden-link.hide-link:hover { color: var(--text); text-decoration: underline; }
+
 .story-row {
   display: flex;
   align-items: center;
@@ -1727,6 +1743,7 @@ function renderEpicNode(ep, idx, relId) {
     const hiddenOpen = openStories.length - visibleStories.length;
     html += `<span class="story-toggle" onclick="event.stopPropagation(); toggleStories('${uid}')">${ep.stories.length} ${ep.stories.length === 1 ? 'issue' : 'issues'} &rsaquo;</span>`;
     html += `<div class="story-rows dnd-stories" id="stories-${uid}" data-epic="${ep.id}">`;
+    const hiddenOpenStories = openStories.slice(20);
     html += visibleStories.map(s => {
       return `<div class="story-row" data-id="${s.id}" onclick="event.stopPropagation(); showDetail('${s.id}')">
         <span class="drag-handle" style="font-size:12px">&#x2630;</span>
@@ -1736,8 +1753,32 @@ function renderEpicNode(ep, idx, relId) {
         ${s.priority ? priorityBadge(s.priority) : ''}
       </div>`;
     }).join('');
-    if (hiddenOpen > 0) html += `<div style="font-size:11px;color:var(--text-dim);padding:4px 0">(+${hiddenOpen} more open)</div>`;
-    if (doneStories.length > 0) html += `<div style="font-size:11px;color:var(--green-dim);padding:4px 0">(+${doneStories.length} done, not shown)</div>`;
+    if (hiddenOpen > 0) {
+      html += `<div class="hidden-section" id="hidden-open-${uid}">`;
+      html += `<a class="toggle-hidden-link show-link" onclick="event.stopPropagation(); toggleHidden('hidden-open-${uid}')">(+${hiddenOpen} more open)</a>`;
+      html += `<div class="hidden-items">${hiddenOpenStories.map(s => `<div class="story-row" data-id="${s.id}" onclick="event.stopPropagation(); showDetail('${s.id}')">
+        <span class="drag-handle" style="font-size:12px">&#x2630;</span>
+        <span class="story-id">${s.id}</span>
+        <span class="story-title">${esc(s.title)}</span>
+        ${statusBadge(s.status)}
+        ${s.priority ? priorityBadge(s.priority) : ''}
+      </div>`).join('')}
+      <a class="toggle-hidden-link hide-link" onclick="event.stopPropagation(); toggleHidden('hidden-open-${uid}')">Hide extra issues</a></div>`;
+      html += `</div>`;
+    }
+    if (doneStories.length > 0) {
+      html += `<div class="hidden-section" id="hidden-done-${uid}">`;
+      html += `<a class="toggle-hidden-link show-link" onclick="event.stopPropagation(); toggleHidden('hidden-done-${uid}')">(+${doneStories.length} done, not shown)</a>`;
+      html += `<div class="hidden-items">${doneStories.map(s => `<div class="story-row" data-id="${s.id}" onclick="event.stopPropagation(); showDetail('${s.id}')">
+        <span class="drag-handle" style="font-size:12px">&#x2630;</span>
+        <span class="story-id">${s.id}</span>
+        <span class="story-title">${esc(s.title)}</span>
+        ${statusBadge(s.status)}
+        ${s.priority ? priorityBadge(s.priority) : ''}
+      </div>`).join('')}
+      <a class="toggle-hidden-link hide-link" onclick="event.stopPropagation(); toggleHidden('hidden-done-${uid}')">Hide done issues</a></div>`;
+      html += `</div>`;
+    }
     html += `</div>`;
   }
 
@@ -1748,6 +1789,11 @@ function renderEpicNode(ep, idx, relId) {
 function toggleStories(uid) {
   const el = document.getElementById('stories-' + uid);
   if (el) el.classList.toggle('expanded');
+}
+
+function toggleHidden(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('revealed');
 }
 
 function getFiltered() {
@@ -2069,8 +2115,9 @@ function showDetail(id) {
 
   if (item.stories?.length) {
     const nonDone = item.stories.filter(s => !TERMINAL.has(s.status));
-    const doneCount = item.stories.length - nonDone.length;
-    html += `<details class="detail-section" open><summary>Issues (${item.stories.filter(s=>TERMINAL.has(s.status)).length}/${item.stories.length} done)</summary><div class="section-content">
+    const doneIssues = item.stories.filter(s => TERMINAL.has(s.status));
+    const doneCount = doneIssues.length;
+    html += `<details class="detail-section" open><summary>Issues (${doneCount}/${item.stories.length} done)</summary><div class="section-content">
       <div class="dnd-stories" id="detail-stories" data-epic="${item.id}" style="margin-top:4px">${nonDone.map(s => `
         <div class="story-row" data-id="${s.id}" onclick="showDetail('${s.id}')" style="padding:6px 8px;border-bottom:1px solid var(--border)">
           <span class="drag-handle" style="font-size:12px">&#x2630;</span>
@@ -2078,7 +2125,19 @@ function showDetail(id) {
           <span class="story-title">${esc(s.title)}</span>
           ${statusBadge(s.status)}
         </div>`).join('')}</div>`;
-    if (doneCount > 0) html += `<div style="font-size:11px;color:var(--green-dim);padding:4px 0">(+${doneCount} done, not shown)</div>`;
+    if (doneCount > 0) {
+      html += `<div class="hidden-section" id="hidden-done-detail-${item.id}">`;
+      html += `<a class="toggle-hidden-link show-link" onclick="toggleHidden('hidden-done-detail-${item.id}')">(+${doneCount} done, not shown)</a>`;
+      html += `<div class="hidden-items">${doneIssues.map(s => `
+        <div class="story-row" data-id="${s.id}" onclick="showDetail('${s.id}')" style="padding:6px 8px;border-bottom:1px solid var(--border)">
+          <span class="drag-handle" style="font-size:12px">&#x2630;</span>
+          <span class="id-cell">${s.id}</span>
+          <span class="story-title">${esc(s.title)}</span>
+          ${statusBadge(s.status)}
+        </div>`).join('')}
+      <a class="toggle-hidden-link hide-link" onclick="toggleHidden('hidden-done-detail-${item.id}')">Hide done issues</a></div>`;
+      html += `</div>`;
+    }
     html += `</div></details>`;
   }
 
