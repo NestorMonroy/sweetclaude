@@ -185,6 +185,33 @@
       "scope": "plugin-native",
       "purpose": "Track C: blocks session end once while a large-story workflow is non-terminal, forcing controller-rendered status into the conversation",
       "command_path": "${CLAUDE_PLUGIN_ROOT}/hooks/large-story-stop-guard.sh"
+    },
+    {
+      "file": "small-story-gate.sh",
+      "event": "PreToolUse",
+      "matcher": "Write|Edit|NotebookEdit|Bash",
+      "required": true,
+      "scope": "plugin-native",
+      "purpose": "Denies project writes outside controller-entered IMPLEMENT and all direct writes to controller-owned state/reports while a small-story workflow is active",
+      "command_path": "${CLAUDE_PLUGIN_ROOT}/hooks/small-story-gate.sh"
+    },
+    {
+      "file": "small-story-evidence.sh",
+      "event": "PostToolUse",
+      "matcher": "Write|Edit|NotebookEdit|Bash",
+      "required": true,
+      "scope": "plugin-native",
+      "purpose": "Appends harness-observed implementation evidence (evidence.jsonl) during small-story IMPLEMENT; VERIFY fails closed without it",
+      "command_path": "${CLAUDE_PLUGIN_ROOT}/hooks/small-story-evidence.sh"
+    },
+    {
+      "file": "small-story-stop-guard.sh",
+      "event": "Stop",
+      "matcher": "",
+      "required": true,
+      "scope": "plugin-native",
+      "purpose": "Blocks session end once while a small-story workflow is non-terminal, forcing controller-rendered status into the conversation",
+      "command_path": "${CLAUDE_PLUGIN_ROOT}/hooks/small-story-stop-guard.sh"
     }
   ]
 }
