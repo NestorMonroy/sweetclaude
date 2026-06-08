@@ -997,6 +997,8 @@ body {
 }
 
 .roadmap-section { margin-bottom: 24px; }
+.roadmap-section.collapsed .epic-tree { display: none; }
+.roadmap-section.collapsed .release-header { border-radius: 8px; }
 
 .release-header {
   background: var(--surface);
@@ -1006,9 +1008,21 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  cursor: pointer;
+  transition: background 0.1s;
 }
+.release-header:hover { background: var(--surface-hover, rgba(255,255,255,0.04)); }
 
 .release-header.standalone { border-radius: 8px; }
+
+.ms-chevron {
+  font-size: 12px;
+  color: var(--text-dim);
+  transition: transform 0.15s;
+  margin-right: 6px;
+  display: inline-block;
+}
+.roadmap-section.collapsed .ms-chevron { transform: rotate(-90deg); }
 
 .release-title {
   font-size: 15px;
@@ -1602,10 +1616,10 @@ function renderRoadmap() {
     const totalStories = ms.epics.reduce((a, e) => a + e.stories.length, 0);
     const doneStories = ms.epics.reduce((a, e) => a + e.stories.filter(s => TERMINAL.has(s.status)).length, 0);
 
-    html += `<div class="roadmap-section">`;
-    html += `<div class="release-header${ms.epics.length ? '' : ' standalone'}">`;
+    html += `<div class="roadmap-section" id="ms-section-${ms.id}">`;
+    html += `<div class="release-header${ms.epics.length ? '' : ' standalone'}" onclick="toggleMilestone('${ms.id}')">`;
     html += `<div class="release-title">`;
-    html += `<span class="release-id">${ms.id}</span> ${esc(ms.title)}`;
+    html += `<span class="ms-chevron">&#9660;</span><span class="release-id">${ms.id}</span> ${esc(ms.title)}`;
     if (isDone) html += ` <span class="done-check">&#10003;</span>`;
     if (isCurrent) html += ` <span class="current-badge">current</span>`;
     html += ` ${sourceBadge(ms.source, ms.status, ms.derived_status)}`;
@@ -1794,6 +1808,11 @@ function toggleStories(uid) {
 function toggleHidden(id) {
   const el = document.getElementById(id);
   if (el) el.classList.toggle('revealed');
+}
+
+function toggleMilestone(id) {
+  const el = document.getElementById('ms-section-' + id);
+  if (el) el.classList.toggle('collapsed');
 }
 
 function getFiltered() {
