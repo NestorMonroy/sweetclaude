@@ -4,6 +4,20 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.2-beta] — 2026-06-08 (4.x beta channel)
+
+### Added — dashboard enhancements
+
+- **Show/hide done issues:** "(+N done, not shown)" and "(+N more open)"
+  text in roadmap epic nodes and the detail panel are now clickable links
+  that reveal the full issue list inline. A "Hide done issues" / "Hide
+  extra issues" link collapses them back.
+- **Collapsible milestones:** Milestone rows in the Roadmap tab have a
+  chevron toggle and are clickable to collapse/expand their epic tree.
+  Expanded by default.
+
+---
+
 ## [4.2.1-beta] — 2026-06-08 (4.x beta channel)
 
 ### Fixed — epic completion criteria format
