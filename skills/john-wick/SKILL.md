@@ -32,6 +32,14 @@ Fully autonomous, resumable SDLC pipeline. Runs from discovery artifacts to merg
 
 ---
 
+## Artifact Path Resolution
+
+Before referencing contract, report, or plan paths, check `.sweetclaude/state/session-state.yaml` → `active_work_item.work_dir`:
+- If set: substitute `{work_dir}/contracts/` for `.sweetclaude/contracts/`, `{work_dir}/reports/` for `.sweetclaude/reports/`, and `{work_dir}/plans/` for `.sweetclaude/plans/` throughout all phase documents. Pass resolved paths via `--contract` and `--ledger` CLI args to scripts.
+- If not set: use the default paths as written in the phase documents.
+
+This applies to all phase files loaded by this skill.
+
 ## Entry and Resume
 
 On invocation, read `.sweetclaude/state/john-wick.yaml`.

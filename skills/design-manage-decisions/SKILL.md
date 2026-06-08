@@ -51,7 +51,9 @@ When $ARGUMENTS describes a decision to record:
 **Consequences:** {what follows}
 ```
 
-7. **Append** to `.sweetclaude/state/decision-log.md` in `.sweetclaude/`. Increment DEC number from last entry.
+7. **Append** to `.sweetclaude/state/decision-log.md`. Increment DEC number from last entry.
+
+8. **Per-item excerpt (if work-item artifacts are active):** Check `.sweetclaude/state/session-state.yaml` → `active_work_item.work_dir`. If set, also write a copy of the entry to `{work_dir}/decisions/DEC-{NNN}.md`. The global decision log remains authoritative — the per-item copy is for discoverability.
 
 ## Query decisions
 

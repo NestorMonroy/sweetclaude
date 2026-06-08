@@ -31,6 +31,7 @@ def get_status(key):
 statuses = {k: get_status(k) for k in [
     'product_milestones', 'product_backlog', 'product_personas',
     'product_stories', 'document_corpus', 'usage_tracking', 'behavioral_regression',
+    'work_item_artifacts',
 ]}
 
 # usage_tracking: ground truth is the metrics config file, not just the yaml status
@@ -66,6 +67,7 @@ Use this table for all feature labels and descriptions:
 | `document_corpus` | Document corpus | Connect your docs for automatic reference — SweetClaude searches them so you don't re-explain context |
 | `usage_tracking` | Usage tracking | Local metrics: skill usage, phase gate outcomes, TDD enforcement — stored in `.sweetclaude/metrics/`, committed with the project, no external services |
 | `behavioral_regression` | Behavioral regression | Verify SweetClaude follows framework rules after model updates — catches regressions in Claude's behavior |
+| `work_item_artifacts` | Work-item artifact directories | Co-locate all artifacts per story, epic, and milestone into `.sweetclaude/work/<ID>/` — find everything about a work item in one place |
 
 If `FIRST_TIME` is `TRUE`:
 > "SweetClaude has optional features — here's what's available. Select the ones you want enabled:"
@@ -73,7 +75,7 @@ If `FIRST_TIME` is `TRUE`:
 Otherwise:
 > "This project has {ENABLED} of {TOTAL} features enabled. Select all the features you want on — including any already enabled:"
 
-Use **AskUserQuestion** (multiSelect: true) with all 7 features as options:
+Use **AskUserQuestion** (multiSelect: true) with all 8 features as options:
 - **label**: the feature label — append " ✓" if the feature's current status is `active`
 - **description**: the feature description from the table above
 
@@ -127,6 +129,7 @@ For each feature that is newly enabled (was not previously `active`), invoke its
 | `document_corpus` | invoke `sweetclaude:document-corpus` with argument `onboard` |
 | `usage_tracking` | invoke `sweetclaude:usage on` |
 | `behavioral_regression` | invoke `sweetclaude:behavioral-regression` |
+| `work_item_artifacts` | invoke `sweetclaude:work-item-artifacts` with argument `onboard` |
 
 **Handling a paused onboard:** Some skills (notably `document_corpus`) run multi-step pipelines requiring active user review at each stage. If a skill's onboard output contains a pause marker (e.g. "⏸ … paused … resume with …"), surface that message verbatim, then output: "Moving on — I'll set up the remaining features and you can resume corpus setup at any time." Then continue to the next feature. Do NOT treat a pause marker as onboard completion.
 

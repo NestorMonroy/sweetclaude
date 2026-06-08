@@ -1488,6 +1488,67 @@ def check_version_currency(state: ProjectState) -> list[Finding]:
     )]
 
 
+def check_work_item_artifacts(state: ProjectState) -> list[Finding]:
+    """Validate work-item artifact directories when the feature is active."""
+    findings: list[Finding] = []
+    features = (state.sweetclaude_yaml or {}).get("features", {})
+    wia = features.get("work_item_artifacts")
+    if not isinstance(wia, dict) or wia.get("status") != "active":
+        return []
+
+    work_dir = state.project_dir / ".sweetclaude" / "work"
+    if not work_dir.is_dir():
+        findings.append(Finding(
+            id="work-item-artifacts:missing-dir",
+            category="work_item_artifacts",
+            severity="warning",
+            summary="Work-item artifacts feature is active but .sweetclaude/work/ does not exist",
+            detail="The feature is enabled but no work directory has been created. Run /sweetclaude:work-item-artifacts to set it up.",
+            file_paths=[],
+            fix_type="report-only",
+            fix_recipe={},
+        ))
+        return findings
+
+    broken_links = []
+    missing_manifests = []
+    for entry in sorted(work_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+        manifest = entry / "manifest.yaml"
+        if not manifest.exists():
+            missing_manifests.append(str(entry.relative_to(state.project_dir)))
+        for root, _, files in os.walk(entry):
+            for f in files:
+                fpath = Path(root) / f
+                if fpath.is_symlink() and not fpath.exists():
+                    broken_links.append(str(fpath.relative_to(state.project_dir)))
+
+    if missing_manifests:
+        findings.append(Finding(
+            id="work-item-artifacts:missing-manifest",
+            category="work_item_artifacts",
+            severity="warning",
+            summary=f"{len(missing_manifests)} work-item director{'ies' if len(missing_manifests) != 1 else 'y'} missing manifest.yaml",
+            detail=f"Directories without manifest.yaml: {', '.join(missing_manifests)}",
+            file_paths=missing_manifests,
+            fix_type="report-only",
+            fix_recipe={},
+        ))
+    if broken_links:
+        findings.append(Finding(
+            id="work-item-artifacts:broken-links",
+            category="work_item_artifacts",
+            severity="warning",
+            summary=f"{len(broken_links)} broken symlink{'s' if len(broken_links) != 1 else ''} in work-item directories",
+            detail=f"Broken symlinks: {', '.join(broken_links[:10])}{'...' if len(broken_links) > 10 else ''}",
+            file_paths=broken_links[:10],
+            fix_type="report-only",
+            fix_recipe={},
+        ))
+    return findings
+
+
 CHECKS: dict[str, Callable[[ProjectState], list[Finding]]] = {
     "state_integrity":    check_state_integrity,
     "hook_health":        check_hook_health,
@@ -1500,6 +1561,7 @@ CHECKS: dict[str, Callable[[ProjectState], list[Finding]]] = {
     "onboarding_state":   check_onboarding_state,
     "env_wiring":         check_env_wiring,
     "derived_status":     check_derived_status,
+    "work_item_artifacts": check_work_item_artifacts,
 }
 
 

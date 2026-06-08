@@ -179,6 +179,22 @@ if os.path.exists(milestones_dir):
 
 awi = phase.get('active_work_item') or {}
 
+# Feature flags from sweetclaude.yaml
+sc_features = {}
+if os.path.exists(sc_path):
+    with open(sc_path) as f:
+        sc_data = yaml.safe_load(f) or {}
+    sc_features = sc_data.get('features', {})
+
+work_item_artifacts_active = (
+    isinstance(sc_features.get('work_item_artifacts'), dict)
+    and sc_features['work_item_artifacts'].get('status') == 'active'
+)
+
+work_dir = None
+if work_item_artifacts_active and awi.get('id'):
+    work_dir = os.path.join('.sweetclaude', 'work', awi['id'])
+
 ethos = [
     "Propose, don't ask. Give a recommendation with reasoning. Let the user redirect.",
     "Phase dwelling: never invite advancement. User decides when to move on.",
@@ -195,23 +211,25 @@ result = {
     'phase_schema_version': phase.get('schema_version', 1),
     'version_stage': phase.get('version_stage', ''),
     'deference': phase.get('deference_level', ''),
-    'active_work_item': {
-        'id': awi.get('id'),
-        'title': awi.get('title'),
-        'type': awi.get('type'),
-        'phase': awi.get('phase'),
-    },
+    'active_work_item': dict(
+        id=awi.get('id'),
+        title=awi.get('title'),
+        type=awi.get('type'),
+        phase=awi.get('phase'),
+        **({'work_dir': work_dir} if work_dir else {}),
+    ),
     'active_milestone': active_milestone,
     'ethos': ethos,
     'improvement_register_count': reg_count,
     'improvement_register_summary': improvement_register_summary,
     'checkpoint_next': checkpoint_next,
-    'paths': {
-        'product_base': product_base,
-        'strategy_base': strategy_base,
-        'technical_base': technical_base,
-        'design_base': design_base,
-    },
+    'paths': dict(
+        product_base=product_base,
+        strategy_base=strategy_base,
+        technical_base=technical_base,
+        design_base=design_base,
+        **({'work_base': '.sweetclaude/work'} if work_item_artifacts_active else {}),
+    ),
 }
 
 print(yaml.dump(result, default_flow_style=False, sort_keys=False), end='')

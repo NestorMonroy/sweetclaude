@@ -49,6 +49,14 @@ invoke it as `python3 "$CONTROLLER" --project-dir . ...` with the resolved
 absolute path. Never assume the target project contains a `scripts/`
 directory.
 
+## Artifact Path Resolution
+
+Before starting the workflow, check `.sweetclaude/state/session-state.yaml` → `active_work_item.work_dir`:
+- If set: use `{work_dir}/contracts/` for contract files and `{work_dir}/reports/` for ledger/evidence files. Create directories if needed (`mkdir -p`). After writing, create relative symlinks from the default locations (`.sweetclaude/contracts/`, `.sweetclaude/reports/`) → the work-dir files.
+- If not set: use the default paths (`.sweetclaude/contracts/`, `.sweetclaude/reports/`).
+
+When passing `--contract` or `--ledger` args to the scripts, use the resolved paths. When the skill text below says `.sweetclaude/contracts/success-criteria-contract.yaml`, substitute the resolved contract path. Same for `.sweetclaude/reports/success-criteria-ledger.json`.
+
 ## The Runner Loop
 
 For every phase, follow exactly this loop. No step may be reordered, skipped,

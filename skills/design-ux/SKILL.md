@@ -20,9 +20,11 @@ Before writing any artifact file:
 
 2. Read `categories.design.base_path`. This is the base directory for all design artifacts.
 
-3. Construct full paths as `{base_path}/{subfolder}/{filename}`, preserving existing subdirectory structure (e.g. wireframes go to `{base_path}/wireframes/wireframe-*.html`).
+3. Check `.sweetclaude/state/session-state.yaml` → `active_work_item.work_dir`:
+   - If set: use `{work_dir}/design/` as the write path. Create the directory if needed (`mkdir -p`). After writing, create a relative symlink from `{base_path}/{subfolder}/{filename}` → the work-dir file.
+   - If not set: construct full paths as `{base_path}/{subfolder}/{filename}`, preserving existing subdirectory structure.
 
-4. Write artifacts to those paths.
+4. Write artifacts to the resolved path.
 
 Define the look, feel, and interaction design of your product. This skill conducts a design interview and produces a UX/UI specification suitable for handoff to mockup tools or a design team.
 
