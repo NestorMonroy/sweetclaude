@@ -45,7 +45,7 @@ TYPE_TO_PREFIX = {v: k for k, v in PREFIX_TO_TYPE.items()}
 
 TYPE_TO_DIR = {
     "issue":        "issues",
-    "epic":         "epics",
+    "epic":         "roadmap/epics",
     "sprint":       "sprints",
     "roadmap_item": "roadmap",
     "release":      "roadmap/releases",
@@ -834,7 +834,7 @@ def main():
         op_list(product_base, state_base, args[0], project_dir=Path(sys.argv[2]))
 
     elif op == "reindex":
-        op_reindex(product_base, state_base)
+        op_reindex(product_base, state_base, project_dir=Path(sys.argv[2]))
 
     else:
         print(f"ERROR: unknown operation '{op}'", file=sys.stderr)
