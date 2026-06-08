@@ -456,6 +456,34 @@ This repairs stale existing-user metadata: `lastUpdated`, `gitCommitSha`,
 
 ---
 
+## Step 5b: Update project installed_version
+
+If `.sweetclaude/state/sweetclaude.yaml` exists in the current project directory, write `framework.installed_version` to match the just-synced version. This is framework identity metadata — the project records which version it was last synced against — not project-state mutation.
+
+```bash
+if [ -f .sweetclaude/state/sweetclaude.yaml ]; then
+  python3 - .sweetclaude/state/sweetclaude.yaml "$NEW_VER" << 'PY'
+import sys, yaml, os, tempfile
+sc_path, new_ver = sys.argv[1], sys.argv[2]
+try:
+    with open(sc_path) as f:
+        d = yaml.safe_load(f) or {}
+except Exception:
+    sys.exit(0)
+recorded = (d.get('framework') or {}).get('installed_version')
+if recorded == new_ver:
+    sys.exit(0)
+d.setdefault('framework', {})['installed_version'] = new_ver
+with tempfile.NamedTemporaryFile('w', dir=os.path.dirname(sc_path), suffix='.tmp', delete=False) as tmp:
+    yaml.safe_dump(d, tmp, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    tmp_name = tmp.name
+os.replace(tmp_name, sc_path)
+PY
+fi
+```
+
+---
+
 ## Step 6: Clean up
 
 If a temp directory was used, remove it:
@@ -706,5 +734,6 @@ Rationale:
 - **Do not touch ~/.claude/settings.json.** Hook wiring is handled by install.sh.
 - **Do not modify ~/CLAUDE.md.** Also handled by install.sh.
 - **Do not mutate per-project `.sweetclaude/` directories from update except for
-  explicit user decline state in the major-version gate.** Framework sync is
-  global; project migration/recovery is separate.
+  `framework.installed_version` (Step 5b) and explicit user decline state in
+  the major-version gate.** Framework sync is global; project
+  migration/recovery is separate.

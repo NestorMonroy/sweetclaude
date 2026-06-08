@@ -1549,6 +1549,70 @@ def check_work_item_artifacts(state: ProjectState) -> list[Finding]:
     return findings
 
 
+def check_epic_completion_criteria(state: ProjectState) -> list[Finding]:
+    findings: list[Finding] = []
+    roadmap_dir = state.product_base / "roadmap"
+    if not roadmap_dir.is_dir():
+        return findings
+
+    for p in roadmap_dir.rglob("*.md"):
+        if p.name in ("INDEX.md", "MIGRATION-MAP.md") or p.name.endswith("-INDEX.md"):
+            continue
+        fm = _read_frontmatter(p)
+        if not fm or fm.get("type") != "epic":
+            continue
+
+        criteria = fm.get("completion_criteria")
+        if not criteria or not isinstance(criteria, list):
+            continue
+
+        has_old_format = any(isinstance(c, str) for c in criteria)
+        if not has_old_format:
+            continue
+
+        done_list = fm.get("completion_criteria_done", []) or []
+        done_set = set(done_list) if done_list else set()
+
+        new_criteria = []
+        for i, crit in enumerate(criteria):
+            if isinstance(crit, dict):
+                new_criteria.append(crit)
+            else:
+                crit_str = str(crit)
+                new_criteria.append({
+                    "id": f"cc-{i + 1}",
+                    "description": crit_str,
+                    "done": crit_str in done_set,
+                })
+
+        epic_id = fm.get("id", p.stem)
+        findings.append(Finding(
+            id=f"epic-completion-criteria:old-format:{epic_id}",
+            category="epic_completion_criteria",
+            severity="warning",
+            summary=(
+                f"{epic_id} uses old-format completion criteria "
+                f"(strings + completion_criteria_done)"
+            ),
+            detail=(
+                f"Epic {epic_id} at {p} has {len(criteria)} criteria in "
+                f"string format. Migrating to dict format with "
+                f"{len(done_set)} marked done."
+            ),
+            file_paths=[str(p)],
+            fix_type="auto",
+            fix_recipe={
+                "action": "write_frontmatter_field",
+                "file": str(p),
+                "key": "completion_criteria",
+                "value": new_criteria,
+                "remove_keys": ["completion_criteria_done"],
+            },
+        ))
+
+    return findings
+
+
 CHECKS: dict[str, Callable[[ProjectState], list[Finding]]] = {
     "state_integrity":    check_state_integrity,
     "hook_health":        check_hook_health,
@@ -1562,6 +1626,7 @@ CHECKS: dict[str, Callable[[ProjectState], list[Finding]]] = {
     "env_wiring":         check_env_wiring,
     "derived_status":     check_derived_status,
     "work_item_artifacts": check_work_item_artifacts,
+    "epic_completion_criteria": check_epic_completion_criteria,
 }
 
 
@@ -1625,10 +1690,14 @@ def _resolve_installed_version() -> str | None:
     data = _read_json(plugins_path)
     if not data:
         return None
+    candidates = []
     for _key, entries in (data.get("plugins") or {}).items():
         if "sweetclaude" in _key.lower() and entries:
-            return entries[0].get("version")
-    return None
+            candidates.append(entries[0])
+    if not candidates:
+        return None
+    candidates.sort(key=lambda e: e.get("lastUpdated", ""), reverse=True)
+    return candidates[0].get("version")
 
 
 def _find_migration_runner(project_dir: Path) -> Path | None:
@@ -2339,6 +2408,8 @@ def _apply_transform(content: bytes, recipe: dict, project_dir: Path) -> bytes:
             raise ValueError("No frontmatter delimiters found")
         fm_data = yaml.safe_load(parts[1]) or {}
         fm_data[recipe["key"]] = recipe["value"]
+        for rk in recipe.get("remove_keys", []):
+            fm_data.pop(rk, None)
         new_fm = yaml.safe_dump(fm_data, default_flow_style=False)
         return f"---\n{new_fm}---{parts[2]}".encode("utf-8")
 
@@ -2375,7 +2446,12 @@ def _check_precondition(recipe: dict, content: bytes, file_path: Path) -> bool:
             if len(parts) < 3:
                 return False
             fm_data = yaml.safe_load(parts[1]) or {}
-            return fm_data.get(recipe["key"]) == recipe["value"]
+            if fm_data.get(recipe["key"]) != recipe["value"]:
+                return False
+            for rk in recipe.get("remove_keys", []):
+                if rk in fm_data:
+                    return False
+            return True
         except (yaml.YAMLError, UnicodeDecodeError):
             return False
 

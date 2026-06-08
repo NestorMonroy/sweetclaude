@@ -534,8 +534,10 @@ class TestMilestonesCompactHierarchy:
             os.path.join(base, "roadmap", "epics", "EP-001-engine.md"),
             {"id": "EP-001", "type": "epic", "title": "Engine", "status": "active",
              "milestone": "MS-001",
-             "completion_criteria": ["Design done", "Tests pass"],
-             "completion_criteria_done": [0]},
+             "completion_criteria": [
+                 {"id": "cc-1", "description": "Design done", "done": True},
+                 {"id": "cc-2", "description": "Tests pass", "done": False},
+             ]},
         )
         write_frontmatter_file(
             os.path.join(base, "roadmap", "issues", "ISSUE-010-design.md"),
@@ -580,8 +582,10 @@ class TestMilestonesCompactHierarchy:
             os.path.join(base, "roadmap", "epics", "EP-001-engine.md"),
             {"id": "EP-001", "type": "epic", "title": "Engine", "status": "active",
              "milestone": "MS-001",
-             "completion_criteria": ["Design done", "Tests pass"],
-             "completion_criteria_done": [0]},
+             "completion_criteria": [
+                 {"id": "cc-1", "description": "Design done", "done": True},
+                 {"id": "cc-2", "description": "Tests pass", "done": False},
+             ]},
         )
         write_frontmatter_file(
             os.path.join(base, "roadmap", "issues", "ISSUE-010-design.md"),
@@ -1082,10 +1086,19 @@ class TestCompletionCriteriaTableStillWorksForEpics:
         base = str(tmp_path / ".sweetclaude" / "product")
 
         write_frontmatter_file(
+            os.path.join(base, "roadmap", "milestones", "MS-001-m.md"),
+            {"id": "MS-001", "type": "milestone", "title": "M", "status": "active",
+             "target_release": "1.0", "created": "2026-01-01"},
+        )
+        write_frontmatter_file(
             os.path.join(base, "roadmap", "epics", "EP-001-e.md"),
             {"id": "EP-001", "type": "epic", "title": "E", "status": "active",
-             "completion_criteria": ["A done", "B done", "C done"],
-             "completion_criteria_done": [0, 2]},
+             "milestone": "MS-001", "created": "2026-01-01",
+             "completion_criteria": [
+                 {"id": "cc-1", "description": "A done", "done": True},
+                 {"id": "cc-2", "description": "B done", "done": False},
+                 {"id": "cc-3", "description": "C done", "done": True},
+             ]},
         )
 
         rebuild(project_dir)
@@ -1181,7 +1194,9 @@ class TestMilestonesCompactJsonShape:
         write_frontmatter_file(
             os.path.join(base, "roadmap", "epics", "EP-001-e.md"),
             {"id": "EP-001", "type": "epic", "title": "E", "status": "active", "milestone": "MS-001",
-             "completion_criteria": ["A"], "completion_criteria_done": []},
+             "completion_criteria": [
+                 {"id": "cc-1", "description": "A", "done": False},
+             ]},
         )
         write_frontmatter_file(
             os.path.join(base, "roadmap", "issues", "ISSUE-010-a.md"),

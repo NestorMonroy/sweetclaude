@@ -90,9 +90,12 @@ status: {status}
 release: {REL-NNN or null}
 objective: "{objective}"
 completion_criteria:
-  - "{criterion 1}"
-  - "{criterion 2}"
-completion_criteria_done: []
+  - id: cc-1
+    description: "{criterion 1}"
+    done: false
+  - id: cc-2
+    description: "{criterion 2}"
+    done: false
 depends_on: [{dependencies}]
 created: {now_utc}
 updated: {now_utc}
@@ -224,7 +227,7 @@ python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query epic-stor
 
 ### Step 2: Read completion criteria from file
 
-Read the epic's markdown file directly to get `completion_criteria` and `completion_criteria_done` lists.
+Read the epic's markdown file directly to get the `completion_criteria` list (each entry has `id`, `description`, `done`).
 
 ### Step 3: Render
 
@@ -238,8 +241,8 @@ Objective: {objective}
 Depends on: {depends_on list or "none"}
 
 Completion Criteria ({done}/{total}):
-  ✓ {criterion — if in completion_criteria_done}
-  · {criterion — if not done}
+  ✓ {description — if done: true}
+  · {description — if done: false}
 
 Stories ({open}/{total}):
   {ITEM-ID}  {title}  [{status}]  (seq {N})
@@ -254,7 +257,7 @@ Mark an epic as done.
 
 ### Step 1: Check completion criteria
 
-Read the epic file. Compare `completion_criteria` against `completion_criteria_done`.
+Read the epic file. Check each entry in `completion_criteria` for `done: true`.
 
 If not all criteria are satisfied, present the gaps:
 
@@ -278,7 +281,7 @@ python3 ~/.claude/scripts/sweetclaude/evidence.py validate --receipt "{receipt_p
 
 If no valid receipt exists, stop and run `/sweetclaude:code-verify` first.
 
-If proceeding, first update `completion_criteria_done` to match `completion_criteria` (all done) and write the file. Then close via the status CLI:
+If proceeding, set `done: true` on every entry in `completion_criteria` and write the file. Then close via the status CLI:
 
 ```bash
 python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {epic_path} --status done --actor epics --project-dir . --evidence-receipt "{receipt_path}"

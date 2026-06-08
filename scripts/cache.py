@@ -236,7 +236,7 @@ def _rebuild_cache(project_dir):
                 )
 
             if item_type == 'epic':
-                done_indexes = set(fm.get('completion_criteria_done', []) or [])
+                done_strings = set(fm.get('completion_criteria_done', []) or [])
                 for i, crit in enumerate(fm.get('completion_criteria', []) or []):
                     if crit is None:
                         continue
@@ -245,7 +245,7 @@ def _rebuild_cache(project_dir):
                         is_done = 1 if crit.get('done', False) else 0
                     else:
                         criterion_text = str(crit)
-                        is_done = 1 if i in done_indexes else 0
+                        is_done = 1 if criterion_text in done_strings else 0
                     conn.execute(
                         """INSERT OR REPLACE INTO completion_criteria
                            (epic_id, seq, criterion, done) VALUES (?, ?, ?, ?)""",
