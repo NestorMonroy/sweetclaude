@@ -23,6 +23,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import yaml
+
 TODAY = datetime.now().strftime("%Y-%m-%d")
 
 # ---------------------------------------------------------------------------
@@ -188,17 +190,24 @@ def _parse_full(entity_id: str, content: str) -> dict:
     return data
 
 
-def _update_metadata_block(content: str, updates: dict) -> str:
-    """
-    Apply field updates to the **Key:** Value metadata block in-place.
-    Adds new fields if they don't exist. Always updates Updated:.
-    """
+def _update_yaml_frontmatter(content: str, updates: dict) -> str:
     updates = dict(updates)
     updates["updated"] = TODAY
+    fm_match = re.match(r"^---\n(.*?)\n---\n?(.*)", content, re.DOTALL)
+    if not fm_match:
+        return content
+    fm_data = yaml.safe_load(fm_match.group(1)) or {}
+    body = fm_match.group(2)
+    fm_data.update(updates)
+    fm_text = yaml.dump(fm_data, default_flow_style=False, allow_unicode=True)
+    return f"---\n{fm_text}---\n{body}"
 
+
+def _update_bold_block(content: str, updates: dict) -> str:
+    updates = dict(updates)
+    updates["updated"] = TODAY
     lines = content.splitlines(keepends=True)
     updated_keys = set()
-
     new_lines = []
     for line in lines:
         m = re.match(r"^\*\*([^*]+):\*\*\s*(.*)", line.rstrip())
@@ -207,17 +216,13 @@ def _update_metadata_block(content: str, updates: dict) -> str:
             if key in updates:
                 val = updates[key]
                 display_val = "(none)" if val is None else str(val)
-                # Preserve original key casing
                 original_key = m.group(1).strip()
                 new_lines.append(f"**{original_key}:** {display_val}\n")
                 updated_keys.add(key)
                 continue
         new_lines.append(line)
-
-    # Append any new fields not already in the file, before first body section
     remaining = {k: v for k, v in updates.items() if k not in updated_keys}
     if remaining:
-        # Find insertion point: after last metadata line, before first ##
         insert_at = 0
         for i, line in enumerate(new_lines):
             if re.match(r"^\*\*[^*]+:\*\*", line):
@@ -227,8 +232,13 @@ def _update_metadata_block(content: str, updates: dict) -> str:
             display_val = "(none)" if v is None else str(v)
             new_lines.insert(insert_at, f"**{display_key}:** {display_val}\n")
             insert_at += 1
-
     return "".join(new_lines)
+
+
+def _update_metadata_block(content: str, updates: dict) -> str:
+    if content.startswith("---\n"):
+        return _update_yaml_frontmatter(content, updates)
+    return _update_bold_block(content, updates)
 
 
 
@@ -318,6 +328,15 @@ def op_write(product_base: Path, state_base: Path, entity_id: str, json_str: str
         if new_status is not None:
             updates["status"] = new_status
         content = f.read_text(encoding="utf-8")
+        if project_dir is not None:
+            _scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+            if str(_scripts_dir) not in sys.path:
+                sys.path.insert(0, str(_scripts_dir))
+            from parse_utils import detect_format
+            if detect_format(content) == "bold":
+                from format_converter import convert_file
+                convert_file(f, dry_run=False, backup=False)
+                content = f.read_text(encoding="utf-8")
         updated = _update_metadata_block(content, updates)
         f.write_text(updated, encoding="utf-8")
 

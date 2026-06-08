@@ -101,6 +101,7 @@ def convert_project(project_dir: Path, *, dry_run: bool = False, backup: bool = 
     scan_dirs = [
         product_base / "backlog",
         product_base / "roadmap",
+        product_base / "issues",
         product_base / "epics",
         product_base / "sprints",
         product_base / "themes",

@@ -1014,3 +1014,132 @@ class TestOrphanedIndexDetection:
         state = build_project_state(project_dir)
         findings = check_orphaned_index(state)
         assert len(findings) == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: Behavioral regression tests (5E)
+# ---------------------------------------------------------------------------
+
+class TestEndToEndPropagationChain:
+
+    def _setup_full_project(self, tmp_path):
+        project_dir = tmp_path / "proj"
+        sc = project_dir / ".sweetclaude"
+        (sc / "state").mkdir(parents=True)
+        (sc / "artifact-privacy.yaml").write_text(
+            yaml.dump({"product": {"base_path": ".sweetclaude/product"}})
+        )
+        product_base = project_dir / ".sweetclaude" / "product"
+        state_base = project_dir / ".sweetclaude" / "state"
+        for d in ("issues", "roadmap/epics", "roadmap/milestones"):
+            (product_base / d).mkdir(parents=True, exist_ok=True)
+        return project_dir, product_base, state_base
+
+    def test_create_issue_in_done_epic_reopens_then_close_all_recompletes(self, tmp_path):
+        """Full chain: create issue in done epic → epic reopens → close issue → epic re-closes."""
+        sa = _load_sc_artifact()
+        project_dir, product_base, state_base = self._setup_full_project(tmp_path)
+
+        write_yaml_file(
+            str(product_base / "roadmap" / "epics" / "EP-001-test.md"),
+            {"id": "EP-001", "title": "Test Epic", "type": "epic",
+             "status": "done", "source": "auto",
+             "created": "2026-01-01", "milestone": "MS-01"},
+        )
+        rebuild(str(project_dir))
+
+        sa.op_create(product_base, state_base, "issue",
+                     json.dumps({"title": "New story", "epic_id": "EP-001"}),
+                     project_dir=project_dir)
+        epic_file = product_base / "roadmap" / "epics" / "EP-001-test.md"
+        fm = parse_artifact(epic_file.read_text())
+        assert fm["status"] != "done", "Epic should reopen after child created"
+
+        issue_files = list((product_base / "issues").glob("I-*.md"))
+        assert len(issue_files) == 1
+        issue_id = parse_artifact(issue_files[0].read_text())["id"]
+
+        sa.op_write(product_base, state_base, issue_id,
+                    json.dumps({"status": "done"}), project_dir=project_dir)
+
+        epic_done = product_base / "roadmap" / "epics" / "done" / "EP-001-test.md"
+        final_epic = epic_done if epic_done.exists() else epic_file
+        fm2 = parse_artifact(final_epic.read_text())
+        assert fm2["status"] == "done", "Epic should auto-close when all children are done"
+
+    def test_bold_format_auto_converted_on_write(self, tmp_path):
+        """Phase 5D: writing to a Bold-format file auto-converts it to YAML."""
+        sa = _load_sc_artifact()
+        project_dir, product_base, state_base = self._setup_full_project(tmp_path)
+
+        bold_file = product_base / "issues" / "I-001-test.md"
+        write_bold_file(
+            str(bold_file), "I-001: Test Issue",
+            {"ID": "I-001", "Type": "enhancement", "Title": "Test Issue",
+             "Status": "active", "Created": "2026-01-01"},
+        )
+        rebuild(str(project_dir))
+
+        sa.op_write(product_base, state_base, "I-001",
+                    json.dumps({"priority": "high"}), project_dir=project_dir)
+
+        content = bold_file.read_text()
+        fmt = detect_format(content)
+        assert fmt == "yaml", f"Bold file should be auto-converted to YAML, got {fmt}"
+
+    def test_format_converter_handles_all_entity_types(self, tmp_path):
+        """Phase 5E: format converter converts Bold files for all entity types."""
+        from format_converter import convert_project
+
+        project_dir = tmp_path / "proj"
+        sc = project_dir / ".sweetclaude"
+        (sc / "state").mkdir(parents=True)
+        (sc / "artifact-privacy.yaml").write_text(
+            yaml.dump({"product": {"base_path": ".sweetclaude/product"}})
+        )
+        product_base = project_dir / ".sweetclaude" / "product"
+        entity_map = {
+            "issues": ("I-001", "enhancement"),
+            "roadmap/epics": ("EP-001", "epic"),
+            "sprints": ("SP-001", "sprint"),
+            "themes": ("TH-001", "theme"),
+        }
+        for subdir, (eid, etype) in entity_map.items():
+            d = product_base / subdir
+            d.mkdir(parents=True, exist_ok=True)
+            write_bold_file(
+                str(d / f"{eid}-test.md"), f"{eid}: Test",
+                {"ID": eid, "Type": etype, "Title": "Test",
+                 "Status": "active", "Created": "2026-01-01"},
+            )
+
+        results = convert_project(project_dir, dry_run=False, backup=False)
+        converted = [r for r in results if r["action"] == "converted"]
+        assert len(converted) == len(entity_map), (
+            f"Expected {len(entity_map)} conversions, got {len(converted)}"
+        )
+
+        for subdir in entity_map:
+            for f in (product_base / subdir).glob("*.md"):
+                assert detect_format(f.read_text()) == "yaml", (
+                    f"{f} should be YAML after conversion"
+                )
+
+    def test_no_bold_format_ever_created(self, tmp_path):
+        """Regression: op_create never produces Bold format for any entity type."""
+        sa = _load_sc_artifact()
+        project_dir, product_base, state_base = self._setup_full_project(tmp_path)
+        for d in ("sprints", "themes", "milestones", "roadmap",
+                   "roadmap/releases", "pitches", "cycles"):
+            (product_base / d).mkdir(parents=True, exist_ok=True)
+
+        for entity_type in ("issue", "epic", "sprint", "theme", "roadmap_item",
+                            "milestone", "release", "pitch", "cycle"):
+            sa.op_create(product_base, state_base, entity_type,
+                         json.dumps({"title": f"Test {entity_type}"}),
+                         project_dir=project_dir)
+
+        for p in product_base.rglob("*.md"):
+            content = p.read_text()
+            fmt = detect_format(content)
+            assert fmt != "bold", f"{p} was created in Bold format — should be YAML"
