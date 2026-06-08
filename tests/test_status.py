@@ -1440,7 +1440,7 @@ class TestDoctorIntegration:
         project_dir = self._build_doctor_project(tmp_path)
         path = project_dir / ".sweetclaude" / "product" / "backlog" / "ISSUE-231-test.md"
         _frontmatter_file(path, {
-            "id": "ISSUE-231", "title": "Test", "status": "in_progress",
+            "id": "ISSUE-231", "title": "Test", "status": "totally_bogus",
             "type": "enhancement", "created": "2026-05-22",
         })
 

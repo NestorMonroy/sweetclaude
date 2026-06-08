@@ -322,7 +322,8 @@ def _calculate_sprint_velocity(product_base: Path, sprint_id: str) -> int:
     return total
 
 
-def op_write(product_base: Path, state_base: Path, entity_id: str, json_str: str) -> None:
+def op_write(product_base: Path, state_base: Path, entity_id: str, json_str: str,
+             project_dir: Path | None = None) -> None:
     f = _find_file(product_base, entity_id)
     if not f:
         print(f"ERROR: artifact {entity_id} not found", file=sys.stderr)
@@ -340,19 +341,64 @@ def op_write(product_base: Path, state_base: Path, entity_id: str, json_str: str
         velocity = _calculate_sprint_velocity(product_base, entity_id)
         updates["velocity"] = velocity
 
-    content = f.read_text(encoding="utf-8")
-    updated = _update_metadata_block(content, updates)
-    f.write_text(updated, encoding="utf-8")
+    new_status = updates.pop("status", None)
 
-    # Refresh index entry
-    data = _parse_metadata(updated)
-    data["id"] = entity_id
-    _update_index(state_base, entity_id, entity_type, data)
+    if new_status is not None and project_dir is not None:
+        _scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+        if str(_scripts_dir) not in sys.path:
+            sys.path.insert(0, str(_scripts_dir))
+
+        from parse_utils import detect_format
+        from schema import normalize_status
+        content = f.read_text(encoding="utf-8")
+        if detect_format(content) == "bold":
+            from format_converter import convert_file
+            convert_file(f, dry_run=False, backup=False)
+
+        if updates:
+            content = f.read_text(encoding="utf-8")
+            updated = _update_metadata_block(content, updates)
+            f.write_text(updated, encoding="utf-8")
+
+        canonical = normalize_status(new_status)
+        try:
+            from status import TERMINAL_STATUSES, write_status, set_terminal
+            if canonical in TERMINAL_STATUSES:
+                set_terminal(str(f), canonical, "sc-artifact", project_dir=str(project_dir))
+            else:
+                write_status(str(f), canonical, "sc-artifact", project_dir=str(project_dir))
+        except (ValueError, FileNotFoundError) as e:
+            print(f"WARNING: propagation failed, falling back to direct write: {e}", file=sys.stderr)
+            content = f.read_text(encoding="utf-8")
+            updated = _update_metadata_block(content, {"status": new_status})
+            f.write_text(updated, encoding="utf-8")
+    else:
+        if new_status is not None:
+            updates["status"] = new_status
+        content = f.read_text(encoding="utf-8")
+        updated = _update_metadata_block(content, updates)
+        f.write_text(updated, encoding="utf-8")
+
+    if f.exists():
+        data = _parse_metadata(f.read_text(encoding="utf-8"))
+        data["id"] = entity_id
+        _update_index(state_base, entity_id, entity_type, data)
+
+    if project_dir is not None and new_status is None:
+        try:
+            _scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+            if str(_scripts_dir) not in sys.path:
+                sys.path.insert(0, str(_scripts_dir))
+            from cache import rebuild as _rebuild
+            _rebuild(str(project_dir))
+        except Exception:
+            pass
 
     print(json.dumps({"ok": True, "id": entity_id}))
 
 
-def op_create(product_base: Path, state_base: Path, entity_type: str, json_str: str) -> None:
+def op_create(product_base: Path, state_base: Path, entity_type: str, json_str: str,
+              project_dir: Path | None = None) -> None:
     if entity_type not in TYPE_TO_PREFIX:
         print(f"ERROR: unknown entity type '{entity_type}'", file=sys.stderr)
         sys.exit(1)
@@ -361,7 +407,6 @@ def op_create(product_base: Path, state_base: Path, entity_type: str, json_str: 
     type_dir = product_base / TYPE_TO_DIR[entity_type]
     type_dir.mkdir(parents=True, exist_ok=True)
 
-    # Find next ID
     existing = [
         int(m.group(1))
         for f in type_dir.glob(f"{prefix}-*.md")
@@ -371,7 +416,7 @@ def op_create(product_base: Path, state_base: Path, entity_type: str, json_str: 
     entity_id = f"{prefix}-{next_num:03d}"
 
     data = json.loads(json_str)
-    data.setdefault("status", "backlog" if entity_type == "issue" else "active")
+    data.setdefault("status", "new")
     data.setdefault("source", "manual")
     data.setdefault("mode_introduced", "agile")
 
@@ -386,12 +431,44 @@ def op_create(product_base: Path, state_base: Path, entity_type: str, json_str: 
     content = _build_template(entity_id, entity_type, title, data)
     dest.write_text(content, encoding="utf-8")
 
-    # Update index
     data["id"] = entity_id
     _update_index(state_base, entity_id, entity_type, data)
-
-    # Append to type index file
     _append_to_type_index(type_dir, entity_type, entity_id, title, data)
+
+    if project_dir is not None:
+        _scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+        if str(_scripts_dir) not in sys.path:
+            sys.path.insert(0, str(_scripts_dir))
+
+        try:
+            from cache import rebuild as _rebuild, get_conn
+            _rebuild(str(project_dir))
+        except Exception:
+            get_conn = None
+
+        epic_ref = data.get("epic") or data.get("epic_id")
+        if epic_ref and get_conn and entity_type not in ("epic", "milestone"):
+            try:
+                from status import sync_parent_status
+                conn = get_conn(str(project_dir))
+                parent_row = conn.execute(
+                    "SELECT source_path FROM items WHERE id=?", (epic_ref,)
+                ).fetchone()
+                if parent_row:
+                    siblings = conn.execute(
+                        "SELECT status FROM items WHERE epic=? AND type NOT IN ('epic', 'milestone')",
+                        (epic_ref,),
+                    ).fetchall()
+                    conn.close()
+                    parent_path = project_dir / parent_row["source_path"]
+                    sync_parent_status(
+                        str(parent_path), [r["status"] for r in siblings],
+                        "sc-artifact", project_dir=str(project_dir),
+                    )
+                else:
+                    conn.close()
+            except Exception as e:
+                print(f"WARNING: parent sync after create failed: {e}", file=sys.stderr)
 
     print(json.dumps({"ok": True, "id": entity_id}))
 
@@ -527,169 +604,170 @@ def op_list(product_base: Path, state_base: Path, entity_type: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _build_template(entity_id: str, entity_type: str, title: str, data: dict) -> str:
-    def field(key: str, default="(none)") -> str:
+    import yaml as _yaml
+
+    def field(key: str, default=None):
         v = data.get(key)
-        return str(v) if v and str(v).lower() not in {"none", "(none)"} else default
+        if v and str(v).lower() not in {"none", "(none)"}:
+            return str(v)
+        return default
+
+    def _fm_block(fm: dict, body: str) -> str:
+        fm_clean = {k: v for k, v in fm.items() if v is not None}
+        fm_text = _yaml.dump(fm_clean, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        return f"---\n{fm_text}---\n\n{body}"
 
     if entity_type == "issue":
         issue_type = field("type", "story")
-        status = field("status", "backlog")
-        body_section = (
+        status = field("status", "new")
+        body = (
             "## Research question\n\n(What is the thing we need to know?)\n\n"
-            f"**Appetite:** {field('appetite', 'TBD')}\n"
-            f"**Output type:** {field('spike_output_type', 'decision')}\n\n"
+            f"## Appetite\n\n{field('appetite') or 'TBD'}\n\n"
+            f"## Output type\n\n{field('spike_output_type') or 'decision'}\n\n"
             "## Output\n\n(Filled when done)\n"
         ) if issue_type == "spike" else (
             "## Description\n\n"
-            + (field("description", "As a [user], I want [capability] so that [outcome]."))
+            + (field("description") or "As a [user], I want [capability] so that [outcome].")
             + "\n\n## Acceptance criteria\n\n- [ ] Condition one is true\n\n## Notes\n\n"
         )
-        return (
-            f"# {entity_id}: {title}\n\n"
-            f"**Type:** {issue_type}\n"
-            f"**Status:** {status}\n"
-            f"**Priority:** {field('priority', 'soon')}\n"
-            f"**Effort:** {field('effort', 'm')}\n"
-            f"**Epic:** {field('epic_id')}\n"
-            f"**Theme:** {field('theme_id')}\n"
-            f"**Sprint:** {field('sprint_id')}\n"
-            f"**Roadmap Item:** {field('roadmap_item_id')}\n"
-            f"**Story points:** {field('story_points', '(none)')}\n"
-            f"**Source:** {field('source', 'manual')}\n"
-            f"**Evidence:** {field('evidence')}\n"
-            f"**Sprint history:** {field('sprint_history')}\n"
-            f"**Completed at:** {field('completed_at')}\n"
-            f"**mode_introduced:** {field('mode_introduced', 'agile')}\n"
-            f"**Created:** {TODAY}\n"
-            f"**Updated:** {TODAY}\n\n"
-            + body_section
-        )
+        return _fm_block({
+            "id": entity_id, "title": title, "type": issue_type,
+            "status": status, "priority": field("priority", "soon"),
+            "effort": field("effort", "m"), "epic": field("epic_id") or field("epic"),
+            "theme": field("theme_id") or field("theme"),
+            "sprint": field("sprint_id") or field("sprint"),
+            "roadmap_item": field("roadmap_item_id") or field("roadmap_item"),
+            "story_points": field("story_points"),
+            "source": field("source", "manual"), "evidence": field("evidence"),
+            "sprint_history": field("sprint_history"),
+            "completed_at": field("completed_at"),
+            "mode_introduced": field("mode_introduced", "agile"),
+            "created": TODAY, "updated": TODAY,
+        }, body)
 
     if entity_type == "epic":
-        return (
-            f"# {entity_id}: {title}\n\n"
-            f"**Status:** {field('status', 'active')}\n"
-            f"**Roadmap Item:** {field('roadmap_item_id')}\n"
-            f"**Goal:** {field('goal', 'When this ships, [user outcome] becomes possible.')}\n"
-            f"**mode_introduced:** {field('mode_introduced', 'agile')}\n"
-            f"**Created:** {TODAY}\n"
-            f"**Updated:** {TODAY}\n\n"
+        return _fm_block({
+            "id": entity_id, "title": title, "type": "epic",
+            "status": field("status", "active"),
+            "milestone": field("milestone_id") or field("milestone"),
+            "roadmap_item": field("roadmap_item_id") or field("roadmap_item"),
+            "goal": field("goal", "When this ships, [user outcome] becomes possible."),
+            "source": field("source", "auto"),
+            "mode_introduced": field("mode_introduced", "agile"),
+            "created": TODAY, "updated": TODAY,
+        }, (
             "## Description\n\n(What this epic covers and why it is grouped together.)\n\n"
-            "## Issues\n\nSee issues with `Epic: " + entity_id + "` in their metadata.\n\n"
+            f"## Issues\n\nSee issues with `epic: {entity_id}` in their frontmatter.\n\n"
             "## Definition of done\n\n(Clear statement of what \"complete\" looks like.)\n"
-        )
+        ))
 
     if entity_type == "theme":
-        return (
-            f"# {entity_id}: {title}\n\n"
-            f"**Status:** {field('status', 'active')}\n"
-            f"**Category:** {field('category', 'feature-area')}\n"
-            f"**Service:** {field('service')}\n"
-            f"**Created:** {TODAY}\n"
-            f"**Updated:** {TODAY}\n\n"
+        return _fm_block({
+            "id": entity_id, "title": title, "type": "theme",
+            "status": field("status", "active"),
+            "category": field("category", "feature-area"),
+            "service": field("service"),
+            "created": TODAY, "updated": TODAY,
+        }, (
             "## Description\n\n(What domain context these issues share — the common implementation surface, "
             "shared state, or conceptual grouping that makes them a theme.)\n\n"
-            "## Issues\n\nSee issues with `Theme: " + entity_id + "` in their metadata.\n"
-        )
+            f"## Issues\n\nSee issues with `theme: {entity_id}` in their frontmatter.\n"
+        ))
 
     if entity_type == "sprint":
-        return (
-            f"# {entity_id}: {title}\n\n"
-            f"**Status:** {field('status', 'planned')}\n"
-            f"**Milestone:** {field('milestone_id')}\n"
-            f"**Start:** {field('start_date', 'YYYY-MM-DD')}\n"
-            f"**End:** {field('end_date', 'YYYY-MM-DD')}\n"
-            f"**Velocity:** (none)\n"
-            f"**mode_introduced:** {field('mode_introduced', 'agile')}\n"
-            f"**Created:** {TODAY}\n"
-            f"**Updated:** {TODAY}\n\n"
+        return _fm_block({
+            "id": entity_id, "title": title, "type": "sprint",
+            "status": field("status", "new"),
+            "milestone": field("milestone_id") or field("milestone"),
+            "start_date": field("start_date"),
+            "end_date": field("end_date"),
+            "velocity": None,
+            "mode_introduced": field("mode_introduced", "agile"),
+            "created": TODAY, "updated": TODAY,
+        }, (
             "## Goal\n\nWhen this sprint succeeds, [outcome statement].\n\n"
-            "## Issues\n\nSee issues with `Sprint: " + entity_id + "` in their metadata.\n\n"
+            f"## Issues\n\nSee issues with `sprint: {entity_id}` in their frontmatter.\n\n"
             "## Capacity notes\n\n(Optional: known interrupts, holidays, reduced availability.)\n\n"
             "---\n\n## Retrospective\n\n(Filled post-sprint.)\n"
-        )
+        ))
 
     if entity_type == "roadmap_item":
-        return (
-            f"# {entity_id}: {title}\n\n"
-            f"**Type:** {field('type', 'major_feature')}\n"
-            f"**Status:** {field('status', 'planned')}\n"
-            f"**Priority:** {field('priority', '1')}\n"
-            f"**Release:** {field('release_id')}\n"
-            f"**mode_introduced:** {field('mode_introduced', 'agile')}\n"
-            f"**Created:** {TODAY}\n"
-            f"**Updated:** {TODAY}\n\n"
-            "## Description\n\n" + field("description", "(What this is.)") + "\n\n"
-            "## Rationale\n\n" + field("rationale", "(Why this is on the roadmap at this priority, and why now.)") + "\n\n"
-            "## Epics\n\nSee epics with `Roadmap Item: " + entity_id + "` in their metadata.\n\n"
+        return _fm_block({
+            "id": entity_id, "title": title, "type": "roadmap_item",
+            "status": field("status", "new"),
+            "priority": field("priority", "1"),
+            "release": field("release_id") or field("release"),
+            "mode_introduced": field("mode_introduced", "agile"),
+            "created": TODAY, "updated": TODAY,
+        }, (
+            "## Description\n\n" + (field("description") or "(What this is.)") + "\n\n"
+            "## Rationale\n\n" + (field("rationale") or "(Why this is on the roadmap at this priority, and why now.)") + "\n\n"
+            f"## Epics\n\nSee epics with `roadmap_item: {entity_id}` in their frontmatter.\n\n"
             "## Notes\n\n"
-        )
+        ))
 
     if entity_type == "milestone":
-        return (
-            f"# {entity_id}: {title}\n\n"
-            f"**Status:** {field('status', 'pending')}\n"
-            f"**Release:** {field('release_id')}\n"
-            f"**Achieved:** {field('achieved_at')}\n"
-            f"**mode_introduced:** {field('mode_introduced', 'agile')}\n"
-            f"**Created:** {TODAY}\n"
-            f"**Updated:** {TODAY}\n\n"
+        return _fm_block({
+            "id": entity_id, "title": title, "type": "milestone",
+            "status": field("status", "new"),
+            "target_release": field("release_id") or field("target_release") or field("release"),
+            "achieved_at": field("achieved_at"),
+            "mode_introduced": field("mode_introduced", "agile"),
+            "created": TODAY, "updated": TODAY,
+        }, (
             "## Criteria\n\n(Binary condition — this happened or it didn't.)\n\n"
             "## Description\n\n(Context, motivation, and why this milestone matters.)\n"
-        )
+        ))
 
     if entity_type == "release":
-        return (
-            f"# {entity_id}: {title}\n\n"
-            f"**Version:** {field('version')}\n"
-            f"**Status:** {field('status', 'planned')}\n"
-            f"**Target date:** {field('target_date')}\n"
-            f"**Milestone:** {field('milestone_id')}\n"
-            f"**mode_introduced:** {field('mode_introduced', 'agile')}\n"
-            f"**Created:** {TODAY}\n"
-            f"**Updated:** {TODAY}\n\n"
+        return _fm_block({
+            "id": entity_id, "title": title, "type": "release",
+            "version": field("version"),
+            "status": field("status", "new"),
+            "target_date": field("target_date"),
+            "milestone": field("milestone_id") or field("milestone"),
+            "mode_introduced": field("mode_introduced", "agile"),
+            "created": TODAY, "updated": TODAY,
+        }, (
             "## Description\n\n(What this release delivers.)\n\n"
-            "## Roadmap items\n\nSee roadmap items with `Release: " + entity_id + "` in their metadata.\n\n"
+            f"## Roadmap items\n\nSee roadmap items with `release: {entity_id}` in their frontmatter.\n\n"
             "---\n\n## Release notes\n\n(Filled when shipped.)\n"
-        )
+        ))
 
     if entity_type == "pitch":
-        return (
-            f"# {entity_id}: {title}\n\n"
-            f"**Status:** {field('status', 'draft')}\n"
-            f"**Appetite:** {field('appetite', 'six_weeks')}\n"
-            f"**mode_introduced:** shape_up\n"
-            f"**Created:** {TODAY}\n"
-            f"**Updated:** {TODAY}\n\n"
+        return _fm_block({
+            "id": entity_id, "title": title, "type": "pitch",
+            "status": field("status", "new"),
+            "appetite": field("appetite", "six_weeks"),
+            "mode_introduced": "shape_up",
+            "created": TODAY, "updated": TODAY,
+        }, (
             "## Problem\n\n(Concrete description of the problem. Include a specific scenario.)\n\n"
             "## Solution\n\n(The proposed approach.)\n\n"
             "## Rabbit holes\n\n- (Risk or scope trap to avoid)\n\n"
             "## No-gos\n\n- (Explicitly out of scope)\n"
-        )
+        ))
 
     if entity_type == "cycle":
-        return (
-            f"# {entity_id}: {title}\n\n"
-            f"**Status:** {field('status', 'planning')}\n"
-            f"**Goal:** {field('goal')}\n"
-            f"**Duration weeks:** {field('duration_weeks', '6')}\n"
-            f"**Started at:** (none)\n"
-            f"**Ended at:** (none)\n"
-            f"**mode_introduced:** {field('mode_introduced', 'shape_up')}\n"
-            f"**Created:** {TODAY}\n"
-            f"**Updated:** {TODAY}\n\n"
+        return _fm_block({
+            "id": entity_id, "title": title, "type": "cycle",
+            "status": field("status", "new"),
+            "goal": field("goal"),
+            "duration_weeks": field("duration_weeks", "6"),
+            "started_at": None,
+            "ended_at": None,
+            "mode_introduced": field("mode_introduced", "shape_up"),
+            "created": TODAY, "updated": TODAY,
+        }, (
             "## Shipped items\n\n(Filled when cycle ends.)\n\n"
             "## Retro\n\n(Filled post-cycle.)\n"
-        )
+        ))
 
-    # Generic fallback
-    return (
-        f"# {entity_id}: {title}\n\n"
-        f"**Status:** {field('status', 'active')}\n"
-        f"**Created:** {TODAY}\n"
-        f"**Updated:** {TODAY}\n\n"
-        "## Description\n\n(No template defined for this type.)\n"
-    )
+    return _fm_block({
+        "id": entity_id, "title": title, "type": entity_type,
+        "status": field("status", "active"),
+        "created": TODAY, "updated": TODAY,
+    }, "## Description\n\n(No template defined for this type.)\n")
 
 
 # ---------------------------------------------------------------------------
@@ -763,12 +841,12 @@ def main():
     elif op == "write":
         if len(args) < 2:
             print("ERROR: write requires <id> <json>", file=sys.stderr); sys.exit(1)
-        op_write(product_base, state_base, args[0], args[1])
+        op_write(product_base, state_base, args[0], args[1], project_dir=Path(sys.argv[2]))
 
     elif op == "create":
         if len(args) < 2:
             print("ERROR: create requires <type> <json>", file=sys.stderr); sys.exit(1)
-        op_create(product_base, state_base, args[0], args[1])
+        op_create(product_base, state_base, args[0], args[1], project_dir=Path(sys.argv[2]))
 
     elif op == "query":
         if not args:

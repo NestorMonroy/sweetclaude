@@ -1157,7 +1157,7 @@ class TestStorageLint:
 
     # Scenario: Counter drift detected when file max exceeds cache max
     def test_counter_drift_detected_when_file_max_exceeds_cache_max(
-        self, tmp_path, fake_home
+        self, tmp_path, fake_home, patch_scripts_dir
     ):
         project_dir = build_fixture(tmp_path, overrides={
             "backlog_files": [
@@ -6256,7 +6256,7 @@ class TestChecksRegistry:
             "structure_anomalies", "storage_lint", "migration_currency",
             "config_compat", "file_diagnostics", "onboarding_state",
             "env_wiring", "derived_status", "work_item_artifacts",
-            "epic_completion_criteria",
+            "epic_completion_criteria", "format_consistency",
         }
         assert set(CHECKS.keys()) == expected
 
@@ -6825,6 +6825,7 @@ def test_executor_supported_actions_match_dispatch():
     dispatched = {
         "run_script", "rebuild_cache", "create_dir", "delete_file",
         "write_field", "write_frontmatter_field", "prompt",
+        "sync_parent_status", "convert_to_yaml",
     }
     assert set(EXECUTOR_SUPPORTED_ACTIONS) == dispatched
 
@@ -6834,12 +6835,11 @@ def test_unsupported_auto_action_is_downgraded():
     bad = Finding(
         id="x:y", category="derived_status", severity="warning",
         summary="s", detail="d", file_paths=[],
-        fix_type="auto", fix_recipe={"action": "sync_parent_status", "file": "p"},
+        fix_type="auto", fix_recipe={"action": "totally_unknown_action", "file": "p"},
     )
     out, report = _enforce_executable_contract([bad])
     assert out[0].fix_type == "report-only"
     assert out[0].fix_recipe == {}
-    assert "status.py set" in out[0].detail  # actionable manual guidance
     assert report["downgraded_count"] == 1
 
 

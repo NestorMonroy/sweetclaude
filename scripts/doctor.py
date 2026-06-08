@@ -138,17 +138,14 @@ EXECUTOR_SUPPORTED_ACTIONS = frozenset({
     "write_field",
     "write_frontmatter_field",
     "prompt",
+    "sync_parent_status",
+    "convert_to_yaml",
 })
 
 # Manual guidance for known-unsupported actions, surfaced when an auto/prompted
 # finding is downgraded. Keeps the no-data-loss path actionable instead of
 # leaving a dangling, unrunnable fix.
 _UNSUPPORTED_ACTION_GUIDANCE = {
-    "sync_parent_status": (
-        "Doctor cannot auto-apply this. To sync the parent's derived status by "
-        "hand (no data loss): python3 scripts/status.py set --file <parent> "
-        "--status <derived-status> --source auto --actor you"
-    ),
 }
 
 
@@ -292,14 +289,19 @@ def _read_frontmatter(path: Path) -> dict | None:
         raw = path.read_text()
     except OSError:
         return None
-    if not raw.startswith("---"):
-        return None
-    parts = raw.split("---", 2)
-    if len(parts) < 3:
-        return None
+    if raw.startswith("---"):
+        parts = raw.split("---", 2)
+        if len(parts) >= 3:
+            try:
+                fm = yaml.safe_load(parts[1]) or {}
+                if isinstance(fm, dict):
+                    return fm
+            except yaml.YAMLError:
+                pass
     try:
-        return yaml.safe_load(parts[1]) or {}
-    except yaml.YAMLError:
+        from parse_utils import parse_bold_metadata
+        return parse_bold_metadata(raw)
+    except ImportError:
         return None
 
 
@@ -309,16 +311,22 @@ def _read_frontmatter_raw(path: Path) -> tuple[dict | None, str | None]:
         raw = path.read_text()
     except OSError:
         return None, "file unreadable"
-    if not raw.startswith("---"):
-        return None, "no frontmatter delimiter"
-    parts = raw.split("---", 2)
-    if len(parts) < 3:
-        return None, "no frontmatter delimiter"
+    if raw.startswith("---"):
+        parts = raw.split("---", 2)
+        if len(parts) >= 3:
+            try:
+                fm = yaml.safe_load(parts[1]) or {}
+                return fm, None
+            except yaml.YAMLError as e:
+                return None, f"YAML parse error: {e}"
     try:
-        fm = yaml.safe_load(parts[1]) or {}
-        return fm, None
-    except yaml.YAMLError as e:
-        return None, f"YAML parse error: {e}"
+        from parse_utils import parse_bold_metadata
+        fm = parse_bold_metadata(raw)
+        if fm is not None:
+            return fm, None
+    except ImportError:
+        pass
+    return None, "no frontmatter delimiter"
 
 
 # ---------------------------------------------------------------------------
@@ -1251,6 +1259,10 @@ def check_derived_status(state: ProjectState) -> list[Finding]:
     scan_dirs = [roadmap_dir]
     if backlog_dir.is_dir():
         scan_dirs.append(backlog_dir)
+    for extra in ("epics", "sprints", "themes", "milestones", "pitches", "cycles"):
+        d = state.product_base / extra
+        if d.is_dir():
+            scan_dirs.append(d)
 
     for scan_dir in scan_dirs:
         for p in scan_dir.rglob("*.md"):
@@ -1368,7 +1380,8 @@ def check_derived_status(state: ProjectState) -> list[Finding]:
                 ),
                 file_paths=[str(parent_path)],
                 fix_type="auto",
-                fix_recipe={"action": "sync_parent_status", "file": str(parent_path)},
+                fix_recipe={"action": "sync_parent_status", "file": str(parent_path),
+                            "parent_id": parent_id, "parent_type": parent_type},
             ))
 
     return findings
@@ -1613,6 +1626,49 @@ def check_epic_completion_criteria(state: ProjectState) -> list[Finding]:
     return findings
 
 
+def check_format_consistency(state: ProjectState) -> list[Finding]:
+    findings: list[Finding] = []
+    scan_dirs = [
+        state.product_base / "backlog",
+        state.product_base / "roadmap",
+        state.product_base / "epics",
+        state.product_base / "sprints",
+        state.product_base / "themes",
+        state.product_base / "milestones",
+        state.product_base / "pitches",
+        state.product_base / "cycles",
+    ]
+    try:
+        from parse_utils import detect_format
+    except ImportError:
+        return findings
+
+    for scan_dir in scan_dirs:
+        if not scan_dir.is_dir():
+            continue
+        for p in scan_dir.rglob("*.md"):
+            if p.name in ("INDEX.md", "MIGRATION-MAP.md") or p.name.endswith("-INDEX.md"):
+                continue
+            try:
+                content = p.read_text()
+            except OSError:
+                continue
+            fmt = detect_format(content)
+            if fmt == "bold":
+                findings.append(Finding(
+                    id=f"format-consistency:bold:{p.name}",
+                    category="format_consistency",
+                    severity="warning",
+                    summary=f"{p.name} uses Bold Key-Value format instead of YAML frontmatter",
+                    detail=f"File at {p} uses the legacy Bold format (**Key:** Value). "
+                           f"Convert to YAML frontmatter for full cache/propagation support.",
+                    file_paths=[str(p)],
+                    fix_type="auto",
+                    fix_recipe={"action": "convert_to_yaml", "file": str(p)},
+                ))
+    return findings
+
+
 CHECKS: dict[str, Callable[[ProjectState], list[Finding]]] = {
     "state_integrity":    check_state_integrity,
     "hook_health":        check_hook_health,
@@ -1627,6 +1683,7 @@ CHECKS: dict[str, Callable[[ProjectState], list[Finding]]] = {
     "derived_status":     check_derived_status,
     "work_item_artifacts": check_work_item_artifacts,
     "epic_completion_criteria": check_epic_completion_criteria,
+    "format_consistency": check_format_consistency,
 }
 
 
@@ -2425,6 +2482,9 @@ def _apply_transform(content: bytes, recipe: dict, project_dir: Path) -> bytes:
     if action == "run_script":
         return content
 
+    if action in ("sync_parent_status", "convert_to_yaml"):
+        return content
+
     raise ValueError(f"Unknown recipe action: {action}")
 
 
@@ -2469,6 +2529,53 @@ def execute_recipe(
     project_dir: Path, recipe: dict, archive_path: Path
 ) -> RecipeResult:
     action = recipe["action"]
+
+    if action == "sync_parent_status":
+        parent_file = recipe.get("file", "")
+        parent_path = Path(parent_file)
+        if not parent_path.is_absolute():
+            parent_path = project_dir / parent_path
+        if not parent_path.exists():
+            return RecipeResult("", "", None, None, False, f"Parent file not found: {parent_path}")
+        try:
+            from cache import get_conn, rebuild as _rebuild
+            _rebuild(str(project_dir))
+            parent_id = recipe.get("parent_id", "")
+            parent_type = recipe.get("parent_type", "epic")
+            conn = get_conn(str(project_dir))
+            if parent_type == "epic":
+                rows = conn.execute(
+                    "SELECT status FROM items WHERE epic=? AND type NOT IN ('epic', 'milestone')",
+                    (parent_id,),
+                ).fetchall()
+            elif parent_type == "milestone":
+                rows = conn.execute(
+                    "SELECT status FROM items WHERE type='epic' AND milestone=?",
+                    (parent_id,),
+                ).fetchall()
+            else:
+                rows = []
+            conn.close()
+            child_statuses = [r["status"] for r in rows]
+            from status import sync_parent_status as _sync
+            changed = _sync(str(parent_path), child_statuses, "doctor-auto-fix", project_dir=str(project_dir))
+            return RecipeResult("", "", None, None, True, None if changed else "already in sync")
+        except Exception as e:
+            return RecipeResult("", "", None, None, False, str(e))
+
+    if action == "convert_to_yaml":
+        target_file = recipe.get("file", "")
+        target_path = Path(target_file)
+        if not target_path.is_absolute():
+            target_path = project_dir / target_path
+        if not target_path.exists():
+            return RecipeResult("", "", None, None, False, f"File not found: {target_path}")
+        try:
+            from format_converter import convert_file
+            result = convert_file(target_path, dry_run=False, backup=True)
+            return RecipeResult("", "", None, None, result["action"] == "converted")
+        except Exception as e:
+            return RecipeResult("", "", None, None, False, str(e))
 
     if action == "run_script":
         cmd = recipe.get("cmd", [])
