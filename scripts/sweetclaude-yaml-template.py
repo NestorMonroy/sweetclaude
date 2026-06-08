@@ -57,6 +57,7 @@ def build_template(name, project_type, version_stage, installed_version='unknown
             'document_corpus':    feat(),
             'usage_tracking':     feat(),
             'behavioral_regression': feat(),
+            'work_item_artifacts': feat(),
         },
         'health': {
             'last_checked': None,

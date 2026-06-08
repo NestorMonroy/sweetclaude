@@ -4,6 +4,50 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.0-beta] — 2026-06-08 (4.x beta channel)
+
+### Added — per-work-item artifact directories
+
+New opt-in feature (`work_item_artifacts`) that co-locates all artifacts
+produced during story, epic, and milestone work into a single directory
+at `.sweetclaude/work/<ITEM-ID>/`. Design docs, plans, contracts, reports,
+and decision excerpts all live together — finding everything about a work
+item means looking in one place.
+
+- **Feature flag:** registered as `work_item_artifacts` in the feature system;
+  enable via `/_features`. Fully opt-in — disabled by default.
+- **Backfill scanner:** `scripts/backfill_work_item_artifacts.py` scans
+  existing artifacts across `.sweetclaude/technical/`, `.sweetclaude/plans/`,
+  `.sweetclaude/contracts/`, `.sweetclaude/reports/`, and `docs/` for files
+  matching work item IDs. Creates symlinked per-item directories with
+  `manifest.yaml` metadata. Supports `--dry-run`, `--item`, and `--json`.
+- **Session-state integration:** `generate-session-state.sh` exposes
+  `paths.work_base` and `active_work_item.work_dir` when the feature is
+  active and a work item is in progress.
+- **Artifact path resolution:** 8 design/technical skills redirect artifact
+  writes to `{work_dir}/design/` when active, with backward-compatible
+  symlinks at the legacy locations.
+- **Hardcoded-path skills:** large-story, john-wick, process-controls, and
+  design-manage-decisions resolve contract/report/decision paths through
+  `work_dir` when active.
+- **Onboarding skill:** `sweetclaude:work-item-artifacts` with onboard,
+  backfill, single-item, and status flows.
+- **Doctor integration:** `check_work_item_artifacts` validates directory
+  structure, manifest integrity, and symlink health.
+- **STORY→ISSUE alias resolution:** backfill handles the v3→v4 ID migration,
+  matching `story-015-*` files to their `ISSUE-170` canonical IDs.
+- **Effort linking:** manifests include `effort_link` pointers to related
+  `.sweetclaude/efforts/` directories.
+- **Cross-cutting artifacts:** decision log stays global (authoritative);
+  per-item directories get excerpts. Multi-item artifacts use symlinks with
+  manifest cross-references.
+
+### Notes
+
+- Beta channel only. Not part of the stable 3.x release.
+- Minor version bump (4.1 → 4.2) — this is a structural change to how
+  artifacts are organized.
+
 ## [4.1.16-beta] — 2026-06-07 (4.x beta channel)
 
 ### Fixed / Added — doctor totality invariant
@@ -65,14 +109,6 @@ dead weight and deleted, blinding a project's dashboard:
 ### Notes
 
 - Beta channel only. Not part of the stable 3.x release.
-
-## [Unreleased]
-
-### Changed
-
-- Added stable 3.x and 4.x beta user-guide tracks so beta users can follow channel-safe install, update, recovery, and migration guidance.
-- Moved beta rescue guidance into the 4.x beta track while keeping a compatibility link at `docs/user-guide/beta-rescue.md`.
-- Updated the 4.x migration guide to route through `/sweetclaude:doctor`, `/sweetclaude:recover`, and guarded `/sweetclaude:migrate` instead of blanket migrate-first advice.
 
 ---
 

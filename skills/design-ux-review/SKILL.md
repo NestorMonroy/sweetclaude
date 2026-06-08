@@ -20,9 +20,11 @@ Before writing any artifact file:
 
 2. Read `categories.design.base_path`. This is the base directory for all design artifacts.
 
-3. Construct full paths as `{base_path}/{subfolder}/{filename}`, preserving existing subdirectory structure (e.g. wireframes go to `{base_path}/wireframes/wireframe-*.html`).
+3. Check `.sweetclaude/state/session-state.yaml` → `active_work_item.work_dir`:
+   - If set: use `{work_dir}/design/` as the write path. Create the directory if needed (`mkdir -p`). After writing, create a relative symlink from `{base_path}/{subfolder}/{filename}` → the work-dir file.
+   - If not set: construct full paths as `{base_path}/{subfolder}/{filename}`, preserving existing subdirectory structure.
 
-4. Write artifacts to those paths.
+4. Write artifacts to the resolved path.
 
 Run a virtual UX review session. Each defined persona is instantiated as an independent subagent that walks through a user flow or wireframe and returns structured feedback. The orchestrator synthesizes findings across personas into consensus themes, divergent opinions, and prioritized recommendations.
 

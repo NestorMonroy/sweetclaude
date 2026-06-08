@@ -54,6 +54,12 @@ The user flow is:
 5. At completion, write `success-criteria-ledger.json` and run
    `validate-workflow --stage completion` before any `done` transition.
 
+## Artifact Path Resolution
+
+Before referencing contract or ledger files, check `.sweetclaude/state/session-state.yaml` → `active_work_item.work_dir`:
+- If set: substitute `{work_dir}/contracts/` for `.sweetclaude/contracts/` and `{work_dir}/reports/` for `.sweetclaude/reports/` in all paths below. Pass the resolved paths via `--contract` and `--ledger` CLI args.
+- If not set: use the default paths as written below.
+
 ## Success Criteria Contract Controls
 
 Large/high-rigor story workflows must begin with a frozen
