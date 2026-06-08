@@ -360,7 +360,7 @@ rsync -a --delete $SOURCE_DIR/skills/ {installPath}/skills/
 rsync -a --delete $SOURCE_DIR/hooks/ {installPath}/hooks/
 
 # Top-level files → plugin cache
-for f in CLAUDE.md package.json LICENSE; do
+for f in CLAUDE.md package.json LICENSE CHANGELOG.md; do
   [ -f "$SOURCE_DIR/$f" ] && cp "$SOURCE_DIR/$f" {installPath}/
 done
 
@@ -403,7 +403,7 @@ if [ -n "$NEW_VER" ] && [ "$VERSION_DIR" != "{installPath}" ]; then
   rsync -a --delete $SOURCE_DIR/skills/ "$VERSION_DIR/skills/"
   rsync -a --delete $SOURCE_DIR/hooks/ "$VERSION_DIR/hooks/"
   rsync -a $SOURCE_DIR/.claude-plugin/ "$VERSION_DIR/.claude-plugin/"
-  for f in CLAUDE.md package.json LICENSE; do
+  for f in CLAUDE.md package.json LICENSE CHANGELOG.md; do
     [ -f "$SOURCE_DIR/$f" ] && cp "$SOURCE_DIR/$f" "$VERSION_DIR/"
   done
   echo "Synced to version-named dir: $VERSION_DIR"
