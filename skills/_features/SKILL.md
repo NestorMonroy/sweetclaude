@@ -4,7 +4,6 @@ user-invocable: false
 description: "Feature configuration — shows all optional SweetClaude features with descriptions and current status, lets the user enable or disable them."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:_features"`
 
 # Feature Configuration
 

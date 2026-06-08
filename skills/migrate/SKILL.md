@@ -3,7 +3,6 @@ name: sweetclaude:migrate
 description: Migrate v3 BL-NNN items to ISSUE-NNN format in .sweetclaude/product/backlog/. Builds backup, validates, previews, executes, verifies, finalizes.
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:migrate"`
 
 This skill is a thin orchestrator. The deterministic migration operations
 (validation, plan, execute, verify, finalize) are implemented in

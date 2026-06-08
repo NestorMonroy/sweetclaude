@@ -4,9 +4,8 @@ user-invocable: false
 description: "SweetClaude master skill — phase router, interaction model, and session entry point."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:master"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # SweetClaude — Master Skill
 

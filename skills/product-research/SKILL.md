@@ -4,9 +4,8 @@ user-invocable: true
 description: "Survey the solution field — what exists commercially and open source — so the user understands what they're entering before building."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:product-research"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # Product Research
 

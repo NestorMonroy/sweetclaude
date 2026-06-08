@@ -4,7 +4,6 @@ user-invocable: false
 description: "Natural language classifier — maps user text to the right internal skill."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:_route"`
 
 # Route
 

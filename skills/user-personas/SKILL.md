@@ -4,9 +4,8 @@ user-invocable: true
 description: "Define product users — who they are, what they need to do, and exactly what completing each task looks and feels like."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:user-personas"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # User Personas
 

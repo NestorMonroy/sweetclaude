@@ -4,7 +4,6 @@ user-invocable: true
 description: "View and manage the unscheduled issue backlog."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-backlog"`
 
 ## MIGRATION GUARD
 

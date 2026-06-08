@@ -4,9 +4,8 @@ user-invocable: false
 description: "Internal John Wick phase check-in subagent."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:john-wick-checkin"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # John Wick Phase Check-in
 

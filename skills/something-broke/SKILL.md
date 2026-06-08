@@ -4,9 +4,8 @@ user-invocable: true
 description: "Reactive production incident skill."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:something-broke"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # SweetClaude Something Broke
 

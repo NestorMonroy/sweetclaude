@@ -4,7 +4,6 @@ user-invocable: false
 description: "Consistency scan and version check."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:_health"`
 
 # Health Check
 

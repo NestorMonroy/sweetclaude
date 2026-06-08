@@ -5,9 +5,8 @@ description: "Define the visual and interaction design of the product — look, 
 category: design
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:design-ux"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # Design UX
 

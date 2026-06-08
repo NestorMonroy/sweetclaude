@@ -4,7 +4,6 @@ user-invocable: true
 description: "Bidirectional status sync between local issue files and GitHub Issues."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-gh-sync-issues"`
 
 ## MIGRATION GUARD
 

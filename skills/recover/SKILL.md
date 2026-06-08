@@ -4,7 +4,6 @@ user-invocable: true
 description: "Recover or unblock SweetClaude projects left in bad update, migration, doctor, or repair states."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:recover"`
 
 # SweetClaude Recover
 

@@ -4,9 +4,6 @@ user-invocable: true
 description: "Update SweetClaude to the latest version from GitHub (or a local repo)."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:update"`
-
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
 
 # Update SweetClaude
 
@@ -254,7 +251,19 @@ diff -rq {installPath}/skills/ $SOURCE_DIR/skills/ 2>/dev/null \
   | sed 's|.*skills/||'
 ```
 
-For each removed skill, check whether it owns live artifact content. Read `base_path` from session-state (`paths.product_base`) or fall back to `.sweetclaude/artifacts/product`.
+For each removed skill, check whether it owns live artifact content. Resolve `base_path`:
+
+```bash
+python3 -c "
+import yaml, pathlib
+p = pathlib.Path('.sweetclaude/state/session-state.yaml')
+if p.exists():
+    d = yaml.safe_load(p.read_text()) or {}
+    print(d.get('paths', {}).get('product_base', '.sweetclaude/product'))
+else:
+    print('.sweetclaude/product')
+" 2>/dev/null || echo ".sweetclaude/product"
+```
 
 | Skill | Artifact path |
 |---|---|

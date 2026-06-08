@@ -4,9 +4,8 @@ user-invocable: true
 description: "Pull an existing production component into the mockup sandbox as an accurate 'Current' baseline for design iteration."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:mockup-extract"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # SweetClaude Mockup Extract
 

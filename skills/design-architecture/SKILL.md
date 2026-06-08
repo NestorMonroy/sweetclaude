@@ -5,9 +5,8 @@ description: "Define system architecture — components, boundaries, communicati
 category: technical
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:design-architecture"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # Design Architecture
 

@@ -4,9 +4,8 @@ user-invocable: true
 description: "Create and iterate on interactive UI mockups in an isolated Vite + React + Tailwind + shadcn/ui sandbox."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:mockup-sandbox"`
 
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
+!`cat .sweetclaude/state/session-state.yaml`
 
 # SweetClaude Mockup Sandbox
 

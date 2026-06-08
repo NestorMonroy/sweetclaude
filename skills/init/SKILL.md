@@ -4,9 +4,6 @@ user-invocable: true
 description: "Bootstrap the SweetClaude infrastructure for any project — new or existing."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:init"`
-
-!`bash ~/.claude/hooks/sweetclaude/read-state.sh session-state`
 
 # SweetClaude Init
 
