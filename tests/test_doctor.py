@@ -6257,6 +6257,7 @@ class TestChecksRegistry:
             "config_compat", "file_diagnostics", "onboarding_state",
             "env_wiring", "derived_status", "work_item_artifacts",
             "epic_completion_criteria", "format_consistency",
+            "orphaned_index",
         }
         assert set(CHECKS.keys()) == expected
 

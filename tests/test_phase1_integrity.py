@@ -1,5 +1,5 @@
 """
-Phase 1 & 2 success gate tests for the Unified Artifact Integrity System.
+Success gate tests for the Unified Artifact Integrity System.
 
 Phase 1:
 - Bold-format files are ingested by the cache (1A/1B/1C)
@@ -13,6 +13,13 @@ Phase 2:
 - op_create with parent ref triggers propagation (2D)
 - op_write with status change triggers propagation (2C)
 - Doctor auto-fix resolves stale parent status (2E)
+
+Phase 3:
+- project-index.json is never written by any code path (3B)
+- op_query returns correct results from SQLite (3A)
+- op_list returns items from SQLite (3A)
+- op_reindex rebuilds SQLite cache (3B)
+- Doctor detects orphaned project-index.json (3C)
 """
 import importlib.util
 import json
@@ -787,3 +794,223 @@ class TestDoctorAutoFix:
         assert len(ep_findings2) == 0, (
             f"After auto-fix, EP-01 should have no stale status finding, got: {ep_findings2}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: project-index.json is never written (3B)
+# ---------------------------------------------------------------------------
+
+class TestNoProjectIndexWrite:
+
+    def _setup_project(self, tmp_path):
+        project_dir = tmp_path / "proj"
+        sc = project_dir / ".sweetclaude"
+        (sc / "state").mkdir(parents=True)
+        (sc / "artifact-privacy.yaml").write_text(
+            yaml.dump({"product": {"base_path": ".sweetclaude/product"}})
+        )
+        product_base = project_dir / ".sweetclaude" / "product"
+        state_base = project_dir / ".sweetclaude" / "state"
+        for d in ("issues", "roadmap/epics", "roadmap/milestones"):
+            (product_base / d).mkdir(parents=True, exist_ok=True)
+        return project_dir, product_base, state_base
+
+    def test_op_create_does_not_write_index(self, tmp_path):
+        sa = _load_sc_artifact()
+        project_dir, product_base, state_base = self._setup_project(tmp_path)
+        idx = state_base / "project-index.json"
+        sa.op_create(product_base, state_base, "issue",
+                     json.dumps({"title": "Test"}), project_dir=project_dir)
+        assert not idx.exists(), "op_create should not write project-index.json"
+
+    def test_op_write_does_not_write_index(self, tmp_path):
+        sa = _load_sc_artifact()
+        project_dir, product_base, state_base = self._setup_project(tmp_path)
+        write_yaml_file(
+            str(product_base / "issues" / "I-001-test.md"),
+            {"id": "I-001", "title": "T", "type": "enhancement",
+             "status": "new", "created": "2026-01-01"},
+        )
+        rebuild(str(project_dir))
+        idx = state_base / "project-index.json"
+        sa.op_write(product_base, state_base, "I-001",
+                    json.dumps({"priority": "high"}), project_dir=project_dir)
+        assert not idx.exists(), "op_write should not write project-index.json"
+
+    def test_op_reindex_does_not_write_index(self, tmp_path):
+        sa = _load_sc_artifact()
+        project_dir, product_base, state_base = self._setup_project(tmp_path)
+        write_yaml_file(
+            str(product_base / "issues" / "I-001-test.md"),
+            {"id": "I-001", "title": "T", "type": "enhancement",
+             "status": "new", "created": "2026-01-01"},
+        )
+        idx = state_base / "project-index.json"
+        sa.op_reindex(product_base, state_base, project_dir=project_dir)
+        assert not idx.exists(), "op_reindex should not write project-index.json"
+
+    def test_no_index_functions_in_source(self):
+        hook_path = os.path.join(_HOOKS_DIR, "sc-artifact-impl.py")
+        content = open(hook_path).read()
+        for name in ("_load_index", "_save_index", "_index_entry",
+                      "_update_index", "_remove_from_index", "INDEX_FIELDS"):
+            assert name not in content, f"{name} should be removed from sc-artifact-impl.py"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: op_query via SQLite returns correct results (3A)
+# ---------------------------------------------------------------------------
+
+class TestQueryViaSQLite:
+
+    def _setup_project(self, tmp_path):
+        project_dir = tmp_path / "proj"
+        sc = project_dir / ".sweetclaude"
+        (sc / "state").mkdir(parents=True)
+        (sc / "artifact-privacy.yaml").write_text(
+            yaml.dump({"product": {"base_path": ".sweetclaude/product"}})
+        )
+        product_base = project_dir / ".sweetclaude" / "product"
+        state_base = project_dir / ".sweetclaude" / "state"
+        for d in ("issues", "roadmap/epics"):
+            (product_base / d).mkdir(parents=True, exist_ok=True)
+        write_yaml_file(
+            str(product_base / "issues" / "I-001-a.md"),
+            {"id": "I-001", "title": "Issue A", "type": "enhancement",
+             "status": "active", "created": "2026-01-01", "epic": "EP-001"},
+        )
+        write_yaml_file(
+            str(product_base / "issues" / "I-002-b.md"),
+            {"id": "I-002", "title": "Issue B", "type": "bug-fix",
+             "status": "done", "created": "2026-01-01", "epic": "EP-001"},
+        )
+        write_yaml_file(
+            str(product_base / "issues" / "I-003-c.md"),
+            {"id": "I-003", "title": "Issue C", "type": "enhancement",
+             "status": "active", "created": "2026-01-01", "epic": "EP-002"},
+        )
+        rebuild(str(project_dir))
+        return project_dir, product_base, state_base
+
+    def test_query_by_epic_id(self, tmp_path, capsys):
+        sa = _load_sc_artifact()
+        project_dir, product_base, state_base = self._setup_project(tmp_path)
+        sa.op_query(product_base, state_base, "issue",
+                    "epic_id=EP-001", project_dir=project_dir)
+        out = capsys.readouterr().out
+        result = json.loads(out)
+        ids = {r["id"] for r in result}
+        assert "I-001" in ids
+        assert "I-003" not in ids
+
+    def test_query_by_type(self, tmp_path, capsys):
+        sa = _load_sc_artifact()
+        project_dir, product_base, state_base = self._setup_project(tmp_path)
+        sa.op_query(product_base, state_base, "issue",
+                    "type=bug-fix", project_dir=project_dir)
+        out = capsys.readouterr().out
+        result = json.loads(out)
+        assert len(result) == 1
+        assert result[0]["id"] == "I-002"
+
+    def test_query_with_status_filter(self, tmp_path, capsys):
+        sa = _load_sc_artifact()
+        project_dir, product_base, state_base = self._setup_project(tmp_path)
+        sa.op_query(product_base, state_base, "issue",
+                    "status=done", project_dir=project_dir)
+        out = capsys.readouterr().out
+        result = json.loads(out)
+        ids = {r["id"] for r in result}
+        assert "I-002" in ids
+        assert "I-001" not in ids
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: op_list via SQLite (3A)
+# ---------------------------------------------------------------------------
+
+class TestListViaSQLite:
+
+    def test_list_returns_items(self, tmp_path, capsys):
+        project_dir = tmp_path / "proj"
+        sc = project_dir / ".sweetclaude"
+        (sc / "state").mkdir(parents=True)
+        (sc / "artifact-privacy.yaml").write_text(
+            yaml.dump({"product": {"base_path": ".sweetclaude/product"}})
+        )
+        product_base = project_dir / ".sweetclaude" / "product"
+        state_base = project_dir / ".sweetclaude" / "state"
+        (product_base / "sprints").mkdir(parents=True)
+        write_yaml_file(
+            str(product_base / "sprints" / "SP-001-s1.md"),
+            {"id": "SP-001", "title": "Sprint 1", "type": "sprint",
+             "status": "active", "created": "2026-01-01"},
+        )
+        rebuild(str(project_dir))
+
+        sa = _load_sc_artifact()
+        sa.op_list(product_base, state_base, "sprint", project_dir=project_dir)
+        out = capsys.readouterr().out
+        result = json.loads(out)
+        assert len(result) >= 1
+        assert result[0]["id"] == "SP-001"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: op_reindex rebuilds SQLite cache (3B)
+# ---------------------------------------------------------------------------
+
+class TestReindexRebuildsSQLite:
+
+    def test_reindex_populates_cache(self, tmp_path, capsys):
+        project_dir = tmp_path / "proj"
+        sc = project_dir / ".sweetclaude"
+        (sc / "state").mkdir(parents=True)
+        (sc / "artifact-privacy.yaml").write_text(
+            yaml.dump({"product": {"base_path": ".sweetclaude/product"}})
+        )
+        product_base = project_dir / ".sweetclaude" / "product"
+        state_base = project_dir / ".sweetclaude" / "state"
+        (product_base / "issues").mkdir(parents=True)
+        write_yaml_file(
+            str(product_base / "issues" / "I-001-test.md"),
+            {"id": "I-001", "title": "Test", "type": "enhancement",
+             "status": "new", "created": "2026-01-01"},
+        )
+
+        sa = _load_sc_artifact()
+        sa.op_reindex(product_base, state_base, project_dir=project_dir)
+
+        item = get_item(str(project_dir), "I-001")
+        assert item is not None, "reindex should populate SQLite cache"
+        assert item["title"] == "Test"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Doctor detects orphaned project-index.json (3C)
+# ---------------------------------------------------------------------------
+
+class TestOrphanedIndexDetection:
+
+    def test_orphaned_index_detected(self, tmp_path):
+        from test_doctor import build_fixture, build_project_state
+        from doctor import check_orphaned_index
+
+        project_dir = build_fixture(tmp_path, {"files": []})
+        idx = project_dir / ".sweetclaude" / "state" / "project-index.json"
+        idx.parent.mkdir(parents=True, exist_ok=True)
+        idx.write_text('{"schema_version": 1, "entities": []}')
+
+        state = build_project_state(project_dir)
+        findings = check_orphaned_index(state)
+        assert len(findings) == 1
+        assert findings[0].fix_recipe["action"] == "delete_file"
+
+    def test_no_orphaned_index_when_absent(self, tmp_path):
+        from test_doctor import build_fixture, build_project_state
+        from doctor import check_orphaned_index
+
+        project_dir = build_fixture(tmp_path, {"files": []})
+        state = build_project_state(project_dir)
+        findings = check_orphaned_index(state)
+        assert len(findings) == 0

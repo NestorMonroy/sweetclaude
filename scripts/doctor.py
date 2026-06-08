@@ -1669,6 +1669,25 @@ def check_format_consistency(state: ProjectState) -> list[Finding]:
     return findings
 
 
+def check_orphaned_index(state: ProjectState) -> list[Finding]:
+    findings: list[Finding] = []
+    idx_path = state.project_dir / ".sweetclaude" / "state" / "project-index.json"
+    if idx_path.is_file():
+        findings.append(Finding(
+            id="orphaned-index:project-index-json",
+            category="orphaned_index",
+            severity="warning",
+            summary="Orphaned project-index.json found — SQLite cache is now authoritative",
+            detail=f"{idx_path} is no longer used. The SQLite cache at "
+                   f".sweetclaude/cache/roadmap.db is the single query store. "
+                   f"This file can be safely deleted.",
+            file_paths=[str(idx_path)],
+            fix_type="auto",
+            fix_recipe={"action": "delete_file", "file": str(idx_path)},
+        ))
+    return findings
+
+
 CHECKS: dict[str, Callable[[ProjectState], list[Finding]]] = {
     "state_integrity":    check_state_integrity,
     "hook_health":        check_hook_health,
@@ -1684,6 +1703,7 @@ CHECKS: dict[str, Callable[[ProjectState], list[Finding]]] = {
     "work_item_artifacts": check_work_item_artifacts,
     "epic_completion_criteria": check_epic_completion_criteria,
     "format_consistency": check_format_consistency,
+    "orphaned_index":     check_orphaned_index,
 }
 
 

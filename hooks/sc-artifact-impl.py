@@ -55,19 +55,6 @@ TYPE_TO_DIR = {
     "theme":        "themes",
 }
 
-# Index fields stored per type (subset of all fields — used for fast queries)
-INDEX_FIELDS = {
-    "issue":        ["id", "type", "title", "status", "priority", "effort",
-                     "epic_id", "theme_id", "sprint_id", "roadmap_item_id", "source", "updated_at"],
-    "epic":         ["id", "type", "title", "status", "roadmap_item_id", "updated_at"],
-    "theme":        ["id", "type", "title", "status", "service", "category", "updated_at"],
-    "sprint":       ["id", "type", "title", "status", "start_date", "end_date", "milestone_id", "updated_at"],
-    "roadmap_item": ["id", "type", "title", "status", "priority", "release_id", "updated_at"],
-    "release":      ["id", "type", "title", "status", "version", "milestone_id", "updated_at"],
-    "milestone":    ["id", "type", "title", "status", "updated_at"],
-    "pitch":        ["id", "type", "title", "status", "appetite", "updated_at"],
-    "cycle":        ["id", "type", "title", "status", "updated_at"],
-}
 
 # Metadata key → field name mapping (handles **Key:** → key normalisation)
 def _key_to_field(key: str) -> str:
@@ -244,51 +231,6 @@ def _update_metadata_block(content: str, updates: dict) -> str:
     return "".join(new_lines)
 
 
-# ---------------------------------------------------------------------------
-# Index management
-# ---------------------------------------------------------------------------
-
-def _index_path(state_base: Path) -> Path:
-    return state_base / "project-index.json"
-
-
-def _load_index(state_base: Path) -> dict:
-    idx = _index_path(state_base)
-    if idx.exists():
-        try:
-            return json.loads(idx.read_text())
-        except Exception:
-            pass
-    return {"schema_version": 1, "generated_at": TODAY, "entities": []}
-
-
-def _save_index(state_base: Path, index: dict) -> None:
-    index["generated_at"] = TODAY
-    _index_path(state_base).write_text(json.dumps(index, indent=2))
-
-
-def _index_entry(entity_id: str, entity_type: str, data: dict) -> dict:
-    fields = INDEX_FIELDS.get(entity_type, ["id", "type", "title", "status", "updated_at"])
-    entry = {"id": entity_id, "type": entity_type}
-    for f in fields:
-        if f not in ("id", "type"):
-            entry[f] = data.get(f)
-    return entry
-
-
-def _update_index(state_base: Path, entity_id: str, entity_type: str, data: dict) -> None:
-    index = _load_index(state_base)
-    entry = _index_entry(entity_id, entity_type, data)
-    entities = [e for e in index["entities"] if e.get("id") != entity_id]
-    entities.append(entry)
-    index["entities"] = entities
-    _save_index(state_base, index)
-
-
-def _remove_from_index(state_base: Path, entity_id: str) -> None:
-    index = _load_index(state_base)
-    index["entities"] = [e for e in index["entities"] if e.get("id") != entity_id]
-    _save_index(state_base, index)
 
 
 # ---------------------------------------------------------------------------
@@ -379,11 +321,6 @@ def op_write(product_base: Path, state_base: Path, entity_id: str, json_str: str
         updated = _update_metadata_block(content, updates)
         f.write_text(updated, encoding="utf-8")
 
-    if f.exists():
-        data = _parse_metadata(f.read_text(encoding="utf-8"))
-        data["id"] = entity_id
-        _update_index(state_base, entity_id, entity_type, data)
-
     if project_dir is not None and new_status is None:
         try:
             _scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
@@ -432,7 +369,6 @@ def op_create(product_base: Path, state_base: Path, entity_type: str, json_str: 
     dest.write_text(content, encoding="utf-8")
 
     data["id"] = entity_id
-    _update_index(state_base, entity_id, entity_type, data)
     _append_to_type_index(type_dir, entity_type, entity_id, title, data)
 
     if project_dir is not None:
@@ -473,129 +409,163 @@ def op_create(product_base: Path, state_base: Path, entity_type: str, json_str: 
     print(json.dumps({"ok": True, "id": entity_id}))
 
 
-def op_query(product_base: Path, state_base: Path, entity_type: str, *filters) -> None:
-    """
-    Query artifacts by type and key=value filters.
-    Empty value (key=) matches null/none/"(none)"/empty string.
-    """
-    # Parse filters
+_FILTER_KEY_REMAP = {
+    "epic_id": "epic", "sprint_id": "sprint", "theme_id": "theme",
+    "roadmap_item_id": "roadmap_item", "milestone_id": "milestone",
+    "release_id": "release",
+}
+
+_SQLITE_COLUMNS = frozenset({
+    "id", "type", "title", "status", "priority", "effort", "epic",
+    "epic_sequence", "milestone", "objective", "source", "source_path",
+    "created", "updated", "closed_date", "sprint", "theme", "roadmap_item", "release",
+})
+
+
+def op_query(product_base: Path, state_base: Path, entity_type: str, *filters,
+             project_dir: Path | None = None) -> None:
     parsed_filters = {}
     for f in filters:
         if "=" in f:
             k, _, v = f.partition("=")
             parsed_filters[k.strip()] = v.strip()
 
-    # Check if all filter keys are in the index for this type
-    index_fields = set(INDEX_FIELDS.get(entity_type, []))
-    use_index = all(k in index_fields for k in parsed_filters)
+    remapped = {_FILTER_KEY_REMAP.get(k, k): v for k, v in parsed_filters.items()}
 
-    if use_index:
-        index = _load_index(state_base)
-        candidates = [e for e in index["entities"] if e.get("type") == entity_type]
-        for key, val in parsed_filters.items():
-            if val == "":
-                # Empty value = match null, None, "(none)", or empty string
-                candidates = [
-                    e for e in candidates
-                    if not e.get(key) or str(e.get(key, "")).lower() in {"none", "(none)", ""}
-                ]
-            else:
-                candidates = [e for e in candidates if str(e.get(key, "")) == val]
+    if project_dir is not None and all(k in _SQLITE_COLUMNS for k in remapped):
+        try:
+            _scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+            if str(_scripts_dir) not in sys.path:
+                sys.path.insert(0, str(_scripts_dir))
+            from cache import get_conn
+            conn = get_conn(str(project_dir))
+            if conn:
+                results = _query_sqlite(conn, product_base, entity_type, remapped)
+                print(json.dumps(results, indent=2))
+                return
+        except Exception:
+            pass
 
-        # Exclude cancelled unless status filter explicitly includes it
-        if "status" not in parsed_filters:
-            candidates = [e for e in candidates if e.get("status") != "cancelled"]
+    type_dir = product_base / TYPE_TO_DIR.get(entity_type, entity_type)
+    prefix = TYPE_TO_PREFIX.get(entity_type, "")
+    results = []
+    if type_dir.exists():
+        for f in sorted(type_dir.glob(f"{prefix}-*.md")):
+            content = f.read_text(encoding="utf-8")
+            id_match = re.match(rf"({re.escape(prefix)}-\d+)", f.name)
+            if not id_match:
+                continue
+            entity_id = id_match.group(1)
+            data = _parse_full(entity_id, content)
 
-        # Read full artifacts for matching IDs
-        results = []
-        for entry in candidates:
-            f = _find_file(product_base, entry["id"])
-            if f:
-                content = f.read_text(encoding="utf-8")
-                data = _parse_full(entry["id"], content)
+            match = True
+            for key, val in parsed_filters.items():
+                field_val = data.get(key) or data.get(_FILTER_KEY_REMAP.get(key, key))
+                if val == "":
+                    if field_val and str(field_val).lower() not in {"none", "(none)", ""}:
+                        match = False
+                        break
+                else:
+                    if str(field_val or "") != val:
+                        match = False
+                        break
+
+            if match and data.get("status") != "cancelled":
                 results.append(data)
-        print(json.dumps(results, indent=2))
-    else:
-        # Fallback: full file scan
-        type_dir = product_base / TYPE_TO_DIR.get(entity_type, entity_type)
-        prefix = TYPE_TO_PREFIX.get(entity_type, "")
-        results = []
-        if type_dir.exists():
-            for f in sorted(type_dir.glob(f"{prefix}-*.md")):
-                content = f.read_text(encoding="utf-8")
-                id_match = re.match(rf"({re.escape(prefix)}-\d+)", f.name)
-                if not id_match:
-                    continue
-                entity_id = id_match.group(1)
-                data = _parse_full(entity_id, content)
+    print(json.dumps(results, indent=2))
 
-                match = True
-                for key, val in parsed_filters.items():
-                    field_val = data.get(key)
-                    if val == "":
-                        if field_val and str(field_val).lower() not in {"none", "(none)", ""}:
-                            match = False
-                            break
-                    else:
-                        if str(field_val or "") != val:
-                            match = False
-                            break
 
-                if match and data.get("status") != "cancelled":
-                    results.append(data)
-        print(json.dumps(results, indent=2))
+def _query_sqlite(conn, product_base: Path, entity_type: str, filters: dict) -> list[dict]:
+    prefix = TYPE_TO_PREFIX.get(entity_type, "")
+    where_parts = ["id LIKE ?"]
+    params: list = [f"{prefix}-%"]
+
+    if "status" not in filters:
+        where_parts.append("status != 'declined'")
+
+    for key, val in filters.items():
+        if val == "":
+            where_parts.append(f"({key} IS NULL OR {key} = '' OR {key} = '(none)')")
+        elif "," in val:
+            placeholders = ",".join("?" for _ in val.split(","))
+            where_parts.append(f"{key} IN ({placeholders})")
+            params.extend(val.split(","))
+        else:
+            where_parts.append(f"{key} = ?")
+            params.append(val)
+
+    sql = f"SELECT id FROM items WHERE {' AND '.join(where_parts)} ORDER BY id"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+
+    results = []
+    for row in rows:
+        f = _find_file(product_base, row["id"])
+        if f:
+            content = f.read_text(encoding="utf-8")
+            data = _parse_full(row["id"], content)
+            results.append(data)
+    return results
 
 
 def op_delete(product_base: Path, state_base: Path, entity_id: str) -> None:
     op_write(product_base, state_base, entity_id, json.dumps({"status": "cancelled"}))
 
 
-def op_reindex(product_base: Path, state_base: Path) -> None:
-    """Walk all artifact directories, rebuild project-index.json from scratch."""
-    entities = []
-    for entity_type, type_subdir in TYPE_TO_DIR.items():
-        prefix = TYPE_TO_PREFIX[entity_type]
-        type_dir = product_base / type_subdir
-        if not type_dir.exists():
-            continue
+def op_reindex(product_base: Path, state_base: Path,
+               project_dir: Path | None = None) -> None:
+    """Rebuild the SQLite cache from artifact files on disk."""
+    _scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+    if str(_scripts_dir) not in sys.path:
+        sys.path.insert(0, str(_scripts_dir))
+    from cache import rebuild
+    pdir = str(project_dir) if project_dir else str(product_base.parent)
+    result = rebuild(pdir)
+    count = result.get("items", 0) if isinstance(result, dict) else 0
+    print(json.dumps({"ok": True, "indexed": count}))
+
+
+def op_list(product_base: Path, state_base: Path, entity_type: str,
+            project_dir: Path | None = None) -> None:
+    if project_dir is not None:
+        try:
+            _scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+            if str(_scripts_dir) not in sys.path:
+                sys.path.insert(0, str(_scripts_dir))
+            from cache import get_conn
+            conn = get_conn(str(project_dir))
+            if conn:
+                prefix = TYPE_TO_PREFIX.get(entity_type, "")
+                rows = conn.execute(
+                    "SELECT id FROM items WHERE id LIKE ? AND status != 'declined' ORDER BY id",
+                    (f"{prefix}-%",),
+                ).fetchall()
+                conn.close()
+                results = []
+                for row in rows:
+                    f = _find_file(product_base, row["id"])
+                    if f:
+                        content = f.read_text(encoding="utf-8")
+                        data = _parse_full(row["id"], content)
+                        results.append(data)
+                print(json.dumps(results, indent=2))
+                return
+        except Exception:
+            pass
+
+    type_dir = product_base / TYPE_TO_DIR.get(entity_type, entity_type)
+    prefix = TYPE_TO_PREFIX.get(entity_type, "")
+    results = []
+    if type_dir.exists():
         for f in sorted(type_dir.glob(f"{prefix}-*.md")):
-            id_match = re.search(rf"^({re.escape(prefix)}-\d+)", f.name)
+            content = f.read_text(encoding="utf-8")
+            id_match = re.match(rf"({re.escape(prefix)}-\d+)", f.name)
             if not id_match:
                 continue
             entity_id = id_match.group(1)
-            try:
-                content = f.read_text(encoding="utf-8")
-                data = _parse_metadata(content)
-                data["id"] = entity_id
-                entry = _index_entry(entity_id, entity_type, data)
-                entities.append(entry)
-            except Exception as e:
-                print(f"  WARN: could not parse {f.name}: {e}", file=sys.stderr)
-
-    index = {
-        "schema_version": 1,
-        "generated_at": TODAY,
-        "last_full_scan": TODAY,
-        "entities": entities,
-    }
-    state_base.mkdir(parents=True, exist_ok=True)
-    _save_index(state_base, index)
-    print(json.dumps({"ok": True, "indexed": len(entities)}))
-
-
-def op_list(product_base: Path, state_base: Path, entity_type: str) -> None:
-    index = _load_index(state_base)
-    candidates = [
-        e for e in index["entities"]
-        if e.get("type") == entity_type and e.get("status") != "cancelled"
-    ]
-    results = []
-    for entry in candidates:
-        f = _find_file(product_base, entry["id"])
-        if f:
-            content = f.read_text(encoding="utf-8")
-            data = _parse_full(entry["id"], content)
-            results.append(data)
+            data = _parse_full(entity_id, content)
+            if data.get("status") != "cancelled":
+                results.append(data)
     print(json.dumps(results, indent=2))
 
 
@@ -851,7 +821,7 @@ def main():
     elif op == "query":
         if not args:
             print("ERROR: query requires <type> [key=value ...]", file=sys.stderr); sys.exit(1)
-        op_query(product_base, state_base, args[0], *args[1:])
+        op_query(product_base, state_base, args[0], *args[1:], project_dir=Path(sys.argv[2]))
 
     elif op == "delete":
         if not args:
@@ -861,7 +831,7 @@ def main():
     elif op == "list":
         if not args:
             print("ERROR: list requires <type>", file=sys.stderr); sys.exit(1)
-        op_list(product_base, state_base, args[0])
+        op_list(product_base, state_base, args[0], project_dir=Path(sys.argv[2]))
 
     elif op == "reindex":
         op_reindex(product_base, state_base)
