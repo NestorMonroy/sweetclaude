@@ -64,8 +64,13 @@ recorded = (d.get('framework') or {}).get('installed_version')
 actual = None
 try:
     p = json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json')))
-    entries = [v for k, v in (p.get('plugins') or {}).items() if 'sweetclaude' in k.lower()]
-    actual = entries[0][0].get('version') if entries and entries[0] else None
+    candidates = []
+    for k, v in (p.get('plugins') or {}).items():
+        if 'sweetclaude' in k.lower() and v:
+            candidates.append(v[0])
+    if candidates:
+        candidates.sort(key=lambda e: e.get('lastUpdated', ''), reverse=True)
+        actual = candidates[0].get('version')
 except Exception:
     pass
 if actual and actual != recorded:

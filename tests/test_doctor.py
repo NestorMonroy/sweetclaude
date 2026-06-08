@@ -6255,7 +6255,8 @@ class TestChecksRegistry:
             "state_integrity", "hook_health", "version_currency",
             "structure_anomalies", "storage_lint", "migration_currency",
             "config_compat", "file_diagnostics", "onboarding_state",
-            "env_wiring", "derived_status",
+            "env_wiring", "derived_status", "work_item_artifacts",
+            "epic_completion_criteria",
         }
         assert set(CHECKS.keys()) == expected
 

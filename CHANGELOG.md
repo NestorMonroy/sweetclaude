@@ -4,6 +4,35 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.1-beta] — 2026-06-08 (4.x beta channel)
+
+### Fixed — epic completion criteria format
+
+- **cache.py:** Fixed int-vs-string comparison bug in the string-format
+  completion criteria path. `completion_criteria_done` entries were compared
+  as integer indexes instead of matching criterion text strings.
+- **Doctor check:** Added `check_epic_completion_criteria` that detects
+  old-format completion criteria (string list + `completion_criteria_done`
+  parallel array) and auto-migrates to the canonical dict format
+  (`{id, description, done}`). Extended `write_frontmatter_field` action to
+  support `remove_keys` for atomic field removal during migration.
+- **Epic skill template:** Updated to emit dict-format completion criteria
+  and removed all references to `completion_criteria_done`.
+
+### Fixed — installed_version not synced after update
+
+- **Update skill:** Added Step 5b — writes `framework.installed_version`
+  to `sweetclaude.yaml` immediately after successful sync. Previously,
+  this was only handled by the health check hook, which could miss updates
+  when multiple plugin keys existed.
+- **Plugin key resolution:** Fixed `_resolve_installed_version` in doctor.py
+  and the health check hook to pick the most recently updated plugin entry
+  instead of the first dict-iteration match. With both
+  `sweetclaude@sweetclaude` and `sweetclaude@sweetclaude-beta` present,
+  the stale entry was being selected.
+
+---
+
 ## [4.2.0-beta] — 2026-06-08 (4.x beta channel)
 
 ### Added — per-work-item artifact directories
