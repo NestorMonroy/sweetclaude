@@ -34,6 +34,10 @@ CREATE TABLE IF NOT EXISTS items (
     epic TEXT,
     epic_sequence INTEGER,
     milestone TEXT,
+    sprint TEXT,
+    theme TEXT,
+    roadmap_item TEXT,
+    release TEXT,
     objective TEXT,
     source TEXT,
     source_path TEXT NOT NULL,
@@ -69,6 +73,8 @@ CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
 CREATE INDEX IF NOT EXISTS idx_items_status ON items(status);
 CREATE INDEX IF NOT EXISTS idx_items_epic ON items(epic);
 CREATE INDEX IF NOT EXISTS idx_items_milestone ON items(milestone);
+CREATE INDEX IF NOT EXISTS idx_items_sprint ON items(sprint);
+CREATE INDEX IF NOT EXISTS idx_items_theme ON items(theme);
 CREATE INDEX IF NOT EXISTS idx_items_priority ON items(priority);
 CREATE INDEX IF NOT EXISTS idx_tags_item ON tags(item_id);
 CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
@@ -85,13 +91,15 @@ def parse_frontmatter(path):
     except Exception:
         return None
     parts = raw.split('---', 2)
-    if len(parts) < 3:
-        return None
-    try:
-        fm = yaml.safe_load(parts[1])
-        return fm if isinstance(fm, dict) else None
-    except Exception:
-        return None
+    if len(parts) >= 3:
+        try:
+            fm = yaml.safe_load(parts[1])
+            if isinstance(fm, dict):
+                return fm
+        except Exception:
+            pass
+    from parse_utils import parse_bold_metadata
+    return parse_bold_metadata(raw)
 
 
 def resolve_product_base(project_dir):
@@ -122,25 +130,41 @@ def resolve_product_base(project_dir):
     return os.path.join(project_dir, '.sweetclaude', 'product')
 
 
+_SKIP_FILENAMES = {"SCHEMA.md", "INDEX.md", "MIGRATION-MAP.md"}
+
 def scan_files(project_dir):
     base_product = resolve_product_base(project_dir)
     scan_bases = [
         os.path.join(base_product, 'backlog'),
+        os.path.join(base_product, 'issues'),
         os.path.join(base_product, 'roadmap', 'issues'),
         os.path.join(base_product, 'roadmap', 'epics'),
         os.path.join(base_product, 'roadmap', 'milestones'),
+        os.path.join(base_product, 'epics'),
+        os.path.join(base_product, 'sprints'),
+        os.path.join(base_product, 'themes'),
+        os.path.join(base_product, 'milestones'),
+        os.path.join(base_product, 'roadmap', 'releases'),
+        os.path.join(base_product, 'pitches'),
+        os.path.join(base_product, 'cycles'),
     ]
+    seen = set()
     files = []
     for base in scan_bases:
         if not os.path.isdir(base):
             continue
+        real_base = os.path.realpath(base)
         for root, dirs, filenames in os.walk(base):
             for fname in filenames:
                 if not fname.endswith('.md'):
                     continue
-                if fname == 'SCHEMA.md':
+                if fname in _SKIP_FILENAMES or fname.endswith('-INDEX.md'):
                     continue
                 full = os.path.join(root, fname)
+                real_full = os.path.realpath(full)
+                if real_full in seen:
+                    continue
+                seen.add(real_full)
                 files.append(full)
     return files
 
@@ -182,6 +206,21 @@ def _rebuild_cache(project_dir):
                 skipped.append({"path": fpath, "reasons": ["no valid frontmatter"]})
                 continue
 
+            if 'id' not in fm:
+                stem = os.path.splitext(os.path.basename(fpath))[0]
+                id_match = re.match(r'^([A-Z]+-\d+)', stem)
+                if id_match:
+                    fm['id'] = id_match.group(1)
+
+            if 'type' not in fm and 'id' in fm:
+                from parse_utils import PREFIX_TO_TYPE
+                prefix = str(fm['id']).split('-')[0]
+                if prefix in PREFIX_TO_TYPE:
+                    fm['type'] = PREFIX_TO_TYPE[prefix]
+
+            if 'created' not in fm:
+                fm['created'] = fm.get('updated', 'unknown')
+
             fm_for_validation = dict(fm)
             if 'status' in fm_for_validation:
                 fm_for_validation['status'] = _normalize_status(fm_for_validation['status'])
@@ -189,6 +228,8 @@ def _rebuild_cache(project_dir):
                 fm_for_validation['milestone'] = _normalize_milestone(fm_for_validation['milestone'])
 
             violations = validate_frontmatter(fm_for_validation)
+            violations = [v for v in violations
+                          if not v.startswith("missing required field for type")]
             if violations:
                 skipped.append({"path": fpath, "reasons": violations})
                 continue
@@ -205,11 +246,15 @@ def _rebuild_cache(project_dir):
             status = fm_for_validation['status']
             milestone = fm_for_validation.get('milestone')
 
+            def _nullify(val):
+                return None if val in (None, 'null', 'None', '') else val
+
             conn.execute(
                 """INSERT OR REPLACE INTO items
                    (id, type, title, status, priority, effort, epic, epic_sequence,
-                    milestone, objective, source, source_path, created, updated, closed_date)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    milestone, sprint, theme, roadmap_item, release,
+                    objective, source, source_path, created, updated, closed_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     fm['id'],
                     item_type,
@@ -217,9 +262,13 @@ def _rebuild_cache(project_dir):
                     status,
                     fm.get('priority'),
                     fm.get('effort'),
-                    fm.get('epic') if fm.get('epic') not in (None, 'null') else None,
+                    _nullify(fm.get('epic')),
                     fm.get('epic_sequence'),
                     milestone,
+                    _nullify(fm.get('sprint')),
+                    _nullify(fm.get('theme')),
+                    _nullify(fm.get('roadmap_item')),
+                    _nullify(fm.get('release')),
                     fm.get('objective'),
                     fm.get('source'),
                     rel_path,

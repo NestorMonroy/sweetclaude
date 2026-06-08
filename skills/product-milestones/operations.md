@@ -349,7 +349,14 @@ Blockers for MS-001 Exit Stealth
    - If any are not in `done` state, list them.
    - Ask: "These contributing work items are not done: {list}. Continue?"
    - If no, stop. If yes, proceed.
-5. Set `**Status:**` to `achieved`.
+5. Close the milestone via status.py:
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {milestone_path} --status done --actor product-milestones --project-dir .
+```
+
+This handles: status change, closed_date, updated timestamp, file move to done/, audit log, cache rebuild, and parent propagation.
+
 6. Append Changelog row: `{date} — Marked achieved. {if waived: 'Waived N criteria — see Notes.'}`
 7. Update `{base_path}/milestones/MILESTONES-INDEX.md`: change the status column for this milestone to `achieved`.
 8. **Follow-up chain.** Ask the user:

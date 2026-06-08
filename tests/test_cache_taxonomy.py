@@ -1021,11 +1021,11 @@ class TestSchemaHasMilestoneColumnNotRelease:
         cols = get_schema_columns(project_dir, "items")
         assert "milestone" in cols
 
-    def test_items_table_does_not_have_release_column(self, tmp_path):
+    def test_items_table_has_release_column(self, tmp_path):
         project_dir = setup_project(tmp_path)
         rebuild(project_dir)
         cols = get_schema_columns(project_dir, "items")
-        assert "release" not in cols
+        assert "release" in cols
 
     def test_index_exists_on_items_milestone(self, tmp_path):
         project_dir = setup_project(tmp_path)

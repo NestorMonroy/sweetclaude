@@ -647,7 +647,37 @@ v4 project layouts. Continue using the project as-is; run `sweetclaude:doctor`
 for read-only diagnostics.
 ```
 
-Then continue to Step 6c. Do not write `doctor-prompt-pending.json`.
+Then continue to Step 6b3. Do not write `doctor-prompt-pending.json`.
+
+---
+
+## Step 6b3: Bold-format file detection
+
+Only run if `.sweetclaude/state/sweetclaude.yaml` exists in the current project directory — skip silently otherwise.
+
+Scan for Bold-format artifact files that should be converted to YAML frontmatter:
+
+```bash
+BOLD_COUNT=0
+CONVERTER="$HOME/.claude/scripts/sweetclaude/format_converter.py"
+if [ -f "$CONVERTER" ]; then
+  BOLD_COUNT=$(python3 "$CONVERTER" --project-dir . --dry-run 2>/dev/null | grep -c '"action": "would_convert"' || true)
+fi
+echo "BOLD_COUNT=$BOLD_COUNT"
+```
+
+If `BOLD_COUNT` is 0: skip — all files use YAML frontmatter.
+
+If `BOLD_COUNT > 0`: report the condition as non-blocking:
+
+```
+Found {BOLD_COUNT} artifact file(s) using Bold Key-Value format instead of
+YAML frontmatter. These files are readable but won't participate in status
+propagation. Run `sweetclaude:doctor --check format_consistency --auto-fix`
+to convert them.
+```
+
+Then continue to Step 6c.
 
 ---
 
