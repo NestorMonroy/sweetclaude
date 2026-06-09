@@ -2401,6 +2401,7 @@ def create_archive(project_dir: Path) -> Path:
 def backup_content(archive_path: Path, file_path: Path, content: bytes) -> str:
     h = _hash_bytes(content)
     dest = archive_path / "before" / _sanitize_path(str(file_path))
+    dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(content)
     return h
 
@@ -2417,7 +2418,27 @@ def write_diff(
     diff_text = "".join(diff)
     if diff_text:
         dest = archive_path / "diffs" / (_sanitize_path(str(file_path)) + ".diff")
+        dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(diff_text)
+
+
+def _record_mutation(
+    archive_path: Path, file_path: Path, before: bytes, after: bytes
+) -> RecipeResult:
+    """Record a file mutation through the archive pipeline.
+
+    Backs up the original content to before/, writes a unified diff to diffs/,
+    and returns a RecipeResult with real before/after hashes. The caller
+    performs the actual write (or delete); routing every mutation through this
+    helper guarantees it is backed up and diffed so it can be reversed by
+    ``restore``. This is the single backup/diff contract the executor relies on.
+    """
+    before_hash = backup_content(archive_path, file_path, before)
+    write_diff(archive_path, file_path, before, after)
+    return RecipeResult(
+        "", before_hash, _hash_bytes(after),
+        archive_path / "before" / _sanitize_path(str(file_path)), True,
+    )
 
 
 def write_manifest(archive_path: Path, manifest: dict) -> None:
@@ -2577,9 +2598,14 @@ def execute_recipe(
                 rows = []
             conn.close()
             child_statuses = [r["status"] for r in rows]
+            before = parent_path.read_bytes()
             from status import sync_parent_status as _sync
             changed = _sync(str(parent_path), child_statuses, "doctor-auto-fix", project_dir=str(project_dir))
-            return RecipeResult("", "", None, None, True, None if changed else "already in sync")
+            if not changed:
+                h = _hash_bytes(before)
+                return RecipeResult("", h, h, None, True, "already in sync")
+            after = parent_path.read_bytes()
+            return _record_mutation(archive_path, parent_path, before, after)
         except Exception as e:
             return RecipeResult("", "", None, None, False, str(e))
 
@@ -2591,9 +2617,14 @@ def execute_recipe(
         if not target_path.exists():
             return RecipeResult("", "", None, None, False, f"File not found: {target_path}")
         try:
+            before = target_path.read_bytes()
             from format_converter import convert_file
             result = convert_file(target_path, dry_run=False, backup=True)
-            return RecipeResult("", "", None, None, result["action"] == "converted")
+            if result["action"] == "converted":
+                after = target_path.read_bytes()
+                return _record_mutation(archive_path, target_path, before, after)
+            h = _hash_bytes(before)
+            return RecipeResult("", h, h, None, False)
         except Exception as e:
             return RecipeResult("", "", None, None, False, str(e))
 
@@ -2657,25 +2688,14 @@ def execute_recipe(
         h = _hash_bytes(content)
         return RecipeResult("", h, h, None, True)
 
-    before_hash = backup_content(archive_path, file_path, content)
-
     if action == "delete_file":
         if file_path.exists():
             file_path.unlink()
-        write_diff(archive_path, file_path, content, b"")
-        return RecipeResult(
-            "", before_hash, _hash_bytes(b""),
-            archive_path / "before" / _sanitize_path(str(file_path)), True,
-        )
+        return _record_mutation(archive_path, file_path, content, b"")
 
     new_content = _apply_transform(content, recipe, project_dir)
     _atomic_write(file_path, new_content)
-    after_hash = _hash_bytes(new_content)
-    write_diff(archive_path, file_path, content, new_content)
-    return RecipeResult(
-        "", before_hash, after_hash,
-        archive_path / "before" / _sanitize_path(str(file_path)), True,
-    )
+    return _record_mutation(archive_path, file_path, content, new_content)
 
 
 # ---------------------------------------------------------------------------
@@ -2733,6 +2753,80 @@ def auto_fix(
         "actions": actions,
         "post_fix_categories": sorted(fixed_categories),
     }
+
+
+# ---------------------------------------------------------------------------
+# Restore — reverse mutations from a run archive's before/ images
+# ---------------------------------------------------------------------------
+
+def restore(
+    project_dir: Path, archive_path: Path,
+    file: str | None = None, restore_all: bool = False,
+) -> dict:
+    """Reconstruct files from a doctor run's archived before/ images.
+
+    The inverse of ``_record_mutation``: reads the run's recorded actions
+    (manifest.json, falling back to actions.json), and for the requested
+    target(s) writes the archived before-image back over the live file. A
+    single file (``file=``) or the whole run (``restore_all=True``) can be
+    restored. Actions with no archived before-image (e.g. cache/derived
+    ``reversible:false`` mutations) are reported as skipped rather than failing.
+    """
+    project_dir = Path(project_dir)
+    archive_path = Path(archive_path)
+
+    actions: list[dict] = []
+    manifest = archive_path / "manifest.json"
+    actions_file = archive_path / "actions.json"
+    if manifest.exists():
+        try:
+            actions = json.loads(manifest.read_text()).get("actions", [])
+        except (json.JSONDecodeError, OSError):
+            actions = []
+    if not actions and actions_file.exists():
+        try:
+            actions = json.loads(actions_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            actions = []
+
+    target = None
+    if file is not None:
+        target = Path(file)
+        if not target.is_absolute():
+            target = project_dir / target
+
+    restored: list[str] = []
+    skipped: list[dict] = []
+    seen: set[str] = set()
+    for a in actions:
+        fp = a.get("file_path", "")
+        if not fp:
+            continue
+        resolved = Path(fp)
+        if not resolved.is_absolute():
+            resolved = project_dir / resolved
+        if target is not None:
+            if resolved != target:
+                continue
+        elif not restore_all:
+            continue
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        backup = archive_path / "before" / _sanitize_path(str(resolved))
+        if backup.exists():
+            data = backup.read_bytes()
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write(resolved, data)
+            restored.append(str(resolved))
+        else:
+            skipped.append({
+                "file": str(resolved),
+                "reason": "no archived before-image (reversible:false)",
+            })
+
+    return {"restored": restored, "skipped": skipped}
 
 
 # ---------------------------------------------------------------------------
@@ -3039,6 +3133,11 @@ def main(argv: list[str] | None = None) -> int:
     p_persist.add_argument("--menu-preference", default=None)
     p_persist.add_argument("--safety-branch", default=None)
 
+    p_restore = _add("restore")
+    p_restore.add_argument("--archive-dir", required=True, type=Path)
+    p_restore.add_argument("--file", default=None)
+    p_restore.add_argument("--all", action="store_true", default=False)
+
     _add("prune-archives")
     _add("session-check")
 
@@ -3118,6 +3217,14 @@ def main(argv: list[str] | None = None) -> int:
                 safety_branch=args.safety_branch,
             )
             _emit(result)
+
+        elif args.cmd == "restore":
+            _emit(restore(
+                args.project_dir.resolve(),
+                args.archive_dir.resolve(),
+                file=args.file,
+                restore_all=args.all,
+            ))
 
         elif args.cmd == "prune-archives":
             pruned = prune_archives(args.project_dir.resolve())

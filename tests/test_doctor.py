@@ -7122,3 +7122,157 @@ class TestP0Characterization:
         assert result.success is True
         fm = yaml.safe_load(target.read_text().split("---", 2)[1])
         assert fm["status"] == "active"
+
+
+# ---------------------------------------------------------------------------
+# P0 new-behavior tests (RED until the _record_mutation refactor + restore).
+#   - sync_parent_status / convert_to_yaml record a before/ image + diffs/ entry
+#   - a no-op (already in sync / already YAML) records NO backup or diff
+#   - restore reconstructs files from a run's before/ images
+# ---------------------------------------------------------------------------
+
+
+def _p0_epic_child(tmp_path, epic_id, epic_status, child_id, child_status):
+    roadmap_files = [
+        {"name": f"epics/{epic_id}-test.md", "frontmatter": {
+            "id": epic_id, "title": "Epic", "type": "epic",
+            "status": epic_status, "created": "2026-01-01",
+            "milestone": "MS-001", "source": "auto"}},
+        {"name": f"issues/{child_id}-test.md", "frontmatter": {
+            "id": child_id, "title": "Child", "type": "enhancement",
+            "status": child_status, "created": "2026-01-01", "epic": epic_id}},
+    ]
+    project_dir = build_fixture(tmp_path, overrides={"roadmap_files": roadmap_files})
+    epic_path = (
+        project_dir / ".sweetclaude" / "product" / "roadmap" / "epics" / f"{epic_id}-test.md"
+    )
+    return project_dir, epic_path
+
+
+class TestP0RecordMutation:
+
+    def test_sync_parent_status_records_before_and_diff(self, tmp_path, fake_home):
+        project_dir, epic_path = _p0_epic_child(
+            tmp_path, "EP-001", "done", "ISSUE-100", "in-progress")
+        archive = create_archive(project_dir)
+        result = execute_recipe(project_dir, {
+            "action": "sync_parent_status", "file": str(epic_path),
+            "parent_id": "EP-001", "parent_type": "epic"}, archive)
+
+        assert result.success is True
+        assert result.error is None  # changed (not a no-op)
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(epic_path))
+        assert before_entry.exists(), \
+            "sync_parent_status must back up the original parent file to the archive"
+        assert b"done" in before_entry.read_bytes(), \
+            "the backup must hold the pre-sync content"
+        diff_entry = archive / "diffs" / (_p0_doctor._sanitize_path(str(epic_path)) + ".diff")
+        assert diff_entry.exists() and diff_entry.stat().st_size > 0, \
+            "sync_parent_status must record a non-empty diff"
+
+    def test_sync_parent_status_noop_writes_no_backup(self, tmp_path, fake_home):
+        # parent already at the derived value -> no change -> no backup/diff
+        project_dir, epic_path = _p0_epic_child(
+            tmp_path, "EP-002", "active", "ISSUE-101", "in-progress")
+        archive = create_archive(project_dir)
+        result = execute_recipe(project_dir, {
+            "action": "sync_parent_status", "file": str(epic_path),
+            "parent_id": "EP-002", "parent_type": "epic"}, archive)
+
+        assert result.success is True
+        assert list((archive / "before").iterdir()) == [], "no-op must not back up"
+        assert list((archive / "diffs").iterdir()) == [], "no-op must not diff"
+
+    def test_convert_to_yaml_records_before_and_diff(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        bold_path = project_dir / ".sweetclaude" / "product" / "backlog" / "ISSUE-050.md"
+        bold_path.write_text(
+            "# ISSUE-050: Widget\n\n**Type:** enhancement\n**Status:** active\n"
+            "**Created:** 2026-01-01\n\n## Description\n\nBody.\n")
+        original = bold_path.read_bytes()
+
+        archive = create_archive(project_dir)
+        result = execute_recipe(
+            project_dir, {"action": "convert_to_yaml", "file": str(bold_path)}, archive)
+
+        assert result.success is True
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(bold_path))
+        assert before_entry.exists(), \
+            "convert_to_yaml must back up the original (bold) content into the archive"
+        assert before_entry.read_bytes() == original
+        assert not before_entry.read_text().startswith("---"), \
+            "the backup must be the pre-conversion bold form"
+        diff_entry = archive / "diffs" / (_p0_doctor._sanitize_path(str(bold_path)) + ".diff")
+        assert diff_entry.exists() and diff_entry.stat().st_size > 0
+
+    def test_convert_to_yaml_noop_on_yaml_writes_no_backup(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        yaml_path = project_dir / ".sweetclaude" / "product" / "backlog" / "ISSUE-051.md"
+        _write_frontmatter_file(yaml_path, {
+            "id": "ISSUE-051", "title": "Already YAML", "type": "enhancement",
+            "status": "active", "created": "2026-01-01"}, body="\n# Body\n")
+        archive = create_archive(project_dir)
+        execute_recipe(
+            project_dir, {"action": "convert_to_yaml", "file": str(yaml_path)}, archive)
+
+        # already-YAML => not converted => no backup/diff written
+        assert list((archive / "before").iterdir()) == []
+        assert list((archive / "diffs").iterdir()) == []
+
+
+class TestP0Restore:
+
+    def test_restore_single_file_reconstructs(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+        ss = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss.write_text("phase_schema_version: 1\nfoo: bar\n")
+        original = ss.read_bytes()
+
+        finding = _make_finding(
+            action="write_field", file=str(ss), key="phase_schema_version", value=99)
+        auto_fix(project_dir, [finding], archive)
+        assert b"99" in ss.read_bytes()  # mutated
+
+        res = _p0_doctor.restore(project_dir, archive, file=str(ss))
+        assert ss.read_bytes() == original, "restore must reconstruct the file byte-identically"
+        assert res["restored"], "restore must report what it restored"
+
+    def test_restore_all_reverts_every_mutation(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+        ss = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss.write_text("phase_schema_version: 1\n")
+        o1 = ss.read_bytes()
+        f2 = project_dir / ".sweetclaude" / "product" / "backlog" / "ISSUE-300.md"
+        _write_frontmatter_file(f2, {
+            "id": "ISSUE-300", "title": "X", "type": "enhancement",
+            "status": "new", "created": "2026-01-01"}, body="\n# b\n")
+        o2 = f2.read_bytes()
+
+        findings = [
+            _make_finding(action="write_field", file=str(ss),
+                          key="phase_schema_version", value=2),
+            _make_finding(action="write_frontmatter_field", file=str(f2),
+                          key="status", value="active"),
+        ]
+        auto_fix(project_dir, findings, archive)
+        assert ss.read_bytes() != o1 and f2.read_bytes() != o2
+
+        res = _p0_doctor.restore(project_dir, archive, restore_all=True)
+        assert ss.read_bytes() == o1
+        assert f2.read_bytes() == o2
+        assert len(res["restored"]) == 2
+
+    def test_restore_reports_unrecoverable_without_crashing(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+        missing = project_dir / ".sweetclaude" / "state" / "nope.yaml"
+        (archive / "actions.json").write_text(json.dumps([{
+            "action": "auto-fix", "finding_id": "x", "category": "c",
+            "description": "d", "file_path": str(missing),
+            "before_hash": "", "after_hash": None, "timestamp": "t"}]))
+
+        res = _p0_doctor.restore(project_dir, archive, restore_all=True)
+        assert res["restored"] == []
+        assert res["skipped"], "restore must report an action with no before-image as skipped"
