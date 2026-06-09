@@ -463,10 +463,11 @@ For fix types that require further user input or skill delegation:
 
 - `provide_value`: Ask the user to supply a value for `fix_recipe.field` (open prompt). Apply identically by reusing `write_frontmatter_field` — same auto-fix invocation as `choose_value`, with the supplied value. Then record.
 
-- `config_conflict`: Present the options from `fix_recipe.options` (adopt / keep / keep both) via AskUserQuestion. Apply the chosen resolution, then record:
+- `config_conflict`: Present the options from `fix_recipe.options` (**adopt** = use SweetClaude's rule, **keep** = keep your rule, **both** = keep both) via AskUserQuestion. Apply through the executor by building a finding whose recipe is the executable `config_conflict` action — carry the chosen `choice` plus the target the check already threaded into the prompt recipe (`path`, `conflict`, and `tool`/`hook_command`/`matcher` for settings F1-F3, or `pattern` for text F4/W1-W4/I1-I2). Do not write the file directly. Only `adopt` mutates (a targeted line/key edit through the backup pipeline, reversible via `restore`); `keep`/`both` are no-ops the executor records as success with no backup.
   ```bash
-  echo '{"finding_id": "...", "action": "prompted-fix", "choice": "...", "description": "...", "timestamp": "..."}' | python3 ~/.claude/scripts/sweetclaude/doctor.py record-action --archive-dir {archive_dir}
+  echo '[{"id": "{finding_id}", "category": "config_compat", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "config_conflict", "file": "{fix_recipe.file}", "path": "{fix_recipe.path}", "choice": "{chosen_choice}", "conflict": "{fix_recipe.conflict}", "tool": "{fix_recipe.tool}", "hook_command": "{fix_recipe.hook_command}", "matcher": "{fix_recipe.matcher}", "pattern": "{fix_recipe.pattern}"}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
   ```
+  Include only the target fields present on the prompt recipe (settings conflicts carry `tool` or `hook_command`/`matcher`; text conflicts carry `pattern`). Then record the prompted-fix action.
 
 - `hook_restore`: Present source options (backup vs repo) via AskUserQuestion. Restore the file, record the action.
 

@@ -140,6 +140,7 @@ EXECUTOR_SUPPORTED_ACTIONS = frozenset({
     "prompt",
     "sync_parent_status",
     "convert_to_yaml",
+    "config_conflict",
 })
 
 # Manual guidance for known-unsupported actions, surfaced when an auto/prompted
@@ -766,21 +767,32 @@ def check_migration_currency(state: ProjectState) -> list[Finding]:
 def check_config_compat(state: ProjectState) -> list[Finding]:
     findings: list[Finding] = []
 
-    _text_sources: list[tuple[str, str]] = []
+    home_claude = Path.home() / ".claude"
+
+    # Logical source name -> real filesystem path, so config_conflict adopt can
+    # perform a targeted edit through the executor (the logical names like
+    # "~/.claude/settings.json" do not resolve under project_dir).
+    _text_sources: list[tuple[str, str, str]] = []
     if state.claude_md_project:
-        _text_sources.append(("CLAUDE.md", state.claude_md_project))
+        _text_sources.append(
+            ("CLAUDE.md", state.claude_md_project, str(state.project_dir / "CLAUDE.md")))
     if state.claude_md_global:
-        _text_sources.append(("~/.claude/CLAUDE.md", state.claude_md_global))
+        _text_sources.append(
+            ("~/.claude/CLAUDE.md", state.claude_md_global, str(home_claude / "CLAUDE.md")))
     for name, content in state.rules_files.items():
-        _text_sources.append((f"rules/{name}", content))
+        _text_sources.append(
+            (f"rules/{name}", content, str(home_claude / "rules" / name)))
 
-    _settings_sources: list[tuple[str, dict]] = []
+    _settings_sources: list[tuple[str, dict, str]] = []
     if state.settings_global:
-        _settings_sources.append(("~/.claude/settings.json", state.settings_global))
+        _settings_sources.append(
+            ("~/.claude/settings.json", state.settings_global, str(home_claude / "settings.json")))
     if state.settings_local:
-        _settings_sources.append((".claude/settings.local.json", state.settings_local))
+        _settings_sources.append(
+            (".claude/settings.local.json", state.settings_local,
+             str(state.project_dir / ".claude" / "settings.local.json")))
 
-    for sname, sdata in _settings_sources:
+    for sname, sdata, spath in _settings_sources:
         allowed = sdata.get("allowedTools")
         if allowed is not None:
             for tool in ("Agent", "Bash", "Write"):
@@ -794,7 +806,8 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
                         file_paths=[sname],
                         fix_type="prompted",
                         fix_recipe={"action": "prompt", "type": "config_conflict",
-                                    "file": sname, "line": 0,
+                                    "file": sname, "path": spath, "line": 0,
+                                    "conflict": "F1", "tool": tool,
                                     "options": ["adopt", "keep", "both"]},
                     ))
 
@@ -816,7 +829,9 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
                                 file_paths=[sname],
                                 fix_type="prompted",
                                 fix_recipe={"action": "prompt", "type": "config_conflict",
-                                            "file": sname, "line": 0,
+                                            "file": sname, "path": spath, "line": 0,
+                                            "conflict": "F2", "hook_command": cmd,
+                                            "matcher": matcher,
                                             "options": ["adopt", "keep", "both"]},
                             ))
                     test_runners = ["npm test", "pytest", "cargo test", "jest ", "vitest", "go test"]
@@ -831,7 +846,9 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
                                 file_paths=[sname],
                                 fix_type="prompted",
                                 fix_recipe={"action": "prompt", "type": "config_conflict",
-                                            "file": sname, "line": 0,
+                                            "file": sname, "path": spath, "line": 0,
+                                            "conflict": "F3", "hook_command": cmd,
+                                            "matcher": matcher,
                                             "options": ["adopt", "keep", "both"]},
                             ))
                             break
@@ -861,7 +878,7 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
                 matched.append(pat)
         return matched
 
-    for src_name, src_content in _text_sources:
+    for src_name, src_content, src_path in _text_sources:
         for pat in _scan_text("", f4_patterns, src_name):
             pass
         hits = _scan_text(src_content, f4_patterns, src_name)
@@ -873,7 +890,8 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
                 detail=f"F4: '{h}' found in {src_name}",
                 file_paths=[src_name], fix_type="prompted",
                 fix_recipe={"action": "prompt", "type": "config_conflict",
-                            "file": src_name, "line": 0,
+                            "file": src_name, "path": src_path, "line": 0,
+                            "conflict": "F4", "pattern": h,
                             "options": ["adopt", "keep", "both"]},
             ))
 
@@ -894,7 +912,8 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
                     file_paths=[src_name],
                     fix_type="prompted" if sev != "info" else "report-only",
                     fix_recipe={"action": "prompt", "type": "config_conflict",
-                                "file": src_name, "line": 0,
+                                "file": src_name, "path": src_path, "line": 0,
+                                "conflict": code, "pattern": h,
                                 "options": ["adopt", "keep", "both"]}
                     if sev != "info" else {},
                 ))
@@ -2566,6 +2585,55 @@ def _check_precondition(recipe: dict, content: bytes, file_path: Path) -> bool:
     return False
 
 
+def _config_conflict_adopt(before: bytes, recipe: dict) -> bytes:
+    """Apply SweetClaude's rule for a config_conflict (the ``adopt`` choice).
+
+    Two targeted mechanisms, derived from how check_config_compat detected the
+    conflict (NOT a general config editor — the recipe names the exact target):
+
+    - Settings conflicts (F1-F3): edit settings.json structurally. F1 adds the
+      excluded ``tool`` back to allowedTools; F2/F3 remove the conflicting hook
+      entry (matched by its command, optionally narrowed by matcher).
+    - Text conflicts (F4, W1-W4, I1, I2): remove the line(s) of the source file
+      that contain the matched ``pattern`` (case-insensitive substring).
+    """
+    tool = recipe.get("tool")
+    hook_command = recipe.get("hook_command")
+
+    if tool is not None or hook_command is not None:
+        data = json.loads(before.decode("utf-8"))
+        if tool is not None:
+            allowed = data.get("allowedTools")
+            if isinstance(allowed, list) and tool not in allowed:
+                allowed.append(tool)
+        elif hook_command is not None:
+            matcher = recipe.get("matcher")
+            for hook_list in (data.get("hooks") or {}).values():
+                if not isinstance(hook_list, list):
+                    continue
+                kept = []
+                for entry in hook_list:
+                    cmds = [h.get("command", "") for h in entry.get("hooks", [])]
+                    matches_cmd = hook_command in cmds
+                    matches_matcher = (
+                        matcher is None or str(entry.get("matcher", "")) == matcher
+                    )
+                    if matches_cmd and matches_matcher:
+                        continue
+                    kept.append(entry)
+                hook_list[:] = kept
+        return json.dumps(data, indent=2).encode("utf-8")
+
+    pattern = recipe.get("pattern")
+    if not pattern:
+        raise ValueError("config_conflict adopt: no target (tool/hook_command/pattern)")
+    text = before.decode("utf-8")
+    pat_lower = pattern.lower()
+    kept_lines = [ln for ln in text.splitlines(keepends=True)
+                  if pat_lower not in ln.lower()]
+    return "".join(kept_lines).encode("utf-8")
+
+
 def execute_recipe(
     project_dir: Path, recipe: dict, archive_path: Path
 ) -> RecipeResult:
@@ -2625,6 +2693,32 @@ def execute_recipe(
                 return _record_mutation(archive_path, target_path, before, after)
             h = _hash_bytes(before)
             return RecipeResult("", h, h, None, False)
+        except Exception as e:
+            return RecipeResult("", "", None, None, False, str(e))
+
+    if action == "config_conflict":
+        choice = recipe.get("choice", "")
+        # keep = leave SweetClaude's rule aside; both = keep both rules.
+        # Neither mutates the file: no-op success, no backup.
+        if choice != "adopt":
+            return RecipeResult("", "", None, None, True, f"no-op ({choice or 'no choice'})")
+        # adopt = apply SweetClaude's rule: a targeted edit of the offending
+        # file. The recipe carries an explicit real path because the logical
+        # source names ("~/.claude/settings.json") do not resolve under
+        # project_dir.
+        target_path = Path(recipe.get("path") or recipe.get("file", ""))
+        if not target_path.is_absolute():
+            target_path = project_dir / target_path
+        if not target_path.exists():
+            return RecipeResult("", "", None, None, False, f"File not found: {target_path}")
+        try:
+            before = target_path.read_bytes()
+            after = _config_conflict_adopt(before, recipe)
+            if after == before:
+                h = _hash_bytes(before)
+                return RecipeResult("", h, h, None, True, "already resolved")
+            _atomic_write(target_path, after)
+            return _record_mutation(archive_path, target_path, before, after)
         except Exception as e:
             return RecipeResult("", "", None, None, False, str(e))
 

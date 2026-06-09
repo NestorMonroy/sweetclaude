@@ -6826,7 +6826,7 @@ def test_executor_supported_actions_match_dispatch():
     dispatched = {
         "run_script", "rebuild_cache", "create_dir", "delete_file",
         "write_field", "write_frontmatter_field", "prompt",
-        "sync_parent_status", "convert_to_yaml",
+        "sync_parent_status", "convert_to_yaml", "config_conflict",
     }
     assert set(EXECUTOR_SUPPORTED_ACTIONS) == dispatched
 
@@ -7335,3 +7335,269 @@ class TestP1Tier2:
         assert fm["status"] == "active"
         # reversible: the reuse path records a before/ backup, so `restore` can revert it
         assert list((archive / "before").iterdir()), "reuse path must record a backup"
+
+
+class TestP1ConfigConflict:
+    """P1 / T2e: config_conflict made functional through the executor.
+
+    Two edit mechanisms, both targeted (no general config-editing DSL):
+      - text-pattern conflicts (F4, W1-W4, I1, I2): adopt removes the offending
+        line(s) containing the matched pattern from CLAUDE.md / a rules file.
+      - settings conflicts (F1-F3) in settings.json: F1 adopt adds the excluded
+        tool back to allowedTools; F2/F3 adopt removes the conflicting hook entry.
+
+    Semantics: adopt mutates (through _record_mutation, so it is backed up and
+    `restore`-reversible); keep / both are no-ops (success, no backup). NO MOCKS.
+    """
+
+    # ----- recipe enrichment: the check threads the target into the prompt ----
+
+    def test_text_conflict_recipe_carries_pattern_and_real_path(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path, overrides={
+            "claude_md": "# Project\n\nYou should skip tests when in a hurry.\n",
+        })
+        state = build_project_state(project_dir)
+        findings = check_config_compat(state)
+
+        w3 = [f for f in findings if f.id.startswith("config-compat:W3")]
+        assert w3, f"expected a W3 finding, got {[f.id for f in findings]}"
+        recipe = w3[0].fix_recipe
+        # the executor needs the matched literal and a real filesystem path
+        assert recipe.get("pattern") == "skip tests"
+        assert recipe.get("path") == str(project_dir / "CLAUDE.md")
+        assert recipe.get("type") == "config_conflict"
+
+    def test_f1_recipe_carries_tool_and_real_path(self, tmp_path, fake_home):
+        settings_path = fake_home / ".claude" / "settings.json"
+        settings_path.write_text(json.dumps({
+            "plansDirectory": ".sweetclaude/plans",
+            "allowedTools": ["Read", "Edit", "Agent", "Write"],
+        }))
+        project_dir = build_fixture(tmp_path)
+        state = build_project_state(project_dir)
+        findings = check_config_compat(state)
+
+        f1 = next(f for f in findings
+                  if f.id == "config-compat:F1:~/.claude/settings.json:Bash")
+        recipe = f1.fix_recipe
+        assert recipe.get("tool") == "Bash"
+        assert recipe.get("conflict") == "F1"
+        assert recipe.get("path") == str(fake_home / ".claude" / "settings.json")
+
+    def test_f3_recipe_carries_hook_command_and_real_path(self, tmp_path, fake_home):
+        settings_path = fake_home / ".claude" / "settings.json"
+        settings_path.write_text(json.dumps({
+            "plansDirectory": ".sweetclaude/plans",
+            "hooks": {"PostToolUse": [
+                {"matcher": "anything", "hooks": [{"command": "pytest tests/"}]},
+            ]},
+        }))
+        project_dir = build_fixture(tmp_path)
+        state = build_project_state(project_dir)
+        findings = check_config_compat(state)
+
+        f3 = next(f for f in findings if f.id.startswith("config-compat:F3"))
+        recipe = f3.fix_recipe
+        assert recipe.get("hook_command") == "pytest tests/"
+        assert recipe.get("conflict") == "F3"
+        assert recipe.get("path") == str(fake_home / ".claude" / "settings.json")
+
+    # ----- text adopt: removes the offending line --------------------------
+
+    def test_text_adopt_removes_skip_tests_line(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path, overrides={
+            "claude_md": "# Project\n\nYou should skip tests when in a hurry.\n\n## Notes\nKeep this line.\n",
+        })
+        claude_md = project_dir / "CLAUDE.md"
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "config_conflict",
+            "file": "CLAUDE.md",
+            "path": str(claude_md),
+            "choice": "adopt",
+            "conflict": "W3",
+            "pattern": "skip tests",
+        }, archive)
+
+        assert result.success is True
+        text = claude_md.read_text()
+        assert "skip tests" not in text.lower(), "adopt must remove the offending line"
+        # surrounding content left intact
+        assert "# Project" in text
+        assert "Keep this line." in text
+        # backed up so it is reversible
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(claude_md))
+        assert before_entry.exists(), "text adopt must back up the original"
+        assert "skip tests" in before_entry.read_text().lower()
+
+    # ----- settings F1 adopt: restores the excluded tool -------------------
+
+    def test_f1_adopt_restores_excluded_tool(self, tmp_path, fake_home):
+        settings_path = fake_home / ".claude" / "settings.json"
+        settings_path.write_text(json.dumps({
+            "plansDirectory": ".sweetclaude/plans",
+            "allowedTools": ["Read", "Edit", "Agent", "Write"],
+        }))
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "config_conflict",
+            "file": "~/.claude/settings.json",
+            "path": str(settings_path),
+            "choice": "adopt",
+            "conflict": "F1",
+            "tool": "Bash",
+        }, archive)
+
+        assert result.success is True
+        data = json.loads(settings_path.read_text())
+        assert "Bash" in data["allowedTools"], "F1 adopt must add the excluded tool back"
+        # other settings preserved
+        assert data["plansDirectory"] == ".sweetclaude/plans"
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(settings_path))
+        assert before_entry.exists(), "F1 adopt must back up the original settings"
+        assert "Bash" not in json.loads(before_entry.read_text()).get("allowedTools", [])
+
+    # ----- settings F3 adopt: removes the conflicting hook -----------------
+
+    def test_f3_adopt_removes_conflicting_hook(self, tmp_path, fake_home):
+        settings_path = fake_home / ".claude" / "settings.json"
+        settings_path.write_text(json.dumps({
+            "plansDirectory": ".sweetclaude/plans",
+            "hooks": {"PostToolUse": [
+                {"matcher": "anything", "hooks": [{"command": "pytest tests/"}]},
+                {"matcher": "src", "hooks": [{"command": "echo keep me"}]},
+            ]},
+        }))
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "config_conflict",
+            "file": "~/.claude/settings.json",
+            "path": str(settings_path),
+            "choice": "adopt",
+            "conflict": "F3",
+            "hook_command": "pytest tests/",
+            "matcher": "anything",
+        }, archive)
+
+        assert result.success is True
+        data = json.loads(settings_path.read_text())
+        entries = data["hooks"]["PostToolUse"]
+        commands = [h["command"] for e in entries for h in e.get("hooks", [])]
+        assert "pytest tests/" not in commands, "F3 adopt must remove the conflicting hook"
+        assert "echo keep me" in commands, "unrelated hooks must be preserved"
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(settings_path))
+        assert before_entry.exists(), "F3 adopt must back up the original settings"
+
+    # ----- keep / both are no-ops -----------------------------------------
+
+    def test_keep_is_noop_no_backup(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path, overrides={
+            "claude_md": "# Project\n\nYou should skip tests when in a hurry.\n",
+        })
+        claude_md = project_dir / "CLAUDE.md"
+        original = claude_md.read_bytes()
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "config_conflict",
+            "file": "CLAUDE.md",
+            "path": str(claude_md),
+            "choice": "keep",
+            "conflict": "W3",
+            "pattern": "skip tests",
+        }, archive)
+
+        assert result.success is True
+        assert claude_md.read_bytes() == original, "keep must leave the file untouched"
+        assert list((archive / "before").iterdir()) == [], "keep must not back up"
+        assert list((archive / "diffs").iterdir()) == [], "keep must not diff"
+
+    def test_both_is_noop_no_backup(self, tmp_path, fake_home):
+        settings_path = fake_home / ".claude" / "settings.json"
+        settings_path.write_text(json.dumps({
+            "plansDirectory": ".sweetclaude/plans",
+            "allowedTools": ["Read", "Edit", "Agent", "Write"],
+        }))
+        original = settings_path.read_bytes()
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "config_conflict",
+            "file": "~/.claude/settings.json",
+            "path": str(settings_path),
+            "choice": "both",
+            "conflict": "F1",
+            "tool": "Bash",
+        }, archive)
+
+        assert result.success is True
+        assert settings_path.read_bytes() == original, "both must leave the file untouched"
+        assert list((archive / "before").iterdir()) == [], "both must not back up"
+
+    # ----- restore reversibility ------------------------------------------
+
+    def test_text_adopt_is_restore_reversible(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path, overrides={
+            "claude_md": "# Project\n\nYou should skip tests when in a hurry.\n\n## Notes\nKeep this.\n",
+        })
+        claude_md = project_dir / "CLAUDE.md"
+        original = claude_md.read_bytes()
+        archive = create_archive(project_dir)
+
+        # apply through the auto-fix pipeline (the path the skill uses) so the
+        # action is recorded in actions.json for restore to find
+        finding = {
+            "id": "config-compat:W3:CLAUDE.md:deadbeef",
+            "category": "config_compat",
+            "summary": "skip-tests conflict",
+            "fix_type": "prompted",
+            "fix_recipe": {
+                "action": "config_conflict", "file": "CLAUDE.md",
+                "path": str(claude_md), "choice": "adopt",
+                "conflict": "W3", "pattern": "skip tests",
+            },
+        }
+        auto_fix(project_dir, [finding], archive, include_prompted=True)
+        assert claude_md.read_bytes() != original, "adopt must mutate the file"
+
+        res = _p0_doctor.restore(project_dir, archive, file=str(claude_md))
+        assert claude_md.read_bytes() == original, "restore must revert byte-identically"
+        assert res["restored"], "restore must report what it restored"
+
+    # ----- end-to-end through auto_fix with the enriched recipe -----------
+
+    def test_adopt_via_autofix_pipeline(self, tmp_path, fake_home):
+        settings_path = fake_home / ".claude" / "settings.json"
+        settings_path.write_text(json.dumps({
+            "plansDirectory": ".sweetclaude/plans",
+            "allowedTools": ["Read", "Edit", "Agent", "Write"],
+        }))
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "config-compat:F1:~/.claude/settings.json:Bash",
+            "category": "config_compat",
+            "summary": "settings block Bash",
+            "fix_type": "prompted",
+            "fix_recipe": {
+                "action": "config_conflict", "file": "~/.claude/settings.json",
+                "path": str(settings_path), "choice": "adopt",
+                "conflict": "F1", "tool": "Bash",
+            },
+        }
+        result = auto_fix(project_dir, [finding], archive, include_prompted=True)
+
+        assert result["actions"][0]["action"] == "auto-fix"
+        assert "Bash" in json.loads(settings_path.read_text())["allowedTools"]
+
+
+def test_config_conflict_is_a_supported_action():
+    from doctor import EXECUTOR_SUPPORTED_ACTIONS
+    assert "config_conflict" in EXECUTOR_SUPPORTED_ACTIONS
