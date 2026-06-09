@@ -583,18 +583,19 @@ echo '{"finding_id": "...", "action": "suppress", "reason": "...", "timestamp": 
 
 When a prompted fix involves migration or restoration:
 
-- **Schema migration** (`fix_recipe.script` = "runner.py"): Invoke `sweetclaude:_migrate` skill. Record result via `record-action`.
+- **Schema migration** (`fix_recipe.script` = "runner.py"): Invoke `sweetclaude:_migrate` skill. Record result via `record-action`. After the migration completes, run the full scan and continue with the fresh findings.
 
-- **Taxonomy migration** (`fix_recipe.script` = "migrate_taxonomy.py"): Block in this beta unless a future taxonomy
-  migration capability check proves the detected layout is supported. Do not
-  run this script directly from doctor. Record the blocked action and route the
-  user to `/sweetclaude:recover` or manual review based on the recovery guard.
+- **Taxonomy migration** (`fix_recipe.script` = "migrate_taxonomy.py"): Invoke
+  `sweetclaude:migrate`, which owns the snapshot, preflight, approval, and verify
+  safety flow for taxonomy migration. Doctor does not run `migrate_taxonomy.py`
+  directly; the skill delegates. Record the result. After the migration flow
+  completes, run the full scan and continue with the fresh findings.
 
 - **v3-to-v4 migration** (`fix_recipe.script` = "migrate-v3-to-v4.py"): Invoke `sweetclaude:migrate`, which runs its
   read-only preflight before creating locks, backups, files, or migration maps.
-  Record result.
+  Record result. After the migration completes, run the full scan and continue with the fresh findings.
 
-- **Purge/re-onboard**: Invoke `sweetclaude:purge`. Record result.
+- **Purge/re-onboard**: Invoke `sweetclaude:purge`. Record result. After the flow completes, run the full scan and continue with the fresh findings.
 
 ---
 

@@ -2587,6 +2587,8 @@ def _apply_manifest_migration_policy(
         if allowed
         else None
     )
+    taxonomy_script = _SCRIPTS_DIR / "migrate" / "migrate_taxonomy.py"
+    taxonomy_runnable = _script_has_cli_entrypoint(taxonomy_script)
     visible: list[Finding] = []
     blocked_count = 0
     for finding in findings:
@@ -2598,6 +2600,13 @@ def _apply_manifest_migration_policy(
             allowed_capability == "migrate.flat_bl_to_issue"
             and recipe.get("script") == "migrate-v3-to-v4.py"
         ):
+            visible.append(finding)
+            continue
+        # T3b (plan §8.2, LOCKED): taxonomy migration now has a runnable CLI and
+        # routes through sweetclaude:migrate, which owns its own preflight/safety
+        # flow — the same delegation contract as the v3-to-v4 path. So it is no
+        # longer manifest-blocked; let the runnable prompted finding through.
+        if recipe.get("script") == "migrate_taxonomy.py" and taxonomy_runnable:
             visible.append(finding)
             continue
         blocked_count += 1
@@ -2630,6 +2639,35 @@ def _apply_manifest_migration_policy(
 # ---------------------------------------------------------------------------
 # Scan
 # ---------------------------------------------------------------------------
+
+def _dedup_duplicate_id_findings(findings: list[Finding]) -> list[Finding]:
+    """F5.1.4: a cross-location duplicate supersedes the same-directory/file
+    duplicate-id finding for the same id.
+
+    When one id is duplicated across backlog and roadmap, storage-lint emits
+    `storage-lint:cross-location-duplicate-id:<id>` AND file-diagnostics emits
+    `file-diagnostics:duplicate-id:<id>` for the same id. The cross-location
+    finding is the more specific, actionable one, so drop the same-directory
+    duplicate-id for that id. Same-directory-only duplicates (no cross-location
+    counterpart) and all other findings are untouched.
+    """
+    cross_location_ids: set[str] = set()
+    for f in findings:
+        prefix = "storage-lint:cross-location-duplicate-id:"
+        if f.id.startswith(prefix):
+            cross_location_ids.add(f.id[len(prefix):])
+
+    if not cross_location_ids:
+        return findings
+
+    deduped: list[Finding] = []
+    for f in findings:
+        prefix = "file-diagnostics:duplicate-id:"
+        if f.id.startswith(prefix) and f.id[len(prefix):] in cross_location_ids:
+            continue
+        deduped.append(f)
+    return deduped
+
 
 def _scan(
     project_state: ProjectState,
@@ -2678,6 +2716,7 @@ def _scan(
     active, manifest_migration_policy = _apply_manifest_migration_policy(
         active, maintenance_route,
     )
+    active = _dedup_duplicate_id_findings(active)
     migration_recs = _build_migration_recommendations(
         active, project_state, maintenance_route,
     )

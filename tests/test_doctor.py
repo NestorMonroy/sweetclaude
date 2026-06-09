@@ -67,6 +67,8 @@ from doctor import (
     main,
     _apply_transform,
     _atomic_write,
+    _script_has_cli_entrypoint,
+    build_maintenance_route,
 )
 
 
@@ -2173,6 +2175,11 @@ class TestMigrationCurrency:
     # ------------------------------------------------------------------
 
     # Scenario: STORY-prefixed file in backlog produces taxonomy drift warning
+    # T3b update (plan §8.2, LOCKED): this previously asserted the OLD blocked
+    # behavior (report-only, "not currently executable") because the real
+    # migrate_taxonomy.py had no CLI entrypoint. The locked decision built that
+    # CLI, so the unpatched _SCRIPTS_DIR now reads a runnable script and the
+    # finding is a runnable prompted migration routing to migrate_taxonomy.py.
     def test_story_prefixed_file_produces_taxonomy_drift_warning(
         self, tmp_path, fake_home
     ):
@@ -2189,8 +2196,8 @@ class TestMigrationCurrency:
 
         f = next(x for x in findings if x.id == "migration-currency:taxonomy-drift:old-prefixes")
         assert f.severity == "warning"
-        assert f.fix_type == "report-only"
-        assert "not currently executable" in f.summary
+        assert f.fix_type == "prompted"
+        assert f.fix_recipe["script"] == "migrate_taxonomy.py"
 
     def test_story_prefixed_file_with_runnable_taxonomy_cli_is_prompted(
         self, tmp_path, fake_home, patch_scripts_dir
@@ -10058,3 +10065,183 @@ class TestP2SkillRendersTier4:
                 f"— delegate to re_adopt.py / sweetclaude:purge")
         assert not re.search(r"open\([^)]*,\s*['\"][wax]", section), (
             "Step 2c must not open files for writing inline")
+
+
+# ---------------------------------------------------------------------------
+# P4 final remediation increment — T3b, F5.1.4, T3e (doctor remediation plan
+# §8.2). T3b: taxonomy migration becomes a runnable prompted fix routing to
+# sweetclaude:migrate once migrate_taxonomy.py grows a CLI entrypoint (LOCKED:
+# build the CLI). F5.1.4: a _scan dedup pass where a cross-location duplicate
+# supersedes the same-directory/file duplicate-id for the same id. T3e: the
+# Step-7 prompted-fix delegation handlers carry the re-scan-after-delegation
+# instruction the Step 1a handoffs have.
+# ---------------------------------------------------------------------------
+
+
+class TestT3bTaxonomyMigrationRoutesToMigrate:
+    """The taxonomy-drift finding must become a runnable prompted migration that
+    routes to sweetclaude:migrate — not a capability_blocked_migration — once
+    migrate_taxonomy.py exposes a CLI entrypoint."""
+
+    def test_real_migrate_taxonomy_has_cli_entrypoint(self):
+        # The locked decision is to build the CLI on the real script. After GREEN
+        # the real migrate_taxonomy.py must report a CLI entrypoint.
+        script = _doctor_module._SCRIPTS_DIR / "migrate" / "migrate_taxonomy.py"
+        assert _script_has_cli_entrypoint(script), (
+            "migrate_taxonomy.py must expose a CLI entrypoint "
+            "(argparse + if __name__ == '__main__')"
+        )
+
+    def test_taxonomy_prefix_project_emits_runnable_prompted_migration(
+        self, tmp_path, fake_home
+    ):
+        # Uses the REAL _SCRIPTS_DIR so the real migrate_taxonomy.py (with the new
+        # CLI) is consulted. Today the finding is downgraded to
+        # capability_blocked_migration; after the fix it is a runnable prompted
+        # migration that routes to migrate_taxonomy.py / sweetclaude:migrate.
+        project_dir = build_fixture(tmp_path, overrides={
+            "backlog_files": [
+                {"name": "STORY-001-old.md", "content": "# Old story"},
+                {"name": "BUG-002-old.md", "content": "# Old bug"},
+            ],
+        })
+        state = build_project_state(project_dir)
+        result = _scan(state)
+
+        f = next(
+            x for x in result["findings"]
+            if x["id"] == "migration-currency:taxonomy-drift:old-prefixes"
+        )
+        recipe = f.get("fix_recipe") or {}
+        assert recipe.get("type") != "capability_blocked_migration", (
+            f"taxonomy migration must not be capability-blocked, got recipe: {recipe}"
+        )
+        assert f["fix_type"] == "prompted", (
+            f"taxonomy migration must be a prompted (runnable) fix, got: {f['fix_type']}"
+        )
+        assert recipe.get("type") == "migration", (
+            f"taxonomy migration recipe must be type=migration, got: {recipe}"
+        )
+        assert recipe.get("script") == "migrate_taxonomy.py", (
+            f"taxonomy migration recipe must route to migrate_taxonomy.py, got: {recipe}"
+        )
+
+    def test_skill_step7_routes_taxonomy_to_migrate_not_blocked(self):
+        skill = (
+            Path(__file__).parents[1] / "skills" / "doctor" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        start = skill.index("## Step 7")
+        nxt = skill.find("\n## ", start)
+        section = skill[start:nxt] if nxt != -1 else skill[start:]
+        # The taxonomy-migration handler must reference the migrate_taxonomy.py
+        # script and route to sweetclaude:migrate, no longer blocking it.
+        assert "migrate_taxonomy.py" in section, (
+            "Step 7 must still describe the taxonomy-migration handler"
+        )
+        assert "sweetclaude:migrate" in section, (
+            "Step 7 must route taxonomy migration to sweetclaude:migrate"
+        )
+        # The old block-and-route-to-recover language must be gone.
+        assert "route the\n  user to `/sweetclaude:recover` or manual review" not in section, (
+            "Step 7 must no longer block taxonomy migration to recover/manual review"
+        )
+
+
+class TestF514ScanDedupCrossLocationSupersedes:
+    """_scan must drop the same-directory/file duplicate-id finding for an id when
+    a cross-location duplicate finding already covers that id; the cross-location
+    finding supersedes. Other duplicate findings are untouched."""
+
+    def test_cross_location_dup_suppresses_same_dir_duplicate_id(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path, overrides={
+            "backlog_files": [
+                {"name": "ISSUE-001-test.md", "frontmatter": {
+                    "id": "ISSUE-001", "type": "story", "title": "Test", "status": "active",
+                }},
+            ],
+            "roadmap_files": [
+                {"name": "ISSUE-001-dup.md", "frontmatter": {
+                    "id": "ISSUE-001", "type": "milestone", "title": "Dup", "status": "active",
+                }},
+            ],
+        })
+        state = build_project_state(project_dir)
+        result = _scan(state)
+        ids = [f["id"] for f in result["findings"]]
+
+        assert "storage-lint:cross-location-duplicate-id:ISSUE-001" in ids, (
+            f"cross-location duplicate finding must remain, got: {ids}"
+        )
+        assert "file-diagnostics:duplicate-id:ISSUE-001" not in ids, (
+            f"same-directory duplicate-id must be superseded by the cross-location "
+            f"finding for ISSUE-001, got: {ids}"
+        )
+
+    def test_same_dir_only_dup_still_fires(self, tmp_path, fake_home):
+        # No cross-location collision — a purely same-directory duplicate must
+        # still produce its own duplicate-id finding.
+        project_dir = build_fixture(tmp_path, overrides={
+            "backlog_files": [
+                {"name": "ISSUE-005-first.md", "frontmatter": {
+                    "id": "ISSUE-005", "type": "story", "title": "First", "status": "active",
+                }},
+                {"name": "ISSUE-005-second.md", "frontmatter": {
+                    "id": "ISSUE-005", "type": "story", "title": "Second", "status": "active",
+                }},
+            ],
+        })
+        state = build_project_state(project_dir)
+        result = _scan(state)
+        ids = [f["id"] for f in result["findings"]]
+
+        assert "file-diagnostics:duplicate-id:ISSUE-005" in ids, (
+            f"same-directory-only duplicate-id must still fire, got: {ids}"
+        )
+        assert "storage-lint:cross-location-duplicate-id:ISSUE-005" not in ids, (
+            f"no cross-location finding should exist for a same-dir-only dup, got: {ids}"
+        )
+
+
+class TestT3eStep7RescanAfterDelegation:
+    """Each Step-7 prompted-fix delegation handler must carry the
+    'run the full scan and continue with fresh findings' instruction that the
+    Step 1a delegation handoffs carry."""
+
+    def _step7(self):
+        skill = (
+            Path(__file__).parents[1] / "skills" / "doctor" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        start = skill.index("## Step 7")
+        nxt = skill.find("\n## ", start)
+        return skill[start:nxt] if nxt != -1 else skill[start:]
+
+    def test_step7_handlers_reference_rescan_after_delegation(self):
+        section = self._step7()
+        lowered = section.lower()
+        # The Step 1a handoffs say "run the full scan and continue with ... findings".
+        # Step 7's delegation handlers must carry the same re-scan instruction.
+        assert "run the full scan" in lowered or "re-run the scan" in lowered or \
+               "rerun the scan" in lowered or "run the scan" in lowered, (
+            "Step 7 delegation handlers must instruct running the full scan after "
+            "the delegated skill/flow completes"
+        )
+
+    def test_each_step7_delegation_handler_has_rescan(self):
+        section = self._step7()
+        # The four prompted-fix delegations in Step 7: schema migration (runner.py),
+        # taxonomy (migrate_taxonomy.py), v3-to-v4 (migrate-v3-to-v4.py), and
+        # purge/re-onboard. Each handler bullet must mention rescanning/continuing
+        # after the delegated skill completes.
+        handlers = ["runner.py", "migrate_taxonomy.py", "migrate-v3-to-v4.py", "Purge"]
+        bullets = [b for b in section.split("\n- ") if b.strip()]
+        for handler in handlers:
+            matching = [b for b in bullets if handler in b]
+            assert matching, f"Step 7 must contain a delegation handler for {handler}"
+            for b in matching:
+                low = b.lower()
+                assert ("scan" in low and ("continue" in low or "fresh" in low or "again" in low)), (
+                    f"Step 7 handler for {handler} must carry the "
+                    f"re-scan-after-delegation instruction; got bullet: {b[:300]!r}"
+                )
