@@ -373,7 +373,8 @@ def check_state_integrity(state: ProjectState) -> list[Finding]:
             fix_type="auto",
             fix_recipe={"action": "run_script",
                         "cmd": ["bash", str(Path.home() / ".claude" / "hooks" / "sweetclaude" / "generate-session-state.sh")],
-                        "args": []},
+                        "args": [],
+                        "regenerates": [".sweetclaude/state/session-state.yaml"]},
         ))
 
     if state.sweetclaude_yaml:
@@ -431,7 +432,8 @@ def check_state_integrity(state: ProjectState) -> list[Finding]:
                 fix_type="auto",
                 fix_recipe={"action": "run_script",
                             "cmd": ["bash", str(Path.home() / ".claude" / "hooks" / "sweetclaude" / "generate-session-state.sh")],
-                            "args": []},
+                            "args": [],
+                            "regenerates": [".sweetclaude/state/session-state.yaml"]},
             ))
 
     return findings
@@ -2574,6 +2576,52 @@ def _record_mutation(
     )
 
 
+def _record_subprocess_mutations(
+    archive_path: Path, recipe: dict, targets: list[Path],
+    before_map: dict[Path, bytes],
+) -> RecipeResult:
+    """Back up + diff the file(s) a subprocess action regenerated.
+
+    run_script and rebuild_cache run an external script that rewrites derived/
+    cache state. The caller captures each target's bytes BEFORE running and
+    passes them here. For every target whose content actually changed, this
+    routes the (before, after) pair through ``_record_mutation`` so a before/
+    image and a unified diff are recorded — making the subprocess output
+    reversible by ``restore`` exactly like an in-process file mutation.
+
+    The first changed target is threaded onto ``recipe["file"]`` so the
+    ``auto_fix`` action entry keys ``restore`` to it; any additional changed
+    targets are threaded onto ``recipe["extra_files"]`` so ``auto_fix`` can emit
+    one extra action entry per file. If nothing changed, the result reports a
+    no-op (before == after) with no backup. If no targets were declared, the
+    result is honestly reversible:false (backup_path is None).
+    """
+    changed: list[tuple[Path, bytes, bytes]] = []
+    for tp in targets:
+        before = before_map.get(tp, b"")
+        after = tp.read_bytes() if tp.exists() else b""
+        if before != after:
+            changed.append((tp, before, after))
+
+    if not changed:
+        # No declared target changed (or none declared): no authored before-
+        # image. Report a no-op success; restore reports reversible:false.
+        return RecipeResult("", "", None, None, True)
+
+    primary_path, primary_before, primary_after = changed[0]
+    primary = _record_mutation(archive_path, primary_path, primary_before, primary_after)
+    recipe["file"] = str(primary_path)
+
+    extra: list[str] = []
+    for tp, before, after in changed[1:]:
+        _record_mutation(archive_path, tp, before, after)
+        extra.append(str(tp))
+    if extra:
+        recipe["extra_files"] = extra
+
+    return primary
+
+
 def write_manifest(archive_path: Path, manifest: dict) -> None:
     path = archive_path / "manifest.json"
     tmp = path.with_suffix(".tmp")
@@ -3185,35 +3233,49 @@ def execute_recipe(
             raise ValueError(
                 f"Script '{script_name}' not in allowlist: {RUN_SCRIPT_ALLOWLIST}"
             )
+        # `regenerates` names the file(s) the script rewrites. Capture their
+        # bytes BEFORE running so each changed target is routed through
+        # _record_mutation (before/ image + diff) and is reversible by restore.
+        # Absent/empty: fall back to fire-and-forget, honestly reversible:false.
+        targets: list[Path] = []
+        before_map: dict[Path, bytes] = {}
+        for rel in (recipe.get("regenerates") or []):
+            tp = Path(rel)
+            if not tp.is_absolute():
+                tp = project_dir / tp
+            targets.append(tp)
+            before_map[tp] = tp.read_bytes() if tp.exists() else b""
         result = subprocess.run(
             cmd + recipe.get("args", []),
             cwd=project_dir, capture_output=True, timeout=30,
         )
-        return RecipeResult(
-            finding_id="",
-            before_hash="",
-            after_hash=None,
-            backup_path=None,
-            success=result.returncode == 0,
-            error=result.stderr.decode() if result.returncode != 0 else None,
-        )
+        if result.returncode != 0:
+            return RecipeResult(
+                finding_id="", before_hash="", after_hash=None,
+                backup_path=None, success=False, error=result.stderr.decode(),
+            )
+        return _record_subprocess_mutations(archive_path, recipe, targets, before_map)
 
     if action == "rebuild_cache":
         cache_script = _SCRIPTS_DIR / "cache.py"
         if not cache_script.exists():
             raise DependencyMissing("cache.py not found")
+        # Capture the cache file's bytes before the rebuild so it is backed up,
+        # diffed, and reverted byte-identically by restore. A missing cache
+        # pre-rebuild is a create (before = b""): restore reverts to empty.
+        cache_path = project_dir / ".sweetclaude" / "cache" / "roadmap.db"
+        before = cache_path.read_bytes() if cache_path.exists() else b""
         result = subprocess.run(
             [sys.executable, str(cache_script), "--project-dir", str(project_dir), "--rebuild"],
             cwd=project_dir, capture_output=True, timeout=30,
         )
-        return RecipeResult(
-            finding_id="",
-            before_hash="",
-            after_hash=None,
-            backup_path=None,
-            success=result.returncode == 0,
-            error=result.stderr.decode() if result.returncode != 0 else None,
-        )
+        if result.returncode != 0:
+            return RecipeResult(
+                finding_id="", before_hash="", after_hash=None,
+                backup_path=None, success=False, error=result.stderr.decode(),
+            )
+        return _record_subprocess_mutations(
+            archive_path, recipe, [cache_path], {cache_path: before})
 
     if action == "create_dir":
         target = Path(recipe["path"])
@@ -3289,6 +3351,23 @@ def auto_fix(
             if recipe.get("moved_to"):
                 entry["moved_to"] = recipe["moved_to"]
             actions.append(entry)
+            # Subprocess actions (run_script/rebuild_cache) may regenerate more
+            # than one file. The primary changed target is recorded above via
+            # recipe["file"]; each additional changed target is threaded onto
+            # recipe["extra_files"] by _record_subprocess_mutations. Emit one
+            # extra action entry per file so `restore` reverses every backed-up
+            # target, not just the first.
+            for extra_file in recipe.get("extra_files", []):
+                actions.append({
+                    "action": "auto-fix",
+                    "finding_id": f["id"],
+                    "category": f["category"],
+                    "description": f["summary"],
+                    "file_path": extra_file,
+                    "before_hash": "",
+                    "after_hash": None,
+                    "timestamp": _now_iso(),
+                })
         except Exception as e:
             actions.append({
                 "action": "auto-fix-failed",

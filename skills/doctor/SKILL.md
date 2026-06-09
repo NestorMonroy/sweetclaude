@@ -89,10 +89,12 @@ outside the project git tree (e.g. `~/.claude` files) that a safety branch can't
    python3 ~/.claude/scripts/sweetclaude/doctor.py restore --project-dir . --archive-dir {run_dir} --all
    ```
 
-5. Report the result. `restored` lists the files reverted byte-for-byte; `skipped` lists any
-   with no archived before-image (`reversible:false` — e.g. cache/derived rebuilds). Tell the
-   user any skipped files were not archive-reversible, and if that run created a git safety
-   branch, point to it as the fallback. Stop after rollback unless the user asks for more.
+5. Report the result. `restored` lists the files reverted byte-for-byte (this now includes
+   cache rebuilds and script-regenerated state — `rebuild_cache` and `run_script` capture the
+   regenerated file's bytes before running and back them up); `skipped` lists any action with
+   no archived before-image (`reversible:false`). Tell the user any skipped files were not
+   archive-reversible, and if that run created a git safety branch, point to it as the fallback.
+   Stop after rollback unless the user asks for more.
 
 ## Step 1a: Maintenance route preflight
 

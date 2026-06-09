@@ -4552,6 +4552,271 @@ class TestAutoFix:
         assert "not in allowlist" in result["actions"][0]["error"]
 
     # ------------------------------------------------------------------
+    # P1-Tier2: rebuild_cache + run_script routed through the backup pipeline
+    # (PRD absolute invariants P2/P7/T1h/S6 — every mutation backed up,
+    # rollback always possible). NO MOCKS — real cache.py / real stub scripts.
+    # ------------------------------------------------------------------
+
+    def test_rebuild_cache_backs_up_and_restores_existing_cache(
+        self, tmp_path, fake_home, patch_scripts_dir
+    ):
+        # A pre-existing cache file whose rebuild CHANGES it must be captured
+        # before/, diffed, and reversed byte-identically by restore.
+        from cache import db_path as _db_path
+
+        project_dir = build_fixture(tmp_path)
+        cache_path = Path(_db_path(str(project_dir)))
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        original = b"PRE-EXISTING CACHE BYTES (not a real db)\n"
+        cache_path.write_bytes(original)
+
+        # a real cache.py at the patched _SCRIPTS_DIR that rewrites the cache
+        # file to different bytes on --rebuild (so before != after)
+        cache_script = patch_scripts_dir / "cache.py"
+        cache_script.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys, os\n"
+            "args = sys.argv\n"
+            "pd = args[args.index('--project-dir') + 1]\n"
+            "dbp = os.path.join(pd, '.sweetclaude', 'cache', 'roadmap.db')\n"
+            "os.makedirs(os.path.dirname(dbp), exist_ok=True)\n"
+            "open(dbp, 'wb').write(b'REBUILT CACHE BYTES - different\\n')\n"
+            "sys.exit(0)\n"
+        )
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {"action": "rebuild_cache"}, archive)
+        assert result.success is True, f"rebuild_cache must succeed: {result.error}"
+        assert result.before_hash != result.after_hash, (
+            "a real cache rebuild must report before != after")
+
+        # P2 — before/ image keyed to the cache path holds the original bytes
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(cache_path))
+        assert before_entry.exists(), "rebuild_cache must record a before/ image"
+        assert before_entry.read_bytes() == original
+
+        # P7 — non-empty diffs/ entry
+        diff_entry = (archive / "diffs"
+                      / (_p0_doctor._sanitize_path(str(cache_path)) + ".diff"))
+        assert diff_entry.exists() and diff_entry.stat().st_size > 0, (
+            "rebuild_cache must record a non-empty diffs/ entry")
+
+    def test_rebuild_cache_restores_cache_byte_identically_via_autofix(
+        self, tmp_path, fake_home, patch_scripts_dir
+    ):
+        # End-to-end through auto_fix (the skill's path) + restore: the cache
+        # is reverted byte-identically. S6.
+        from cache import db_path as _db_path
+
+        project_dir = build_fixture(tmp_path)
+        cache_path = Path(_db_path(str(project_dir)))
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        original = b"ORIGINAL CACHE v1\n"
+        cache_path.write_bytes(original)
+
+        cache_script = patch_scripts_dir / "cache.py"
+        cache_script.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys, os\n"
+            "args = sys.argv\n"
+            "pd = args[args.index('--project-dir') + 1]\n"
+            "dbp = os.path.join(pd, '.sweetclaude', 'cache', 'roadmap.db')\n"
+            "os.makedirs(os.path.dirname(dbp), exist_ok=True)\n"
+            "open(dbp, 'wb').write(b'REBUILT CACHE v2\\n')\n"
+            "sys.exit(0)\n"
+        )
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "storage-lint:counter-drift:issue",
+            "category": "storage_lint",
+            "summary": "Counter drift",
+            "fix_type": "auto",
+            "fix_recipe": {"action": "rebuild_cache"},
+        }
+        result = auto_fix(project_dir, [finding], archive)
+        assert result["actions"][0]["action"] == "auto-fix"
+        assert cache_path.read_bytes() != original, "rebuild must have changed the cache"
+
+        res = _p0_doctor.restore(project_dir, archive, restore_all=True)
+        assert res["restored"], "restore must report reversing the cache rebuild"
+        assert cache_path.read_bytes() == original, (
+            "restore must revert the cache byte-identically")
+
+    def test_rebuild_cache_first_build_treats_before_as_create(
+        self, tmp_path, fake_home, patch_scripts_dir
+    ):
+        # No pre-existing cache: before is b"" (a create). restore removes it.
+        from cache import db_path as _db_path
+
+        project_dir = build_fixture(tmp_path)
+        cache_path = Path(_db_path(str(project_dir)))
+        if cache_path.exists():
+            cache_path.unlink()
+        assert not cache_path.exists(), "precondition: no cache yet"
+
+        cache_script = patch_scripts_dir / "cache.py"
+        cache_script.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys, os\n"
+            "args = sys.argv\n"
+            "pd = args[args.index('--project-dir') + 1]\n"
+            "dbp = os.path.join(pd, '.sweetclaude', 'cache', 'roadmap.db')\n"
+            "os.makedirs(os.path.dirname(dbp), exist_ok=True)\n"
+            "open(dbp, 'wb').write(b'FIRST BUILD\\n')\n"
+            "sys.exit(0)\n"
+        )
+        archive = create_archive(project_dir)
+
+        # drive through auto_fix so the action is recorded and restore can act
+        finding = {
+            "id": "storage-lint:counter-drift:issue",
+            "category": "storage_lint",
+            "summary": "first cache build",
+            "fix_type": "auto",
+            "fix_recipe": {"action": "rebuild_cache"},
+        }
+        result = auto_fix(project_dir, [finding], archive)
+        assert result["actions"][0]["action"] == "auto-fix"
+        assert cache_path.exists(), "rebuild must create the cache"
+
+        # before-image holds b"" (a create); restore reverts the content to the
+        # pre-build state (empty) — the cache's content before the first build.
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(cache_path))
+        assert before_entry.exists() and before_entry.read_bytes() == b"", (
+            "first build records an empty before-image (a create)")
+        res = _p0_doctor.restore(project_dir, archive, restore_all=True)
+        assert res["restored"], "restore must act on the create"
+        assert cache_path.read_bytes() == b"", (
+            "restoring a create reverts to empty content")
+
+    def test_run_script_with_regenerates_backs_up_and_restores(
+        self, tmp_path, fake_home
+    ):
+        # A run_script recipe declaring regenerates=[session-state.yaml] running
+        # a stub that rewrites that file -> before/ image + diff recorded, and
+        # restore reverts it byte-identically. P2/P7/S6 for run_script.
+        project_dir = build_fixture(tmp_path)
+        ss = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        original = ss.read_bytes()
+        assert original, "fixture writes session-state.yaml"
+
+        scripts_dir = project_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        stub = scripts_dir / "generate-session-state.sh"
+        stub.write_text(
+            "#!/bin/bash\n"
+            "cat > .sweetclaude/state/session-state.yaml <<'EOF'\n"
+            "paths:\n  product_base: .sweetclaude/REGENERATED\n"
+            "EOF\n"
+        )
+        stub.chmod(0o755)
+        archive = create_archive(project_dir)
+
+        recipe = {
+            "action": "run_script",
+            "cmd": ["bash", str(stub)],
+            "args": [],
+            "regenerates": [".sweetclaude/state/session-state.yaml"],
+        }
+        result = execute_recipe(project_dir, recipe, archive)
+        assert result.success is True, f"run_script must succeed: {result.error}"
+        assert ss.read_bytes() != original, "stub must have rewritten session-state"
+        assert result.before_hash != result.after_hash
+
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(ss))
+        assert before_entry.exists() and before_entry.read_bytes() == original, (
+            "run_script must back up each regenerated target")
+        diff_entry = (archive / "diffs"
+                      / (_p0_doctor._sanitize_path(str(ss)) + ".diff"))
+        assert diff_entry.exists() and diff_entry.stat().st_size > 0
+
+    def test_run_script_regenerates_restores_via_autofix(
+        self, tmp_path, fake_home
+    ):
+        # End-to-end through auto_fix + restore.
+        project_dir = build_fixture(tmp_path)
+        ss = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        original = ss.read_bytes()
+
+        scripts_dir = project_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        stub = scripts_dir / "generate-session-state.sh"
+        stub.write_text(
+            "#!/bin/bash\n"
+            "cat > .sweetclaude/state/session-state.yaml <<'EOF'\n"
+            "paths:\n  product_base: .sweetclaude/CHANGED\n"
+            "EOF\n"
+        )
+        stub.chmod(0o755)
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "state-integrity:missing:session-state.yaml",
+            "category": "state_integrity",
+            "summary": "session-state regenerated",
+            "fix_type": "auto",
+            "fix_recipe": {
+                "action": "run_script",
+                "cmd": ["bash", str(stub)],
+                "args": [],
+                "regenerates": [".sweetclaude/state/session-state.yaml"],
+            },
+        }
+        result = auto_fix(project_dir, [finding], archive)
+        assert result["actions"][0]["action"] == "auto-fix"
+        assert ss.read_bytes() != original, "stub must have rewritten the file"
+
+        res = _p0_doctor.restore(project_dir, archive, restore_all=True)
+        assert res["restored"], "restore must reverse the regenerated file"
+        assert ss.read_bytes() == original, (
+            "restore must revert the regenerated file byte-identically")
+
+    def test_run_script_without_regenerates_is_reversible_false_not_crash(
+        self, tmp_path, fake_home
+    ):
+        # Absent/empty regenerates: fall back to current behavior, honestly
+        # reporting reversible:false (no before-image) without crashing.
+        project_dir = build_fixture(tmp_path)
+        scripts_dir = project_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        stub = scripts_dir / "generate-session-state.sh"
+        stub.write_text("#!/bin/bash\nexit 0\n")
+        stub.chmod(0o755)
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "run_script",
+            "cmd": ["bash", str(stub)],
+        }, archive)
+        assert result.success is True, f"run_script must succeed: {result.error}"
+        assert result.backup_path is None, (
+            "no regenerates -> no backup -> reversible:false, honestly")
+        assert list((archive / "before").iterdir()) == [], (
+            "no regenerates means no before-image recorded")
+
+    def test_state_integrity_run_script_recipe_declares_regenerates(
+        self, tmp_path, fake_home, patch_scripts_dir
+    ):
+        # The emitting check (missing session-state.yaml) must populate
+        # regenerates so the executor can back up what the script rewrites.
+        project_dir = build_fixture(tmp_path)
+        ss = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss.unlink()
+        state = build_project_state(project_dir)
+        findings = check_state_integrity(state)
+        run_findings = [
+            f for f in findings
+            if (f.fix_recipe or {}).get("action") == "run_script"
+        ]
+        assert run_findings, "missing session-state must emit a run_script fix"
+        for f in run_findings:
+            regen = f.fix_recipe.get("regenerates")
+            assert regen, f"{f.id}: run_script recipe must declare regenerates"
+            assert any("session-state.yaml" in r for r in regen), (
+                f"{f.id}: must name session-state.yaml as regenerated")
+
+    # ------------------------------------------------------------------
     # Filtering
     # ------------------------------------------------------------------
 
@@ -8584,13 +8849,22 @@ _CONTENT_MUTATING_ACTIONS = frozenset({
     "renumber_duplicate",
 })
 
-# Explicitly reversible:false — derived/cache regenerable output, no authored
-# before-image. Allowlisted so the script can never quietly grow another
-# un-backed-up mutation under this banner.
-_REVERSIBLE_FALSE_ACTIONS = frozenset({
+# Backed-up subprocess actions — run an external script/rebuild but capture the
+# bytes of the file(s) they regenerate (the cache file for rebuild_cache; the
+# recipe's `regenerates` targets for run_script) BEFORE running, then route each
+# changed target through _record_mutation. They are backed up, diffed, and
+# reversible by restore — closing PRD invariants P2/P7/T1h/S6.
+_BACKED_UP_SUBPROCESS_ACTIONS = frozenset({
     "run_script",
     "rebuild_cache",
 })
+
+# Explicitly reversible:false — derived/regenerable output that carries no
+# authored before-image. Kept (empty is fine) as an allowlist so the script can
+# never quietly grow an un-backed-up mutation under this banner: any new action
+# placed here is a deliberate, reviewed exception, and the partition test still
+# forces every supported action into exactly one class.
+_REVERSIBLE_FALSE_ACTIONS = frozenset()
 
 # Presentation-only — surfaced for user approval, never executed by the
 # executor as a file mutation.
@@ -8740,6 +9014,7 @@ class TestP1ExecutorInvariants:
 
         union = (
             _CONTENT_MUTATING_ACTIONS
+            | _BACKED_UP_SUBPROCESS_ACTIONS
             | _REVERSIBLE_FALSE_ACTIONS
             | _PRESENTATION_ONLY_ACTIONS
         )
@@ -8769,9 +9044,16 @@ class TestP1ExecutorInvariants:
     def test_classification_sets_are_disjoint(self):
         # Each action belongs to exactly one class — no action is both
         # backed-up and reversible:false, etc.
-        assert not (_CONTENT_MUTATING_ACTIONS & _REVERSIBLE_FALSE_ACTIONS)
-        assert not (_CONTENT_MUTATING_ACTIONS & _PRESENTATION_ONLY_ACTIONS)
-        assert not (_REVERSIBLE_FALSE_ACTIONS & _PRESENTATION_ONLY_ACTIONS)
+        sets = [
+            _CONTENT_MUTATING_ACTIONS,
+            _BACKED_UP_SUBPROCESS_ACTIONS,
+            _REVERSIBLE_FALSE_ACTIONS,
+            _PRESENTATION_ONLY_ACTIONS,
+        ]
+        for i in range(len(sets)):
+            for j in range(i + 1, len(sets)):
+                assert not (sets[i] & sets[j]), (
+                    f"classification sets {i} and {j} overlap: {sets[i] & sets[j]}")
 
     # ----- 2a. every content-mutating action backs up + diffs + reverses ----
 
@@ -8868,39 +9150,120 @@ class TestP1ExecutorInvariants:
         assert result2.before_hash == result2.after_hash, (
             "create_dir on an existing dir must be a no-op (before == after)")
 
-    # ----- 2c. reversible:false actions carry no authored before-image -----
+    # ----- 2c. backed-up subprocess actions: regenerated targets are backed
+    # up, diffed, and restorable (PRD P2/P7/T1h/S6) ------------------------
 
-    def test_reversible_false_actions_record_no_before_image(
+    def test_backed_up_subprocess_rebuild_cache_backs_up_diffs_restores(
         self, tmp_path, fake_home, patch_scripts_dir
     ):
-        # run_script / rebuild_cache regenerate derived/cache state — they have
-        # no authored before-image and restore reports them skipped rather than
-        # failing. Confirm they do not write a before/ image (the allowlist
-        # invariant: only these two may mutate without a backup).
-        from doctor import RUN_SCRIPT_ALLOWLIST
+        # rebuild_cache captures the cache file's bytes before rebuild, then
+        # routes them through _record_mutation: before/ image + diffs/ entry,
+        # reversible by restore. NO MOCKS — a real cache.py that rewrites bytes.
+        from cache import db_path as _db_path
 
-        # rebuild_cache: point _SCRIPTS_DIR at a real cache.py that exits 0
-        cache_script = patch_scripts_dir / "cache.py"
-        cache_script.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n")
+        assert "rebuild_cache" in _BACKED_UP_SUBPROCESS_ACTIONS
         project_dir = build_fixture(tmp_path)
+        cache_path = Path(_db_path(str(project_dir)))
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        original = b"CAPSTONE CACHE original bytes\n"
+        cache_path.write_bytes(original)
+
+        cache_script = patch_scripts_dir / "cache.py"
+        cache_script.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys, os\n"
+            "args = sys.argv\n"
+            "pd = args[args.index('--project-dir') + 1]\n"
+            "dbp = os.path.join(pd, '.sweetclaude', 'cache', 'roadmap.db')\n"
+            "os.makedirs(os.path.dirname(dbp), exist_ok=True)\n"
+            "open(dbp, 'wb').write(b'CAPSTONE CACHE rebuilt bytes\\n')\n"
+            "sys.exit(0)\n"
+        )
         archive = create_archive(project_dir)
 
-        result = execute_recipe(
-            project_dir, {"action": "rebuild_cache"}, archive)
-        assert result.success is True, f"rebuild_cache must succeed: {result.error}"
-        assert list((archive / "before").iterdir()) == [], (
-            "rebuild_cache must not record a before/ image (reversible:false)")
+        # drive through auto_fix — the skill's path — so the action is recorded
+        # to actions.json and restore can reverse it.
+        finding = {
+            "id": "capstone:rebuild_cache",
+            "category": "capstone",
+            "summary": "capstone rebuild_cache",
+            "fix_type": "prompted",
+            "fix_recipe": {"action": "rebuild_cache"},
+        }
+        result = auto_fix(project_dir, [finding], archive, include_prompted=True)
+        recorded = result["actions"]
+        assert recorded and recorded[0]["action"] == "auto-fix", (
+            f"rebuild_cache must record a successful auto-fix, got {recorded}")
+        assert recorded[0]["before_hash"] != recorded[0]["after_hash"], (
+            "a real cache rebuild must produce before != after")
 
-        # run_script: invoke an allowlisted script (cache.py) that exits 0
-        assert "cache.py" in RUN_SCRIPT_ALLOWLIST
-        archive2 = create_archive(project_dir)
-        result2 = execute_recipe(project_dir, {
-            "action": "run_script",
-            "cmd": [sys.executable, str(cache_script)],
-        }, archive2)
-        assert result2.success is True, f"run_script must succeed: {result2.error}"
-        assert list((archive2 / "before").iterdir()) == [], (
-            "run_script must not record a before/ image (reversible:false)")
+        # P2
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(cache_path))
+        assert before_entry.exists() and before_entry.read_bytes() == original, (
+            "rebuild_cache MUST record a before/ image of the cache")
+        # P7
+        diff_entry = (archive / "diffs"
+                      / (_p0_doctor._sanitize_path(str(cache_path)) + ".diff"))
+        assert diff_entry.exists() and diff_entry.stat().st_size > 0, (
+            "rebuild_cache MUST record a non-empty diffs/ entry")
+        # S6
+        res = _p0_doctor.restore(project_dir, archive, restore_all=True)
+        assert res["restored"], "restore must reverse the cache rebuild"
+        assert cache_path.read_bytes() == original, (
+            "restore must revert the cache byte-identically")
+
+    def test_backed_up_subprocess_run_script_backs_up_diffs_restores(
+        self, tmp_path, fake_home
+    ):
+        # run_script with regenerates=[session-state.yaml] backs up each
+        # regenerated target, diffs it, and is reversed by restore. NO MOCKS.
+        assert "run_script" in _BACKED_UP_SUBPROCESS_ACTIONS
+        project_dir = build_fixture(tmp_path)
+        ss = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        original = ss.read_bytes()
+
+        scripts_dir = project_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        stub = scripts_dir / "generate-session-state.sh"
+        stub.write_text(
+            "#!/bin/bash\n"
+            "cat > .sweetclaude/state/session-state.yaml <<'EOF'\n"
+            "paths:\n  product_base: .sweetclaude/CAPSTONE\n"
+            "EOF\n"
+        )
+        stub.chmod(0o755)
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "capstone:run_script",
+            "category": "capstone",
+            "summary": "capstone run_script",
+            "fix_type": "prompted",
+            "fix_recipe": {
+                "action": "run_script",
+                "cmd": ["bash", str(stub)],
+                "args": [],
+                "regenerates": [".sweetclaude/state/session-state.yaml"],
+            },
+        }
+        result = auto_fix(project_dir, [finding], archive, include_prompted=True)
+        recorded = result["actions"]
+        assert recorded and recorded[0]["action"] == "auto-fix", (
+            f"run_script must record a successful auto-fix, got {recorded}")
+        assert recorded[0]["before_hash"] != recorded[0]["after_hash"], (
+            "regenerating session-state must produce before != after")
+
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(ss))
+        assert before_entry.exists() and before_entry.read_bytes() == original, (
+            "run_script MUST back up each regenerated target")
+        diff_entry = (archive / "diffs"
+                      / (_p0_doctor._sanitize_path(str(ss)) + ".diff"))
+        assert diff_entry.exists() and diff_entry.stat().st_size > 0, (
+            "run_script MUST record a non-empty diffs/ entry")
+        res = _p0_doctor.restore(project_dir, archive, restore_all=True)
+        assert res["restored"], "restore must reverse the regenerated target"
+        assert ss.read_bytes() == original, (
+            "restore must revert the regenerated target byte-identically")
 
     # ----- 3. no skill-side direct file writes remain ----------------------
 
