@@ -6959,3 +6959,166 @@ def test_version_currency_advisory_classifies_as_guided(tmp_path, fake_home):
     }})
     f = check_version_currency(build_project_state(project))[0]
     assert classify_resolution(f) == RESOLUTION_GUIDED
+
+
+# ---------------------------------------------------------------------------
+# P0 characterization tests (doctor remediation plan §3, validation report V2).
+#
+# These lock the CURRENT correct behavior of the four execute_recipe branches
+# the upcoming `_record_mutation` refactor will touch. Each asserts an
+# OBSERVABLE EFFECT (characterization), not internals, and each was proven to
+# KILL the specific V2-surviving mutant for its branch. NO MOCKS — real
+# fixtures, real execute_recipe, real files.
+# ---------------------------------------------------------------------------
+
+import doctor as _p0_doctor
+
+
+class TestP0Characterization:
+
+    def test_sync_parent_status_syncs_parent_to_derived(self, tmp_path, fake_home):
+        # Parent epic EP-001 carries a clearly-wrong terminal status (done) while
+        # its sole child is non-terminal. derived_status(["active"]) == "active",
+        # so the executor must reopen the parent and write "active".
+        roadmap_files = [
+            {
+                "name": "epics/EP-001-test.md",
+                "frontmatter": {
+                    "id": "EP-001", "title": "Test Epic", "type": "epic",
+                    "status": "done", "created": "2026-01-01",
+                    "milestone": "MS-001", "source": "auto",
+                },
+            },
+            {
+                "name": "issues/ISSUE-100-test.md",
+                "frontmatter": {
+                    "id": "ISSUE-100", "title": "Child", "type": "enhancement",
+                    "status": "in-progress", "created": "2026-01-01",
+                    "epic": "EP-001",
+                },
+            },
+        ]
+        project_dir = build_fixture(tmp_path, overrides={"roadmap_files": roadmap_files})
+        epic_path = (
+            project_dir / ".sweetclaude" / "product" / "roadmap" / "epics" / "EP-001-test.md"
+        )
+
+        # Confirm the cache actually sees the child under EP-001 (the executor's
+        # own query) — otherwise sync would have nothing to derive from.
+        from cache import get_conn, rebuild as _rebuild
+        _rebuild(str(project_dir))
+        conn = get_conn(str(project_dir))
+        child_statuses = [
+            r["status"]
+            for r in conn.execute(
+                "SELECT status FROM items WHERE epic=? AND type NOT IN ('epic', 'milestone')",
+                ("EP-001",),
+            ).fetchall()
+        ]
+        conn.close()
+        assert child_statuses == ["active"], (
+            f"cache must see one non-terminal child; got {child_statuses}"
+        )
+
+        archive = create_archive(project_dir)
+        result = execute_recipe(
+            project_dir,
+            {
+                "action": "sync_parent_status",
+                "file": str(epic_path),
+                "parent_id": "EP-001",
+                "parent_type": "epic",
+            },
+            archive,
+        )
+
+        # success AND error is None means it actually changed; an unchanged
+        # ("already in sync") no-op would set error to "already in sync".
+        assert result.success is True
+        assert result.error is None
+
+        fm = yaml.safe_load(epic_path.read_text(encoding="utf-8-sig").split("---", 2)[1])
+        assert fm["status"] == "active"
+        assert fm["status"] != "done"
+
+    def test_convert_to_yaml_converts_bold_file(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        bold_path = project_dir / ".sweetclaude" / "product" / "backlog" / "ISSUE-042.md"
+        bold_path.write_text(
+            "# ISSUE-042: Build the widget\n\n"
+            "**Type:** net-new-feature\n"
+            "**Status:** active\n"
+            "**Created:** 2026-01-01\n\n"
+            "## Description\n\nSome body text.\n"
+        )
+
+        archive = create_archive(project_dir)
+        result = execute_recipe(
+            project_dir, {"action": "convert_to_yaml", "file": str(bold_path)}, archive
+        )
+
+        assert result.success is True
+        new_text = bold_path.read_text()
+        assert new_text.startswith("---")
+        fm = yaml.safe_load(new_text.split("---", 2)[1])
+        # Original fields are preserved through the conversion.
+        assert fm["id"] == "ISSUE-042"
+        assert fm["title"] == "Build the widget"
+        assert fm["type"] == "net-new-feature"
+        assert fm["status"] == "active"
+        assert fm["created"] == "2026-01-01"
+
+    def test_delete_file_records_diffs_entry(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        target = project_dir / ".sweetclaude" / "state" / "pending-drift-decision.yaml"
+        target.write_text("decision: pending\nfoo: bar\nbaz: qux\n")
+
+        archive = create_archive(project_dir)
+        result = execute_recipe(
+            project_dir, {"action": "delete_file", "file": str(target)}, archive
+        )
+
+        assert result.success is True
+        assert not target.exists()
+
+        # The before/ backup must exist.
+        before_dir = archive / "before"
+        before_entries = list(before_dir.iterdir())
+        assert before_entries, "delete_file must write a before/ backup"
+
+        # AND a non-empty diffs/ entry for the deleted file must exist — this is
+        # the gap V2 mutant #7 exploited (before/ written, diffs/ not).
+        diffs_dir = archive / "diffs"
+        expected_diff = diffs_dir / (_p0_doctor._sanitize_path(str(target)) + ".diff")
+        assert expected_diff.exists(), (
+            "delete_file must record a diffs/ entry for the deleted file"
+        )
+        assert expected_diff.stat().st_size > 0, "diffs/ entry must be non-empty"
+
+    def test_write_frontmatter_field_writes_value_through_executor(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        target = project_dir / ".sweetclaude" / "product" / "backlog" / "ISSUE-200.md"
+        _write_frontmatter_file(
+            target,
+            {
+                "id": "ISSUE-200", "title": "Thing", "type": "enhancement",
+                "status": "new", "created": "2026-01-01",
+            },
+            body="\n# Body\n",
+        )
+
+        archive = create_archive(project_dir)
+        result = execute_recipe(
+            project_dir,
+            {
+                "action": "write_frontmatter_field",
+                "file": str(target),
+                "key": "status",
+                "value": "active",
+            },
+            archive,
+        )
+
+        assert result.success is True
+        fm = yaml.safe_load(target.read_text().split("---", 2)[1])
+        assert fm["status"] == "active"
