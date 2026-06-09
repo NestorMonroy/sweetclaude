@@ -275,6 +275,55 @@ present a migration prompt unless `maintenance_route.status` is
 
 ---
 
+## Step 2c: Tier-4 fallback (re-onboard / remove)
+
+Read `resolution_summary.terminal_fallback` from the scan result. This is the
+last-resort exit for state nothing else can fix. The script computes a
+`terminal_fallback.triggers` dict; surface this menu ONLY when the situation
+genuinely warrants a last resort:
+
+- `terminal_fallback.triggers.any` is `true` — one of the three script-computed
+  triggers fired (`out_of_chain` = schema is outside the supported migration
+  chain, `uncorrectable_after_repair` = errors remained after a repair pass, or
+  `recovery_looped` = recovery stopped itself in a loop), **OR**
+- the user explicitly asked to remove SweetClaude, re-onboard, or start fresh
+  (treat this as `user_requested` — it is skill-set, never script-computed, and
+  is not part of `triggers.any`).
+
+If `triggers.any` is `false` and there is no explicit user request, **skip this
+step silently** and continue to Step 3. Do not mention Tier-4.
+
+When surfacing, first state plainly which trigger fired and that normal fixes
+cannot resolve it (name the specific trigger — out-of-chain schema, uncorrectable
+after repair, recovery loop, or "you asked to start fresh"):
+
+> Normal fixes can't resolve this — {trigger reason}. Here are the last-resort
+> options. The first two are destructive; both snapshot/preserve before acting.
+
+Present via AskUserQuestion:
+
+- **Re-onboard from scratch** — "Archive existing state to `.sweetclaude.legacy/<timestamp>/` (preserved, not auto-imported), then re-onboard the existing project fresh." Archive through the script, then hand off to init:
+  ```bash
+  python3 ~/.claude/scripts/sweetclaude/recovery/re_adopt.py execute --project-dir .
+  ```
+  Parse the JSON. On `ok: true`, report the `legacy_path` and tell the user their
+  old state is preserved there for manual reference (init does not auto-import
+  it), then invoke `sweetclaude:init` to re-onboard against the now-clean
+  project. On `ok: false`, surface the `reason` and return to this menu.
+- **Remove SweetClaude entirely** — "Clean break — no legacy archive." Invoke
+  `sweetclaude:purge`. Purge owns its own confirmation gate and snapshot; do not
+  pre-delete anything from the skill.
+- **Continue with normal fixes** — "Leave SweetClaude in place and proceed to the
+  normal fix flow." Continue to Step 3.
+
+Both destructive options delegate entirely to the owning script/skill, which keep
+their own gates and backups. The skill never moves, copies, or writes any file
+here — the re-onboard archive is done by `re_adopt.py execute` and the removal by
+`sweetclaude:purge`. If the user picks "Continue with normal fixes", proceed to
+Step 3.
+
+---
+
 ## Step 3: Pre-fix menu
 
 If no findings have `fix_type` of `auto` or `prompted`, skip to Step 8.

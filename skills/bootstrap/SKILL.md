@@ -286,23 +286,29 @@ If `DRIFT_COUNT > 0`: the binary prompt depends on `CASE`.
 > "This project's SweetClaude state files are too old for automatic migration (out of framework support window). How would you like to proceed?"
 >
 > Options:
-> - **Re-onboard from scratch** — archive existing SweetClaude content and run `/sweetclaude:adopt` against a fresh state. Your old files stay as reference; adopt does not auto-import them.
+> - **Re-onboard from scratch** — archive existing SweetClaude content and run `/sweetclaude:init` against a fresh state. Your old files stay as reference; init does not auto-import them.
 > - **Remove SweetClaude from this project (re-onboarding required to reactivate)** — invoke `sweetclaude:purge`.
 
 ### Re-onboarding flow (Case B → Re-onboard from scratch)
 
+Archive `.sweetclaude/` aside through the re-adopt script (reversible, no inline
+`mv`), then mirror any relocated artifact bases into the same legacy tree:
+
 ```bash
-TS=$(date -u +%Y%m%d-%H%M%S)
-LEGACY=".sweetclaude.legacy/$TS"
-mkdir -p ".sweetclaude.legacy"
-if [ -d .sweetclaude ]; then
-  mv .sweetclaude "$LEGACY"
-fi
+RA=$(python3 ~/.claude/scripts/sweetclaude/recovery/re_adopt.py execute --project-dir .)
+LEGACY=$(python3 -c "import json,sys;print(json.loads(sys.stdin.read())['legacy_path'])" <<<"$RA")
 python3 ~/.claude/scripts/sweetclaude/maintenance/archive-sweetclaude-dir.py "$LEGACY"
-echo "Moved existing SweetClaude content to $LEGACY/ — adopt will use it as reference, not auto-migrate."
+echo "Archived existing SweetClaude content to $LEGACY/ — init will use it as reference, not auto-migrate."
 ```
 
-Then invoke `sweetclaude:adopt`. Adopt runs against the now-empty project. The legacy tree at `.sweetclaude.legacy/<timestamp>/` is visible to the user during onboarding so they can manually port content as needed.
+`re_adopt.py execute` moves `.sweetclaude/` into `.sweetclaude.legacy/<timestamp>/`
+and reports `legacy_path`; the archive helper then relocates the artifact bases
+(e.g. `docs/product`) under that same path.
+
+Then invoke `sweetclaude:init`. Init runs against the now-empty project and
+re-onboards the existing source. The legacy tree at
+`.sweetclaude.legacy/<timestamp>/` is visible to the user during onboarding so
+they can manually port content as needed; init does not auto-import it.
 
 There is no "Not now" option in either case. No third path. Stop after the user picks.
 

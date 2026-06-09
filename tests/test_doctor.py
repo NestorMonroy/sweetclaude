@@ -9596,3 +9596,78 @@ class TestP2Tier4Fallback:
         assert triggers["recovery_looped"] is False
         assert triggers["user_requested"] is False
         assert triggers["any"] is False
+
+
+# ---------------------------------------------------------------------------
+# P2.2 Tier-4 fallback surfacing — SKILL RENDER half (doctor remediation plan
+# §5, §8.4). The script contract landed in P2.1; this is the skill that reads
+# resolution_summary.terminal_fallback and renders the last-resort menu. These
+# are structural assertions over SKILL.md — the render logic must be present,
+# delegate every mutation to a script/skill, and never name a ghost
+# 'sweetclaude:adopt' skill.
+# ---------------------------------------------------------------------------
+
+
+class TestP2SkillRendersTier4:
+
+    def _skill(self):
+        return (
+            Path(__file__).parents[1] / "skills" / "doctor" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
+    def test_skill_has_step_2c_reading_terminal_fallback_triggers(self):
+        skill = self._skill()
+        assert "Step 2c" in skill, (
+            "SKILL.md must add a Step 2c that surfaces the Tier-4 fallback")
+        # it reads the script-provided fallback object and its triggers
+        assert "terminal_fallback" in skill, (
+            "Step 2c must read resolution_summary.terminal_fallback")
+        assert "triggers" in skill, (
+            "Step 2c must gate on terminal_fallback.triggers")
+        assert "triggers.any" in skill or "triggers[\"any\"]" in skill or \
+            "`any`" in skill, (
+            "Step 2c must surface the menu only when triggers.any is True "
+            "(or on explicit user request)")
+
+    def test_step_2c_offers_reonboard_and_remove_routes(self):
+        skill = self._skill()
+        # Re-onboard route invokes the re_adopt CLI (no skill-side mv) then init.
+        assert "re_adopt.py" in skill, (
+            "Step 2c re-onboard route must invoke the re_adopt.py script "
+            "(archives .sweetclaude/ — no skill-side mv)")
+        assert "re_adopt.py execute" in skill, (
+            "Step 2c re-onboard route must call the execute subcommand")
+        assert "sweetclaude:init" in skill, (
+            "Step 2c re-onboard route hands off to sweetclaude:init")
+        # Remove route delegates to the purge skill (clean break).
+        assert "sweetclaude:purge" in skill, (
+            "Step 2c remove route must delegate to sweetclaude:purge")
+        # legacy archive is preserved, not auto-imported
+        assert ".sweetclaude.legacy" in skill, (
+            "Step 2c must state the re-onboard archives to .sweetclaude.legacy/")
+
+    def test_step_2c_does_not_reference_ghost_adopt_skill(self):
+        skill = self._skill()
+        # There is NO sweetclaude:adopt skill — re-adopt routes to init.
+        assert "sweetclaude:adopt" not in skill, (
+            "SKILL.md must not reference a nonexistent sweetclaude:adopt skill; "
+            "re-adopt routes to sweetclaude:init")
+
+    def test_step_2c_uses_no_inline_file_mutation(self):
+        # Step 2c must not introduce any skill-side mv/cp/write — every mutation
+        # routes through re_adopt.py (execute) or sweetclaude:purge. This is the
+        # same invariant the P1.8 capstone enforces globally; assert it here for
+        # the specific shell-mutation forms a re-onboard would tempt.
+        skill = self._skill()
+        # isolate the Step 2c section so we test the new render logic precisely
+        start = skill.index("Step 2c")
+        nxt = skill.find("\n## ", start)
+        section = skill[start:nxt] if nxt != -1 else skill[start:]
+        import re
+        for forbidden in ("mv ", "cp ", "shutil.move", "shutil.copy",
+                          ".write_text(", ".write_bytes(", "json.dump("):
+            assert forbidden not in section, (
+                f"Step 2c must not perform a direct file mutation ({forbidden!r}) "
+                f"— delegate to re_adopt.py / sweetclaude:purge")
+        assert not re.search(r"open\([^)]*,\s*['\"][wax]", section), (
+            "Step 2c must not open files for writing inline")

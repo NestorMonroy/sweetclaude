@@ -2,6 +2,8 @@
 classifier promises. Archives SweetClaude state aside (reversible) so a project
 can be re-onboarded, without touching source or relocated artifacts.
 """
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -73,3 +75,90 @@ def test_execute_refuses_if_no_sweetclaude(tmp_path):
     p.mkdir()
     result = re_adopt.execute_re_adopt(p)
     assert result["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# CLI entrypoint — the audit gap. Doctor (and the SKILL) must be able to drive
+# the re-onboard archive through a script invocation, never a skill-side mv. The
+# CLI reuses the existing functions; it does NOT reimplement the archiving.
+# NO MOCKS — real filesystem, real subprocess.
+# ---------------------------------------------------------------------------
+
+
+class TestReAdoptCLI:
+
+    def test_cli_plan_is_read_only_and_reports_init_next_step(self, tmp_path):
+        p = _project(tmp_path)
+        rc = re_adopt.main(["plan", "--project-dir", str(p)])
+        assert rc == 0
+        # dry-run touches nothing
+        assert (p / ".sweetclaude").is_dir()
+        assert not list(p.glob(".sweetclaude.legacy*"))
+
+    def test_cli_execute_archives_state_to_legacy_and_reports_init_next_step(
+        self, tmp_path, capsys
+    ):
+        p = _project(tmp_path)
+        before = {str(f.relative_to(p / ".sweetclaude"))
+                  for f in (p / ".sweetclaude").rglob("*") if f.is_file()}
+
+        rc = re_adopt.main(["execute", "--project-dir", str(p)])
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out)
+
+        assert out["ok"] is True
+        # archived to .sweetclaude.legacy/<ts>/
+        legacy = Path(out["legacy_path"])
+        assert legacy.exists()
+        assert legacy.parent.name == ".sweetclaude.legacy"
+        # root cleared for a fresh re-onboard
+        assert not (p / ".sweetclaude").exists()
+        # no data loss — every file preserved
+        after = {str(f.relative_to(legacy / ".sweetclaude"))
+                 for f in (legacy / ".sweetclaude").rglob("*") if f.is_file()}
+        assert after == before
+        # the JSON reports the init re-onboard as the next step (NOT a ghost
+        # 'adopt' skill)
+        assert "next_step" in out
+        assert "init" in out["next_step"].lower()
+        assert "adopt" not in out["next_step"].lower()
+
+    def test_cli_execute_leaves_project_code_untouched(self, tmp_path, capsys):
+        p = _project(tmp_path)
+        re_adopt.main(["execute", "--project-dir", str(p)])
+        capsys.readouterr()
+        assert (p / "src" / "app.py").read_text() == "print('hi')\n"
+        assert (p / "docs" / "product" / "backlog" / "ISSUE-001.md").exists()
+
+    def test_cli_execute_is_reversible(self, tmp_path, capsys):
+        p = _project(tmp_path)
+        re_adopt.main(["execute", "--project-dir", str(p)])
+        out = json.loads(capsys.readouterr().out)
+        # the archive can be undone — state restored to the project root
+        rev = re_adopt.reverse_re_adopt(p, out["legacy_path"])
+        assert rev["ok"] is True
+        assert (p / ".sweetclaude" / "state" / "phase.yaml").exists()
+
+    def test_cli_execute_refuses_if_no_sweetclaude(self, tmp_path, capsys):
+        p = tmp_path / "empty"
+        p.mkdir()
+        rc = re_adopt.main(["execute", "--project-dir", str(p)])
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is False
+        # a failed re-adopt is a non-zero exit so callers can detect it
+        assert rc != 0
+
+    def test_cli_runs_as_real_subprocess_entrypoint(self, tmp_path):
+        # End-to-end: doctor invokes this exactly as a process, not an import.
+        p = _project(tmp_path)
+        script = SCRIPTS_DIR / "recovery" / "re_adopt.py"
+        proc = subprocess.run(
+            [sys.executable, str(script), "execute", "--project-dir", str(p)],
+            capture_output=True, text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        out = json.loads(proc.stdout)
+        assert out["ok"] is True
+        assert Path(out["legacy_path"]).exists()
+        assert not (p / ".sweetclaude").exists()
+        assert "init" in out["next_step"].lower()
