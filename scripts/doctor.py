@@ -188,15 +188,121 @@ def _report_only_has_guidance(finding: Finding) -> bool:
     return any(m in (finding.detail or "") for m in _GUIDANCE_MARKERS)
 
 
-def _build_terminal_fallback(maintenance_route: dict) -> dict:
-    """The guaranteed no-data-loss exits when nothing else resolves a finding.
+def _trigger_out_of_chain(state: "ProjectState | None") -> bool:
+    """True if the migration runner reports a schema version OUTSIDE the
+    supported migration chain (any FINDING|...|chain=broken).
 
-    Re-adopt is the universal backstop: it works even when a layout has no
-    validated migrator. Both snapshot first.
+    Source primitive: runner.py --report-drift-for-skill, which emits
+    DRIFT_COUNT=N then FINDING|<key>|v<from>-><to>|chain=<ok|broken>. Degrades
+    gracefully to False if the runner is absent or errors (no crash)."""
+    if state is None or not getattr(state, "migration_runner_path", None):
+        return False
+    try:
+        r = subprocess.run(
+            [sys.executable, str(state.migration_runner_path),
+             "--report-drift-for-skill", "--project-dir", str(state.project_dir)],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    if r.returncode != 0:
+        return False
+    for line in r.stdout.splitlines():
+        if line.startswith("FINDING|") and line.rstrip().endswith("chain=broken"):
+            return True
+    return False
+
+
+def _trigger_uncorrectable_after_repair(state: "ProjectState | None") -> bool:
+    """True if the core sweetclaude.yaml has an unrecoverable parse error — the
+    best available signal that no state-file repair can fix the project.
+
+    Source primitive: the same YAML parse-detection check_state_integrity uses
+    (sweetclaude.yaml present on disk but state.sweetclaude_yaml is None because
+    it failed to parse). Degrades gracefully to False if the file is absent."""
+    if state is None:
+        return False
+    sc_yaml_path = state.project_dir / ".sweetclaude" / "state" / "sweetclaude.yaml"
+    if not sc_yaml_path.exists() or state.sweetclaude_yaml is not None:
+        return False
+    try:
+        yaml.safe_load(sc_yaml_path.read_text())
+    except yaml.YAMLError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def _trigger_recovery_looped(state: "ProjectState | None") -> bool:
+    """True if recover_project's recovery state signals a stopped/looped
+    recovery. We READ the signal recovery already computes — we do not
+    re-derive it.
+
+    Source primitive: recover_project writes execution-manifest.json under
+    .sweetclaude/state/recovery-runs/<run>/ with status="stopped" and
+    repair_loop.stop=True when should_stop_repair_loop fires. Degrades
+    gracefully to False if no recovery run exists or a manifest is unreadable."""
+    if state is None:
+        return False
+    runs_dir = state.project_dir / ".sweetclaude" / "state" / "recovery-runs"
+    if not runs_dir.is_dir():
+        return False
+    for run_dir in runs_dir.iterdir():
+        manifest_path = run_dir / "execution-manifest.json"
+        if not manifest_path.exists():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        repair_loop = manifest.get("repair_loop")
+        if isinstance(repair_loop, dict) and repair_loop.get("stop") is True:
+            return True
+        if manifest.get("status") == "stopped":
+            return True
+    return False
+
+
+def _build_terminal_fallback(
+    maintenance_route: dict,
+    state: "ProjectState | None" = None,
+    findings: "list[Finding] | None" = None,
+) -> dict:
+    """The guaranteed exits when nothing else resolves a finding.
+
+    Re-adopt is the universal no-data-loss backstop: it works even when a layout
+    has no validated migrator. Purge is the clean-break last resort. Both
+    full-migration and re-adopt snapshot first; purge snapshots first too as a
+    safety net even though it does not preserve data.
+
+    The `triggers` dict tells the SKILL WHEN to surface the Tier-4 menu. The
+    three script-computed triggers are SAFE on a healthy project (all False) and
+    degrade gracefully when the runner/recovery state is absent. `user_requested`
+    is never script-computed — it is a flag the skill sets on explicit user
+    request (default False) and does NOT feed `any`.
     """
     migration_available = maintenance_route.get("status") == "supported-migration-available"
+
+    out_of_chain = _trigger_out_of_chain(state)
+    uncorrectable_after_repair = _trigger_uncorrectable_after_repair(state)
+    recovery_looped = _trigger_recovery_looped(state)
+
+    triggers = {
+        "out_of_chain": out_of_chain,
+        "uncorrectable_after_repair": uncorrectable_after_repair,
+        "recovery_looped": recovery_looped,
+        # Skill-set only — never script-computed. The skill flips this on an
+        # explicit user request to surface Tier-4. Excluded from `any`.
+        "user_requested": False,
+        "any": bool(out_of_chain or uncorrectable_after_repair or recovery_looped),
+    }
+
     return {
         "always_available": True,
+        "triggers": triggers,
         "options": [
             {
                 "id": "full-migration",
@@ -216,16 +322,31 @@ def _build_terminal_fallback(maintenance_route: dict) -> dict:
                 "available": True,
                 "no_data_loss": True,
                 "snapshot_first": True,
-                "capability": "adopt",
+                # V8 / plan §8.4: re_adopt.py archives .sweetclaude/ then hands
+                # to sweetclaude:init as the re-onboard entry point. There is NO
+                # sweetclaude:adopt skill.
+                "capability": "init",
                 "executable": "scripts/recovery/re_adopt.py",
                 "plan_first": "recovery.re_adopt.plan_re_adopt",
                 "reversible": "recovery.re_adopt.reverse_re_adopt",
+            },
+            {
+                "id": "purge",
+                "label": "Remove SweetClaude entirely (clean break — no legacy archive)",
+                "available": True,
+                "no_data_loss": False,
+                "snapshot_first": True,
+                "capability": "purge",
             },
         ],
     }
 
 
-def _classify_all(findings: list[Finding], maintenance_route: dict) -> tuple[dict, dict]:
+def _classify_all(
+    findings: list[Finding],
+    maintenance_route: dict,
+    state: "ProjectState | None" = None,
+) -> tuple[dict, dict]:
     """Return (resolution_summary, per_finding_class). Totality guarantee:
     every finding maps to a class; if any is unresolved, the terminal fallback
     is present."""
@@ -240,7 +361,8 @@ def _classify_all(findings: list[Finding], maintenance_route: dict) -> tuple[dic
         "by_class": by_class,
         "unresolved_count": by_class.get(RESOLUTION_FALLBACK, 0),
         "all_findings_routed": True,  # true by construction of classify_resolution
-        "terminal_fallback": _build_terminal_fallback(maintenance_route),
+        "terminal_fallback": _build_terminal_fallback(
+            maintenance_route, state=state, findings=findings),
     }
     return summary, per_id
 
@@ -2482,7 +2604,8 @@ def _scan(
         active, project_state, maintenance_route,
     )
 
-    resolution_summary, _resolution_by_id = _classify_all(active, maintenance_route)
+    resolution_summary, _resolution_by_id = _classify_all(
+        active, maintenance_route, state=project_state)
     finding_dicts = []
     for f in active:
         d = asdict(f)

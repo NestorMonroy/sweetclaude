@@ -9312,3 +9312,287 @@ class TestP1ExecutorInvariants:
                     f"inline python in SKILL.md must be read-only, found: {line}")
                 assert not re.search(r"open\([^)]*,\s*['\"][wax]", line), (
                     f"inline python in SKILL.md must be read-only, found: {line}")
+
+
+# ---------------------------------------------------------------------------
+# P2 Tier-4 fallback surfacing — SCRIPT contract (doctor remediation plan §5,
+# §8.4). The terminal_fallback object must be COMPLETE (full-migration /
+# re-adopt / purge) and carry the script-computed triggers that tell the SKILL
+# WHEN to surface the Tier-4 menu. This is the script half only — these tests
+# never assert the skill renders/invokes the AskUserQuestion menu (false-green
+# guard #3); that is a separate behavioral increment.
+#
+# NO MOCKS — real fixtures, a real stub runner emitting the line format, and a
+# real recovery-runs execution-manifest carrying recover_project's repair-loop
+# signal.
+# ---------------------------------------------------------------------------
+
+import doctor as _p2_doctor
+
+
+class TestP2Tier4Fallback:
+
+    # ----- 1. the fallback object is complete: full-migration / re-adopt /
+    #          purge -----------------------------------------------------------
+
+    def test_terminal_fallback_includes_purge_clean_break_option(self):
+        from doctor import _build_terminal_fallback
+
+        tf = _build_terminal_fallback({"status": "compatibility-mode"})
+        opts = {o["id"]: o for o in tf["options"]}
+
+        # the existing two options remain
+        assert "full-migration" in opts
+        assert "re-adopt" in opts
+
+        # the new clean-break purge option
+        assert "purge" in opts, (
+            "terminal_fallback must offer a 'purge' clean-break option alongside "
+            "full-migration and re-adopt")
+        purge = opts["purge"]
+        assert purge["capability"] == "purge", (
+            "purge option must route to the purge capability (sweetclaude:purge)")
+        assert purge["no_data_loss"] is False, (
+            "purge is a clean break — it does NOT preserve data, so no_data_loss "
+            "must be False")
+        assert purge["snapshot_first"] is True, (
+            "purge must still snapshot first (last-resort safety net)")
+        assert "clean break" in purge["label"].lower(), (
+            "purge label must communicate it is a clean break with no legacy "
+            f"archive, got: {purge['label']!r}")
+        assert "no legacy archive" in purge["label"].lower()
+
+    # ----- 2. re-adopt hands off to init, not a nonexistent 'adopt' skill ----
+
+    def test_readopt_option_references_init_not_adopt(self):
+        from doctor import _build_terminal_fallback
+
+        tf = _build_terminal_fallback({"status": "compatibility-mode"})
+        readopt = {o["id"]: o for o in tf["options"]}["re-adopt"]
+
+        # V8 / plan §8.4: re-adopt archives .sweetclaude/ then routes to
+        # sweetclaude:init — there is NO sweetclaude:adopt skill.
+        assert readopt["capability"] == "init", (
+            "re-adopt must route to the 'init' re-onboard entry point (V8), "
+            f"not 'adopt'; got capability={readopt['capability']!r}")
+        # the executable that archives + hands to init is still re_adopt.py
+        assert readopt.get("executable") == "scripts/recovery/re_adopt.py", (
+            "re_adopt.py remains the executable that archives state and hands to init")
+        # the ghost 'adopt' must not appear anywhere in the option metadata
+        assert "adopt" not in str(readopt.get("capability", "")), (
+            "the 'adopt' ghost capability must be gone")
+
+    # ----- 3. healthy project: every trigger False --------------------------
+
+    def test_healthy_project_all_triggers_false(self, tmp_path, fake_home):
+        from doctor import _build_terminal_fallback, build_project_state
+
+        state = build_project_state(build_fixture(tmp_path))
+        tf = _build_terminal_fallback(
+            {"status": "no-maintenance-action"}, state=state, findings=[])
+        triggers = tf["triggers"]
+
+        assert triggers["out_of_chain"] is False
+        assert triggers["uncorrectable_after_repair"] is False
+        assert triggers["recovery_looped"] is False
+        assert triggers["user_requested"] is False  # default; skill-set only
+        assert triggers["any"] is False, (
+            "a healthy project must not surface Tier-4 — triggers.any must be False")
+
+    # ----- 4. out_of_chain: runner reports chain=broken ---------------------
+
+    def test_out_of_chain_true_when_runner_reports_chain_broken(
+        self, tmp_path, fake_home, patch_scripts_dir
+    ):
+        from doctor import _build_terminal_fallback, build_project_state
+
+        project_dir = build_fixture(tmp_path)
+        # A REAL stub runner that emits the --report-drift-for-skill line format
+        # with a chain=broken finding (schema outside the supported migration
+        # chain). NO MOCKS — doctor shells out to this exactly as in production.
+        runner_path = patch_scripts_dir / "migrations" / "runner.py"
+        runner_path.parent.mkdir(parents=True, exist_ok=True)
+        runner_path.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "if '--report-drift-for-skill' in sys.argv:\n"
+            "    print('DRIFT_COUNT=1')\n"
+            "    print('FINDING|sweetclaude.yaml|v9->v2|chain=broken')\n"
+            "    sys.exit(0)\n"
+            "sys.exit(0)\n"
+        )
+
+        state = build_project_state(project_dir)
+        tf = _build_terminal_fallback(
+            {"status": "no-maintenance-action"}, state=state, findings=[])
+
+        assert tf["triggers"]["out_of_chain"] is True, (
+            "a runner FINDING with chain=broken must set out_of_chain True")
+        assert tf["triggers"]["any"] is True
+
+    def test_out_of_chain_false_when_runner_reports_chain_ok(
+        self, tmp_path, fake_home, patch_scripts_dir
+    ):
+        from doctor import _build_terminal_fallback, build_project_state
+
+        project_dir = build_fixture(tmp_path)
+        runner_path = patch_scripts_dir / "migrations" / "runner.py"
+        runner_path.parent.mkdir(parents=True, exist_ok=True)
+        runner_path.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "if '--report-drift-for-skill' in sys.argv:\n"
+            "    print('DRIFT_COUNT=1')\n"
+            "    print('FINDING|sweetclaude.yaml|v1->v2|chain=ok')\n"
+            "    sys.exit(0)\n"
+            "sys.exit(0)\n"
+        )
+        state = build_project_state(project_dir)
+        tf = _build_terminal_fallback(
+            {"status": "no-maintenance-action"}, state=state, findings=[])
+        assert tf["triggers"]["out_of_chain"] is False, (
+            "chain=ok must NOT set out_of_chain")
+
+    def test_out_of_chain_false_when_runner_absent_no_crash(
+        self, tmp_path, fake_home
+    ):
+        from doctor import _build_terminal_fallback, build_project_state
+
+        # No runner present (migration_runner_path is None). Must degrade
+        # gracefully — trigger False, no crash.
+        project_dir = build_fixture(tmp_path)
+        state = build_project_state(project_dir)
+        state.migration_runner_path = None  # simulate absent runner explicitly
+        tf = _build_terminal_fallback(
+            {"status": "no-maintenance-action"}, state=state, findings=[])
+        assert tf["triggers"]["out_of_chain"] is False
+
+    # ----- 5. uncorrectable_after_repair: sweetclaude.yaml unparseable ------
+
+    def test_uncorrectable_after_repair_true_when_yaml_unparseable(
+        self, tmp_path, fake_home
+    ):
+        from doctor import _build_terminal_fallback, build_project_state
+
+        # A genuinely broken core config — a state-file repair cannot fix a
+        # core parse error, so Tier-4 is the honest path. Reuses
+        # check_state_integrity's parse detection.
+        project_dir = build_fixture(tmp_path, overrides={"sweetclaude_yaml": None})
+        sc_yaml = project_dir / ".sweetclaude" / "state" / "sweetclaude.yaml"
+        sc_yaml.write_text("framework: {installed_version: '4.0.8'\n  bad: [unclosed\n")
+
+        state = build_project_state(project_dir)
+        tf = _build_terminal_fallback(
+            {"status": "no-maintenance-action"}, state=state, findings=[])
+
+        assert tf["triggers"]["uncorrectable_after_repair"] is True, (
+            "an unparseable core sweetclaude.yaml must set uncorrectable_after_repair")
+        assert tf["triggers"]["any"] is True
+
+    def test_uncorrectable_after_repair_false_when_healthy(self, tmp_path, fake_home):
+        from doctor import _build_terminal_fallback, build_project_state
+
+        state = build_project_state(build_fixture(tmp_path))
+        tf = _build_terminal_fallback(
+            {"status": "no-maintenance-action"}, state=state, findings=[])
+        assert tf["triggers"]["uncorrectable_after_repair"] is False
+
+    # ----- 6. recovery_looped: consume recover_project's stop signal --------
+
+    def test_recovery_looped_true_when_recovery_state_signals_loop(
+        self, tmp_path, fake_home
+    ):
+        from doctor import _build_terminal_fallback, build_project_state
+
+        # Write a REAL recovery-runs execution-manifest exactly as
+        # recover_project.resume_project does when should_stop_repair_loop fires:
+        # status=stopped + repair_loop.stop=True. Doctor must READ this signal,
+        # not re-derive it. NO MOCKS.
+        project_dir = build_fixture(tmp_path)
+        run_dir = (project_dir / ".sweetclaude" / "state" / "recovery-runs"
+                   / "run-20260609-000000")
+        run_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "project_dir": str(project_dir),
+            "command": "resume",
+            "status": "stopped",
+            "resume_count": 3,
+            "repair_loop": {
+                "stop": True,
+                "reason": "attempt-budget-exhausted",
+                "route": "backlog-or-escalation",
+            },
+        }
+        (run_dir / "execution-manifest.json").write_text(json.dumps(manifest))
+
+        state = build_project_state(project_dir)
+        tf = _build_terminal_fallback(
+            {"status": "no-maintenance-action"}, state=state, findings=[])
+
+        assert tf["triggers"]["recovery_looped"] is True, (
+            "a recovery manifest with repair_loop.stop=True must set recovery_looped")
+        assert tf["triggers"]["any"] is True
+
+    def test_recovery_looped_false_when_no_recovery_state(self, tmp_path, fake_home):
+        from doctor import _build_terminal_fallback, build_project_state
+
+        # No recovery-runs at all — must degrade gracefully to False.
+        state = build_project_state(build_fixture(tmp_path))
+        tf = _build_terminal_fallback(
+            {"status": "no-maintenance-action"}, state=state, findings=[])
+        assert tf["triggers"]["recovery_looped"] is False
+
+    def test_recovery_looped_false_when_recovery_progressing(
+        self, tmp_path, fake_home
+    ):
+        from doctor import _build_terminal_fallback, build_project_state
+
+        # A recovery run that is progressing (not stopped) must NOT trip the
+        # trigger.
+        project_dir = build_fixture(tmp_path)
+        run_dir = (project_dir / ".sweetclaude" / "state" / "recovery-runs"
+                   / "run-20260609-111111")
+        run_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "project_dir": str(project_dir),
+            "command": "resume",
+            "status": "in_progress",
+            "resume_count": 1,
+            "repair_loop": {"stop": False, "reason": "progress-or-budget-remains"},
+        }
+        (run_dir / "execution-manifest.json").write_text(json.dumps(manifest))
+
+        state = build_project_state(project_dir)
+        tf = _build_terminal_fallback(
+            {"status": "no-maintenance-action"}, state=state, findings=[])
+        assert tf["triggers"]["recovery_looped"] is False
+
+    # ----- 7. user_requested is skill-set, defaults False -------------------
+
+    def test_user_requested_defaults_false_and_is_skill_set(self, tmp_path, fake_home):
+        from doctor import _build_terminal_fallback, build_project_state
+
+        state = build_project_state(build_fixture(tmp_path))
+        tf = _build_terminal_fallback(
+            {"status": "no-maintenance-action"}, state=state, findings=[])
+        # user_requested is never script-computed — it is a flag the skill sets
+        # on explicit user request. The script always reports the default.
+        assert tf["triggers"]["user_requested"] is False
+        # and it does not feed `any` (which covers only the 3 script-computed
+        # triggers).
+        assert tf["triggers"]["any"] is False
+
+    # ----- 8. backward compat: no state/findings still yields safe object ---
+
+    def test_no_state_yields_all_false_triggers(self):
+        from doctor import _build_terminal_fallback
+
+        # The existing call site / older callers pass only maintenance_route.
+        # The object must still carry a safe triggers dict (all False, no crash).
+        tf = _build_terminal_fallback({"status": "supported-migration-available"})
+        triggers = tf["triggers"]
+        assert triggers["out_of_chain"] is False
+        assert triggers["uncorrectable_after_repair"] is False
+        assert triggers["recovery_looped"] is False
+        assert triggers["user_requested"] is False
+        assert triggers["any"] is False
