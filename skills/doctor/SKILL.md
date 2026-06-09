@@ -15,7 +15,7 @@ STOP. Before executing this skill, check: if pre-loaded state above shows STATE_
 
 Diagnostic scan and repair for your SweetClaude project. Checks 8 categories, offers fixes, and keeps a backup of everything it touches.
 
-Thin orchestrator — all scanning and file mutation happens in `scripts/doctor.py`. This skill owns rendering, menus, prompted fixes, and user interaction. All file writes go through the script's `execute_recipe` pipeline to guarantee backup and diff recording.
+Thin orchestrator — all scanning and file mutation happens in `scripts/doctor.py`. This skill owns rendering, menus, prompted fixes, and user interaction. The skill never writes files directly: fixes go through the script's `execute_recipe` pipeline (backup + diff recording), and suppressions go through the `suppress` subcommand.
 
 ---
 
@@ -512,11 +512,13 @@ echo '{"finding_id": "...", "action": "skip", "timestamp": "..."}' | python3 ~/.
 
 **On Suppress:**
 
-Ask for a reason string. Write the suppression:
+Ask for a reason string. Write the suppression **through the script** — never edit
+`doctor-suppressions.json` directly. The `suppress` subcommand appends the entry via
+the same `load_suppressions`/`save_suppressions` the scan reads, is idempotent (an
+already-suppressed id is not duplicated), and preserves existing entries:
 
-```python
-# Add to doctor-suppressions.json
-{"finding_id": "...", "suppressed_at": "{ISO timestamp}", "reason": "{user's reason}"}
+```bash
+python3 ~/.claude/scripts/sweetclaude/doctor.py suppress --project-dir . --finding-id "{finding_id}" --reason "{user's reason}"
 ```
 
 Record the action:
@@ -555,7 +557,9 @@ Present via AskUserQuestion:
 - **Yes, let me choose** — "Review remaining findings and choose which to suppress"
 - **No** — "Keep reporting everything"
 
-If yes: present each remaining finding with suppress/keep options (same as Step 6 suppress flow).
+If yes: present each remaining finding with suppress/keep options. Suppression goes
+through the `suppress` subcommand exactly as in the Step 6 suppress flow — the skill
+never edits `doctor-suppressions.json` directly.
 
 For findings where `previously_suppressed` is true, note: "This finding was previously suppressed, resolved, and has now re-emerged."
 
@@ -602,8 +606,23 @@ Silent — do not report pruning results to the user.
 
 ## Rules
 
-- **Read-only scan.** The scan phase (Step 1) never writes. All writes happen in Steps 5-7.
-- **All mutations go through the script.** Even prompted fixes use `auto-fix --include-prompted` or `record-action`. The skill never writes files directly via Bash — this guarantees backup and diff recording per FR-2.4.
+- **Read-only scan.** The scan phase (Step 1) never writes. All writes happen in Steps 5-8.
+- **All mutations go through the script. The skill never writes files directly.** Every
+  state-changing operation is a `doctor.py` subcommand:
+  - File fixes (auto and prompted) → `auto-fix` / `auto-fix --include-prompted`, which
+    routes through `execute_recipe` for backup + diff recording per FR-2.4. This covers
+    every prompted recipe — `config_conflict`, `yaml_repair`, `hook_restore`, `file_move`,
+    `renumber_duplicate`, and `exit_compatibility_mode` (the last via the reused
+    `write_field` action).
+  - Suppressions → `suppress` (Steps 6 and 8), which owns the write to
+    `doctor-suppressions.json` via `save_suppressions`.
+  - Skip / suppress bookkeeping and migration outcomes → `record-action`.
+  - Run state and preferences → `persist`; archives → `create-archive`; rollback →
+    `restore`.
+
+  The only inline Python the skill runs is **read-only** (Step 0b lists a run's affected
+  files; Step 3 reads compact menu-preference fields) — it never writes. This guarantees
+  every mutation is backed up and reversible.
 - **Archive is unconditional.** Every run creates an archive, regardless of whether changes were made.
 - **Safety branch is always offered.** Never skip it due to stored preferences or menu defaults. Never subject it to remember-last-choice. Uses `git branch` (not `checkout -b`) to avoid switching context.
 - **Skip is always available.** Doctor never blocks on a single finding. The user can skip any prompted fix, skip all fixes, or exit the menu entirely.

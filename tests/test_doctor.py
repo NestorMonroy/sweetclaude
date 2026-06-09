@@ -8432,3 +8432,118 @@ class TestP1ExitCompat:
                   .get("compatibility_exited"))
         assert not exited, "restore must clear the compatibility_exited flag"
         assert res["restored"]
+
+
+class TestP1Suppress:
+    """P1 / S3: close the last skill-side direct file write.
+
+    The SKILL.md suppress flow previously wrote ``doctor-suppressions.json``
+    inline (a ``python3 -c`` / file write in the skill), violating the PRD
+    principle "the skill layer never writes files directly" (S3) — while
+    SKILL.md's own Safety properties section claimed the opposite. The fix
+    routes suppression through a ``suppress`` CLI subcommand in doctor.py, so
+    the script owns the write and the no-direct-writes claim becomes true.
+    NO MOCKS — real fixtures, real files, real ``main()`` dispatch.
+    """
+
+    def test_suppress_subcommand_adds_finding_id(self, tmp_path, fake_home, capsys):
+        project_dir = build_fixture(tmp_path)
+        exit_code = main([
+            "suppress",
+            "--project-dir", str(project_dir),
+            "--finding-id", "file-diagnostics:unknown-status:ISSUE-009-x.md",
+            "--reason", "intentional custom status",
+        ])
+        assert exit_code == 0
+        output = json.loads(capsys.readouterr().out)
+        assert output["suppressed"] is True
+        assert output["finding_id"] == "file-diagnostics:unknown-status:ISSUE-009-x.md"
+
+        entries = load_suppressions(project_dir)
+        ids = [e.get("finding_id") for e in entries]
+        assert "file-diagnostics:unknown-status:ISSUE-009-x.md" in ids, (
+            f"suppress subcommand must add the finding id to the file, got: {ids}"
+        )
+        entry = next(
+            e for e in entries
+            if e.get("finding_id") == "file-diagnostics:unknown-status:ISSUE-009-x.md"
+        )
+        assert entry.get("reason") == "intentional custom status"
+        assert entry.get("suppressed_at"), "entry must carry a suppression timestamp"
+
+    def test_suppress_is_idempotent(self, tmp_path, fake_home, capsys):
+        project_dir = build_fixture(tmp_path)
+        fid = "env-wiring:missing:plans-directory"
+
+        main(["suppress", "--project-dir", str(project_dir), "--finding-id", fid])
+        capsys.readouterr()
+        main(["suppress", "--project-dir", str(project_dir), "--finding-id", fid])
+        capsys.readouterr()
+
+        entries = load_suppressions(project_dir)
+        matching = [e for e in entries if e.get("finding_id") == fid]
+        assert len(matching) == 1, (
+            f"suppressing the same id twice must not duplicate it, got: {entries}"
+        )
+
+    def test_suppress_preserves_existing_entries(self, tmp_path, fake_home, capsys):
+        project_dir = build_fixture(tmp_path, overrides={
+            "suppressions": [{"finding_id": "pre-existing:one"}],
+        })
+
+        main([
+            "suppress", "--project-dir", str(project_dir),
+            "--finding-id", "newly:added",
+        ])
+        capsys.readouterr()
+
+        ids = [e.get("finding_id") for e in load_suppressions(project_dir)]
+        assert "pre-existing:one" in ids, (
+            f"suppress must preserve existing entries, got: {ids}"
+        )
+        assert "newly:added" in ids
+
+    def test_suppressed_finding_filtered_out_of_scan(self, tmp_path, fake_home, capsys):
+        # Produce a real unknown-status finding, then suppress it via the
+        # subcommand and confirm it drops out of the next scan (reusing the
+        # existing suppression-filter behavior).
+        project_dir = build_fixture(tmp_path, overrides={
+            "backlog_files": [
+                {"name": "ISSUE-001-test.md", "frontmatter": {
+                    "id": "ISSUE-001", "type": "story", "title": "Test",
+                    "status": "invented",
+                }},
+            ],
+        })
+        fid = "file-diagnostics:unknown-status:ISSUE-001-test.md"
+
+        before = _scan(build_project_state(project_dir))
+        assert fid in [f["id"] for f in before["findings"]], (
+            "precondition: finding must be present before suppression"
+        )
+
+        main(["suppress", "--project-dir", str(project_dir), "--finding-id", fid])
+        capsys.readouterr()
+
+        after = _scan(build_project_state(project_dir))
+        assert fid not in [f["id"] for f in after["findings"]], (
+            "a subsequently-suppressed finding must be filtered out of a scan"
+        )
+
+    def test_skill_suppress_flow_invokes_subcommand_not_inline_write(self):
+        # Structural: the SKILL.md suppress flow must invoke the suppress
+        # subcommand and contain NO inline file write to doctor-suppressions.json.
+        skill = (
+            Path(__file__).parents[1] / "skills" / "doctor" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
+        assert "doctor.py suppress" in skill, (
+            "SKILL.md suppress flow must invoke the suppress subcommand"
+        )
+        # No inline python writing the suppressions file (the V9 violation).
+        assert "# Add to doctor-suppressions.json" not in skill, (
+            "SKILL.md must not contain the inline suppressions-file write block"
+        )
+        assert 'suppressed_at": "{ISO timestamp}"' not in skill, (
+            "SKILL.md must not hand-construct a suppression entry inline"
+        )

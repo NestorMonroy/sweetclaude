@@ -1956,6 +1956,31 @@ def auto_cleanup_suppressions(
     return {e["finding_id"] for e in resolved}
 
 
+def suppress_finding(
+    project_dir: Path, finding_id: str, reason: str | None = None
+) -> dict:
+    """Append a suppression entry through save_suppressions.
+
+    Idempotent: an already-suppressed finding_id is not duplicated and its
+    existing entry is preserved. This is the script-owned path that replaces
+    the former skill-side inline write to doctor-suppressions.json (S3).
+    """
+    entries = load_suppressions(project_dir)
+    already = any(e.get("finding_id") == finding_id for e in entries)
+    if not already:
+        entry = {"finding_id": finding_id, "suppressed_at": _now_iso()}
+        if reason:
+            entry["reason"] = reason
+        entries.append(entry)
+        save_suppressions(project_dir, entries)
+    return {
+        "suppressed": True,
+        "finding_id": finding_id,
+        "already_suppressed": already,
+        "count": len(entries),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Migration recommendations
 # ---------------------------------------------------------------------------
@@ -3669,6 +3694,10 @@ def main(argv: list[str] | None = None) -> int:
     p_record = sub.add_parser("record-action")
     p_record.add_argument("--archive-dir", required=True, type=Path)
 
+    p_suppress = _add("suppress")
+    p_suppress.add_argument("--finding-id", required=True)
+    p_suppress.add_argument("--reason", default=None)
+
     _add("dry-run")
 
     p_persist = _add("persist")
@@ -3739,6 +3768,13 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "record-action":
             action = json.loads(sys.stdin.read())
             _emit(record_action(args.archive_dir.resolve(), action))
+
+        elif args.cmd == "suppress":
+            _emit(suppress_finding(
+                args.project_dir.resolve(),
+                args.finding_id,
+                reason=args.reason,
+            ))
 
         elif args.cmd == "dry-run":
             findings = json.loads(sys.stdin.read())
