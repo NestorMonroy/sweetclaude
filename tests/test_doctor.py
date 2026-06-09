@@ -6827,7 +6827,7 @@ def test_executor_supported_actions_match_dispatch():
         "run_script", "rebuild_cache", "create_dir", "delete_file",
         "write_field", "write_frontmatter_field", "prompt",
         "sync_parent_status", "convert_to_yaml", "config_conflict",
-        "yaml_repair", "hook_restore", "file_move",
+        "yaml_repair", "hook_restore", "file_move", "renumber_duplicate",
     }
     assert set(EXECUTOR_SUPPORTED_ACTIONS) == dispatched
 
@@ -8204,3 +8204,231 @@ class TestP1FileMove:
 def test_file_move_is_a_supported_action():
     from doctor import EXECUTOR_SUPPORTED_ACTIONS
     assert "file_move" in EXECUTOR_SUPPORTED_ACTIONS
+
+
+class TestP1Renumber:
+    """P1 / T2d: renumber_duplicate made a real, executor-owned action.
+
+    Two items share an ID. check_file_diagnostics emits a ``renumber_duplicate``
+    prompt recipe carrying the colliding files, their labels, the duplicate id,
+    and a proposed next-available id. The executor action rewrites the chosen
+    file's ``id`` frontmatter field AND renames OLD-ID*.md -> NEW-ID*.md. Like
+    file_move, a rename does NOT fit the content-revert restore model: the move
+    is recorded move-aware (before-image keyed to the original path, a
+    ``moved_to`` marker carrying the renamed path) so ``restore`` reverses BOTH
+    the rename (delete the new file, recreate the original) and the id rewrite
+    (the before-image holds the old id). NO MOCKS — real files on disk.
+    """
+
+    def test_duplicate_id_emits_renumber_recipe_with_valid_new_id(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path, overrides={
+            "backlog_files": [
+                {"name": "ISSUE-010-a.md", "frontmatter": {
+                    "id": "ISSUE-010", "title": "First", "type": "enhancement",
+                    "status": "new", "created": "2026-01-01"}, "body": "\n# a\n"},
+                {"name": "ISSUE-010-b.md", "frontmatter": {
+                    "id": "ISSUE-010", "title": "Second", "type": "enhancement",
+                    "status": "new", "created": "2026-01-01"}, "body": "\n# b\n"},
+                {"name": "ISSUE-042-c.md", "frontmatter": {
+                    "id": "ISSUE-042", "title": "Highest", "type": "enhancement",
+                    "status": "new", "created": "2026-01-01"}, "body": "\n# c\n"},
+            ],
+        })
+        findings = check_file_diagnostics(build_project_state(project_dir))
+        dup = [f for f in findings
+               if f.id == "file-diagnostics:duplicate-id:ISSUE-010"]
+        assert dup, "a duplicate id must emit a duplicate-id finding"
+        recipe = dup[0].fix_recipe
+        assert recipe.get("action") == "prompt"
+        assert recipe.get("type") == "renumber_duplicate", (
+            f"duplicate-id must emit a renumber_duplicate prompt, got {recipe}")
+        assert recipe.get("duplicate_id") == "ISSUE-010"
+        assert len(recipe.get("files", [])) == 2, "both colliding files carried"
+        assert len(recipe.get("labels", [])) == 2, "a label per file"
+        # proposed next-available id: highest among scanned is ISSUE-042 -> 043
+        assert recipe.get("proposed_new_id") == "ISSUE-043", (
+            f"proposed_new_id must be next-available, got "
+            f"{recipe.get('proposed_new_id')}")
+
+    def test_renumber_rewrites_id_and_renames_file(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+        target = backlog / "ISSUE-010-second.md"
+        _write_frontmatter_file(target, {
+            "id": "ISSUE-010", "title": "Second", "type": "enhancement",
+            "status": "new", "created": "2026-01-01"}, body="\n# body\n")
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "renumber_duplicate", "file": str(target),
+            "old_id": "ISSUE-010", "new_id": "ISSUE-043",
+        }, archive)
+
+        assert result.success is True, f"renumber should succeed: {result.error}"
+        assert not target.exists(), "old filename must be gone after the rename"
+        renamed = backlog / "ISSUE-043-second.md"
+        assert renamed.exists(), "file must be renamed to match the new id"
+        fm = yaml.safe_load(renamed.read_text().split("---", 2)[1])
+        assert fm["id"] == "ISSUE-043", "id frontmatter must be rewritten"
+        # before-image of the original path was recorded (reversible)
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(target))
+        assert before_entry.exists(), "renumber must back up the original path"
+
+    def test_renumber_missing_file_fails_without_writing(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+        target = backlog / "ISSUE-010-nope.md"  # never created
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "renumber_duplicate", "file": str(target),
+            "old_id": "ISSUE-010", "new_id": "ISSUE-043",
+        }, archive)
+
+        assert result.success is False, "missing file must not report success"
+        assert result.error, "missing file must surface a clear error"
+        assert list((archive / "before").iterdir()) == [], "no backup on failure"
+
+    def test_renumber_restore_reverses_rename_and_id(self, tmp_path, fake_home):
+        # The wrinkle: restore must REVERSE the rename + id rewrite, not double.
+        project_dir = build_fixture(tmp_path)
+        backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+        target = backlog / "ISSUE-010-second.md"
+        _write_frontmatter_file(target, {
+            "id": "ISSUE-010", "title": "Second", "type": "enhancement",
+            "status": "new", "created": "2026-01-01"}, body="\n# body\n")
+        original = target.read_bytes()
+        archive = create_archive(project_dir)
+
+        # apply through the auto-fix pipeline (the path the skill uses) so the
+        # rename action is recorded for restore to find
+        finding = {
+            "id": "file-diagnostics:duplicate-id:ISSUE-010",
+            "category": "file_diagnostics",
+            "summary": "ID ISSUE-010 is used by multiple files",
+            "fix_type": "prompted",
+            "fix_recipe": {"action": "renumber_duplicate", "file": str(target),
+                           "old_id": "ISSUE-010", "new_id": "ISSUE-043"},
+        }
+        auto_fix(project_dir, [finding], archive, include_prompted=True)
+        renamed = backlog / "ISSUE-043-second.md"
+        assert not target.exists() and renamed.exists(), "precondition: renamed"
+
+        res = _p0_doctor.restore(project_dir, archive, restore_all=True)
+
+        assert target.exists(), "restore must recreate the original file"
+        assert target.read_bytes() == original, "restored file must be byte-identical"
+        assert not renamed.exists(), "restore must REMOVE the renamed file — no double"
+        fm = yaml.safe_load(target.read_text().split("---", 2)[1])
+        assert fm["id"] == "ISSUE-010", "restore must reverse the id rewrite"
+        assert res["restored"], "restore must report what it reversed"
+
+
+def test_renumber_duplicate_is_a_supported_action():
+    from doctor import EXECUTOR_SUPPORTED_ACTIONS
+    assert "renumber_duplicate" in EXECUTOR_SUPPORTED_ACTIONS
+
+
+class TestP1ExitCompat:
+    """P1 / T2f: exit_compatibility_mode surfaced and made functional.
+
+    When the maintenance route reports ``compatibility-mode``, doctor surfaces a
+    Tier-2 ``exit_compatibility_mode`` prompt so the user can unlock migration.
+    Applying it sets ``recovery.taxonomy.compatibility_exited: true`` in
+    sweetclaude.yaml — the flag recover_project reads. Per the V7 tripwire, the
+    apply step REUSES the write_field executor action (extended with a nested
+    key_path) rather than introducing a new transform. The write routes through
+    _record_mutation, so it is backed up and restore-reversible. NO MOCKS.
+    """
+
+    @staticmethod
+    def _compat_project(tmp_path):
+        return build_fixture(tmp_path, overrides={
+            "sweetclaude_yaml": {
+                "phase_schema_version": 2,
+                "framework": {
+                    "installed_version": "4.0.8-beta",
+                    "migration_status": "deferred",
+                },
+                "recovery": {"taxonomy": {
+                    "status": "stabilized-without-migration",
+                    "migration_required": False,
+                    "blind_taxonomy_migration_allowed": False,
+                }},
+            },
+        })
+
+    def test_compatibility_mode_surfaces_exit_fix(self, tmp_path, fake_home):
+        project_dir = self._compat_project(tmp_path)
+        result = _scan(build_project_state(project_dir))
+        assert result["maintenance_route"]["status"] == "compatibility-mode", (
+            "fixture must land in compatibility-mode")
+        exit_findings = [
+            f for f in result["findings"]
+            if f.get("fix_recipe", {}).get("type") == "exit_compatibility_mode"
+        ]
+        assert exit_findings, (
+            "compatibility-mode must surface an exit_compatibility_mode prompt")
+        recipe = exit_findings[0]["fix_recipe"]
+        assert recipe.get("action") == "prompt"
+
+    def test_exit_compat_apply_sets_flag_via_write_field_reuse(
+        self, tmp_path, fake_home
+    ):
+        project_dir = self._compat_project(tmp_path)
+        sc_yaml = project_dir / ".sweetclaude" / "state" / "sweetclaude.yaml"
+        archive = create_archive(project_dir)
+
+        # exactly the recipe the SKILL emits after the user confirms exit:
+        # a write_field reuse with a nested key_path (no new transform).
+        finding = {
+            "id": "compatibility-mode:exit-available",
+            "category": "compatibility_mode",
+            "summary": "Exit compatibility mode",
+            "fix_type": "prompted",
+            "fix_recipe": {
+                "action": "write_field", "file": str(sc_yaml),
+                "key_path": ["recovery", "taxonomy", "compatibility_exited"],
+                "value": True,
+            },
+        }
+        result = auto_fix(project_dir, [finding], archive, include_prompted=True)
+
+        assert len(result["actions"]) == 1
+        assert result["actions"][0]["action"] == "auto-fix"
+        data = yaml.safe_load(sc_yaml.read_text())
+        assert data["recovery"]["taxonomy"]["compatibility_exited"] is True, (
+            "exit must set recovery.taxonomy.compatibility_exited: true")
+        # backed up + reversible
+        assert list((archive / "before").iterdir()), "reuse path must record a backup"
+
+    def test_exit_compat_apply_is_restore_reversible(self, tmp_path, fake_home):
+        project_dir = self._compat_project(tmp_path)
+        sc_yaml = project_dir / ".sweetclaude" / "state" / "sweetclaude.yaml"
+        original = sc_yaml.read_bytes()
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "compatibility-mode:exit-available",
+            "category": "compatibility_mode",
+            "summary": "Exit compatibility mode",
+            "fix_type": "prompted",
+            "fix_recipe": {
+                "action": "write_field", "file": str(sc_yaml),
+                "key_path": ["recovery", "taxonomy", "compatibility_exited"],
+                "value": True,
+            },
+        }
+        auto_fix(project_dir, [finding], archive, include_prompted=True)
+        assert sc_yaml.read_bytes() != original, "precondition: flag was written"
+
+        res = _p0_doctor.restore(project_dir, archive, file=str(sc_yaml))
+
+        assert sc_yaml.read_bytes() == original, "restore must revert byte-identically"
+        data = yaml.safe_load(sc_yaml.read_text())
+        exited = (data.get("recovery", {}).get("taxonomy", {})
+                  .get("compatibility_exited"))
+        assert not exited, "restore must clear the compatibility_exited flag"
+        assert res["restored"]

@@ -144,6 +144,7 @@ EXECUTOR_SUPPORTED_ACTIONS = frozenset({
     "yaml_repair",
     "hook_restore",
     "file_move",
+    "renumber_duplicate",
 })
 
 # Manual guidance for known-unsupported actions, surfaced when an auto/prompted
@@ -1060,6 +1061,28 @@ def _violation_to_finding(violation: str, p: Path, fm: dict) -> Finding | None:
     return None
 
 
+def _propose_next_id(old_id: str, known_ids: set[str]) -> str | None:
+    """Propose the next-available id of old_id's prefix family (PREFIX-<max+1>).
+
+    Scans known_ids for the highest numeric suffix sharing old_id's prefix and
+    returns PREFIX-(max+1). Returns None if old_id has no PREFIX-N shape. Used
+    by the duplicate-id finding so the renumber prompt can offer a concrete new
+    id without the renamer having to invent one.
+    """
+    m = re.match(r"^([A-Za-z]+)-(\d+)$", old_id)
+    if not m:
+        return None
+    prefix = m.group(1)
+    max_n = 0
+    width = len(m.group(2))
+    for kid in known_ids:
+        km = re.match(r"^([A-Za-z]+)-(\d+)$", kid)
+        if km and km.group(1) == prefix:
+            max_n = max(max_n, int(km.group(2)))
+            width = max(width, len(km.group(2)))
+    return f"{prefix}-{max_n + 1:0{width}d}"
+
+
 def check_file_diagnostics(state: ProjectState) -> list[Finding]:
     findings: list[Finding] = []
     seen_ids: dict[str, Path] = {}
@@ -1071,6 +1094,20 @@ def check_file_diagnostics(state: ProjectState) -> list[Finding]:
         dirs_to_scan.append(backlog_dir)
     if roadmap_dir.is_dir():
         dirs_to_scan.append(roadmap_dir)
+
+    # Pre-pass: collect every id across the scanned dirs so a duplicate-id
+    # finding can propose the next-available id of that prefix family. The
+    # inline detection loop below cannot see ids that sort after the duplicate,
+    # so the proposal must come from a full sweep.
+    all_known_ids: set[str] = set()
+    for scan_dir in dirs_to_scan:
+        for p in scan_dir.rglob("*.md"):
+            if p.name in ("INDEX.md", "MIGRATION-MAP.md") or \
+               p.name.endswith("-INDEX.md") or "archived" in p.parts:
+                continue
+            fm, _err = _read_frontmatter_raw(p)
+            if fm and fm.get("id"):
+                all_known_ids.add(str(fm["id"]))
 
     for scan_dir in dirs_to_scan:
         for p in scan_dir.rglob("*.md"):
@@ -1111,16 +1148,33 @@ def check_file_diagnostics(state: ProjectState) -> list[Finding]:
             item_id = fm.get("id")
             if item_id:
                 if item_id in seen_ids:
+                    first = seen_ids[item_id]
+                    file_a, file_b = str(first), str(p)
+                    proposed = _propose_next_id(item_id, all_known_ids)
                     findings.append(Finding(
                         id=f"file-diagnostics:duplicate-id:{item_id}",
                         category="file_diagnostics",
                         severity="error",
                         summary=f"ID {item_id} is used by multiple files",
-                        detail=f"duplicate-id: {item_id} in {p} and {seen_ids[item_id]}",
-                        file_paths=[str(p), str(seen_ids[item_id])],
+                        detail=f"duplicate-id: {item_id} in {file_b} and {file_a}",
+                        file_paths=[file_a, file_b],
                         fix_type="prompted",
-                        fix_recipe={"action": "prompt", "type": "config_conflict",
-                                    "file": str(p), "line": 0, "options": []},
+                        # renumber_duplicate: the user picks WHICH colliding copy
+                        # gets a fresh id. The recipe carries both files, their
+                        # location labels, the duplicate id, and a proposed
+                        # next-available id so the skill can renumber the chosen
+                        # file (rewrite its id + rename it) via the executor.
+                        fix_recipe={
+                            "action": "prompt",
+                            "type": "renumber_duplicate",
+                            "duplicate_id": item_id,
+                            "files": [file_a, file_b],
+                            "labels": [
+                                Path(file_a).parent.name,
+                                Path(file_b).parent.name,
+                            ],
+                            "proposed_new_id": proposed,
+                        },
                     ))
                 else:
                     seen_ids[item_id] = p
@@ -2257,6 +2311,38 @@ def _apply_compatibility_mode_policy(
             },
         ))
 
+    # Surface a Tier-2 exit prompt so the user can unlock migration. Migration
+    # stays blocked while compatibility mode is active; exiting clears the lock
+    # by setting recovery.taxonomy.compatibility_exited (the flag recover_project
+    # reads). The prompt is the UX surface; the SKILL's apply step emits a
+    # write_field reuse recipe with that nested key_path (no new transform —
+    # V7 tripwire). The recipe carries the sweetclaude.yaml path and key_path so
+    # the handler has everything it needs.
+    project_dir = (maintenance_route.get("guard") or {}).get("project_dir", "")
+    sc_yaml_path = (
+        str(Path(project_dir) / ".sweetclaude" / "state" / "sweetclaude.yaml")
+        if project_dir else ""
+    )
+    visible.append(Finding(
+        id="compatibility-mode:exit-available",
+        category="compatibility_mode",
+        severity="warning",
+        summary="Compatibility mode is active — migration is blocked until you exit it",
+        detail=(
+            "The project was previously stabilized without migration. Exiting "
+            "compatibility mode clears the lock and allows migration."
+        ),
+        file_paths=[sc_yaml_path] if sc_yaml_path else [],
+        fix_type="prompted",
+        fix_recipe={
+            "action": "prompt",
+            "type": "exit_compatibility_mode",
+            "file": sc_yaml_path,
+            "key_path": ["recovery", "taxonomy", "compatibility_exited"],
+            "value": True,
+        },
+    ))
+
     return visible, {
         "applied": True,
         "collapsed_count": collapsed_count,
@@ -2518,7 +2604,22 @@ def _apply_transform(content: bytes, recipe: dict, project_dir: Path) -> bytes:
     if action == "write_field":
         text = content.decode("utf-8")
         data = yaml.safe_load(text) or {}
-        data[recipe["key"]] = recipe["value"]
+        # key_path supports nested writes (e.g. recovery.taxonomy.compatibility
+        # _exited) so exit_compatibility_mode can REUSE write_field rather than
+        # add a new transform (V7 tripwire). A flat `key` keeps the top-level
+        # behavior unchanged.
+        key_path = recipe.get("key_path")
+        if key_path:
+            node = data
+            for k in key_path[:-1]:
+                child = node.get(k)
+                if not isinstance(child, dict):
+                    child = {}
+                    node[k] = child
+                node = child
+            node[key_path[-1]] = recipe["value"]
+        else:
+            data[recipe["key"]] = recipe["value"]
         return yaml.safe_dump(data, default_flow_style=False).encode("utf-8")
 
     if action == "write_frontmatter_field":
@@ -2558,6 +2659,14 @@ def _check_precondition(recipe: dict, content: bytes, file_path: Path) -> bool:
     if action == "write_field":
         try:
             data = yaml.safe_load(content.decode("utf-8")) or {}
+            key_path = recipe.get("key_path")
+            if key_path:
+                node = data
+                for k in key_path[:-1]:
+                    node = node.get(k) if isinstance(node, dict) else None
+                    if not isinstance(node, dict):
+                        return False
+                return node.get(key_path[-1]) == recipe["value"]
             return data.get(recipe["key"]) == recipe["value"]
         except (yaml.YAMLError, UnicodeDecodeError):
             return False
@@ -2981,6 +3090,65 @@ def execute_recipe(
         recipe["file"] = str(src)
         recipe["moved_to"] = str(dest)
         return RecipeResult("", recorded.before_hash, recorded.after_hash,
+                            recorded.backup_path, True)
+
+    if action == "renumber_duplicate":
+        # Resolve a duplicate id: rewrite the chosen file's `id` frontmatter to
+        # new_id AND rename OLD-ID*.md -> NEW-ID*.md so the filename matches.
+        # This is a content edit + rename, so — like file_move — it does NOT fit
+        # the content-revert restore model: the file's path changes, so writing
+        # the before-image back to the new path would leave BOTH names. It is
+        # recorded move-aware: the before-image is keyed to the ORIGINAL path
+        # (and holds the OLD id), and a `moved_to` marker carries the renamed
+        # path. `restore` then reverses BOTH — delete the renamed file, recreate
+        # the original path from its before-image (which restores the old id).
+        target = Path(recipe.get("file", ""))
+        if not target.is_absolute():
+            target = project_dir / target
+        old_id = recipe.get("old_id", "")
+        new_id = recipe.get("new_id", "")
+        if not old_id or not new_id:
+            return RecipeResult("", "", None, None, False,
+                                "renumber_duplicate requires old_id and new_id")
+        if old_id == new_id:
+            return RecipeResult("", "", None, None, False,
+                                f"new_id must differ from old_id: {old_id}")
+        if not target.is_file():
+            return RecipeResult("", "", None, None, False,
+                                f"renumber_duplicate file not found: {target}")
+        try:
+            before = target.read_bytes()
+            text = before.decode("utf-8")
+            parts = text.split("---", 2)
+            if len(parts) < 3:
+                return RecipeResult("", "", None, None, False,
+                                    "No frontmatter delimiters found")
+            fm_data = yaml.safe_load(parts[1]) or {}
+            fm_data["id"] = new_id
+            new_fm = yaml.safe_dump(fm_data, default_flow_style=False)
+            after_content = f"---\n{new_fm}---{parts[2]}".encode("utf-8")
+            # Determine the renamed path: swap old_id's PREFIX-N for new_id's in
+            # the filename. If the filename carries no id (no swap), keep it.
+            final_path = target
+            if old_id in target.name:
+                final_path = target.parent / target.name.replace(old_id, new_id, 1)
+            # Back up the ORIGINAL content keyed to the original path, and diff
+            # original -> empty so the rename+rewrite is reversible through the
+            # same archive contract file_move uses.
+            recorded = _record_mutation(archive_path, target, before, b"")
+            _atomic_write(final_path, after_content)
+            if final_path != target:
+                target.unlink()
+        except Exception as e:
+            return RecipeResult("", "", None, None, False, str(e))
+        # Thread the real paths back onto the recipe so the auto_fix recorder
+        # logs file_path=original (restore keys its before-image on that) and
+        # moved_to=renamed (restore reverses the rename using it). When the
+        # filename did not change, moved_to == file and restore degrades to a
+        # plain content revert (which still restores the old id).
+        recipe["file"] = str(target)
+        recipe["moved_to"] = str(final_path)
+        return RecipeResult("", recorded.before_hash, _hash_bytes(after_content),
                             recorded.backup_path, True)
 
     if action == "run_script":

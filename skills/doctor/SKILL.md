@@ -153,7 +153,9 @@ If `maintenance_route.status` is `compatibility-mode`, print a visible
 maintenance route block before the full scan:
 
 > Maintenance route: {message}
-> No migration is recommended for this project.
+> No migration is recommended for this project. Migration stays blocked while
+> compatibility mode is active — the scan will surface an
+> `exit_compatibility_mode` prompt (Step 6) if you want to unlock it.
 
 Then continue to Step 1b.
 
@@ -480,6 +482,18 @@ For fix types that require further user input or skill delegation:
   echo '[{"id": "{finding_id}", "category": "storage_lint", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "file_move", "src": "{fix_recipe.src}", "dest": "{fix_recipe.dest}"}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
   ```
   If src is genuinely absent the executor returns failure with a clear error — surface that, never a silent skip. Then record the prompted-fix action.
+
+- `renumber_duplicate`: Two different items share the same id. The prompt recipe carries `fix_recipe.duplicate_id`, both colliding files in `fix_recipe.files` with their location labels in `fix_recipe.labels`, and a `fix_recipe.proposed_new_id` (the next-available id of that prefix family). Ask the user which copy should be renumbered via AskUserQuestion (**Renumber {labels[0]} copy** → renumber `files[0]`, **Renumber {labels[1]} copy** → renumber `files[1]`, plus a "Something else" escape). Apply through the executor by building a finding whose recipe is the executable `renumber_duplicate` action carrying the chosen `file`, the `old_id` (= `duplicate_id`), and the `new_id` (= `proposed_new_id`). Do **not** edit or rename in the skill: the executor rewrites the chosen file's `id` frontmatter to `new_id` AND renames `OLD-ID*.md` → `NEW-ID*.md`. Because it both edits and renames, it is recorded move-aware (the before-image is keyed to the original path and a `moved_to` marker carries the renamed path), so `restore` REVERSES BOTH — deletes the renamed file and recreates the original from its before-image (which restores the old id) — rather than leaving a double file.
+  ```bash
+  echo '[{"id": "{finding_id}", "category": "file_diagnostics", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "renumber_duplicate", "file": "{chosen_file}", "old_id": "{fix_recipe.duplicate_id}", "new_id": "{fix_recipe.proposed_new_id}"}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+  ```
+  If the chosen file is genuinely absent the executor returns failure with a clear error — surface that, never a silent skip. Report the new-id assignment ("{old_id} → {new_id} in {file}"). Then record the prompted-fix action.
+
+- `exit_compatibility_mode`: The project is locked in compatibility mode (`maintenance_route.status == "compatibility-mode"`), so migration is blocked. The prompt recipe carries the `sweetclaude.yaml` path in `fix_recipe.file` and the nested `fix_recipe.key_path` (`["recovery", "taxonomy", "compatibility_exited"]`) plus `fix_recipe.value` (`true`). Confirm via AskUserQuestion (**Exit compatibility mode** = clear the lock so migration can proceed, **Stay in compatibility mode** = keep the current state, plus a "Something else" escape). On exit, apply through the executor by **reusing the `write_field` action** (no new transform — V7 tripwire) with that nested `key_path` and `value`, which sets `recovery.taxonomy.compatibility_exited: true` — the flag `recover_project` reads to unlock migration. Do not write the file directly; the reuse routes through the backup/diff pipeline (reversible via `restore`).
+  ```bash
+  echo '[{"id": "{finding_id}", "category": "compatibility_mode", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "write_field", "file": "{fix_recipe.file}", "key_path": ["recovery", "taxonomy", "compatibility_exited"], "value": true}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+  ```
+  After it succeeds, re-run the scan so the previously-blocked migration findings become actionable. Then record the prompted-fix action.
 
 - `migration`: Delegate to the appropriate skill or script per Step 7. Record the result.
 
