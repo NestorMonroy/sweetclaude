@@ -6827,6 +6827,7 @@ def test_executor_supported_actions_match_dispatch():
         "run_script", "rebuild_cache", "create_dir", "delete_file",
         "write_field", "write_frontmatter_field", "prompt",
         "sync_parent_status", "convert_to_yaml", "config_conflict",
+        "yaml_repair",
     }
     assert set(EXECUTOR_SUPPORTED_ACTIONS) == dispatched
 
@@ -7601,3 +7602,227 @@ class TestP1ConfigConflict:
 def test_config_conflict_is_a_supported_action():
     from doctor import EXECUTOR_SUPPORTED_ACTIONS
     assert "config_conflict" in EXECUTOR_SUPPORTED_ACTIONS
+
+
+class TestP1YamlRepair:
+    """P1 / T2g: yaml_repair made functional through the executor.
+
+    Three user choices, all routed through the executor:
+      - auto: deterministically repair unambiguous frontmatter-delimiter
+        breakage (a missing closing ``---``, a missing opening ``---`` with a
+        closing one present) and re-serialize. Mutation only when the repaired
+        text actually re-parses into the same field mapping. Ambiguous garbage
+        is NOT guessed at — it returns success=False with a manual-edit signal.
+      - restore: delegate to the existing ``restore`` path (revert to a prior
+        run's archived before-image).
+      - manual: no-op success, no backup (the skill shows the file for editing).
+
+    auto routes its write through _record_mutation, so it is backed up, diffed,
+    and ``restore``-reversible. NO MOCKS.
+    """
+
+    # ----- auto-repair: recoverable missing-closing-delimiter --------------
+
+    def test_auto_repair_fixes_missing_closing_delimiter(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+        broken = backlog / "ISSUE-001.md"
+        # opening delimiter present, closing delimiter missing — the YAML region
+        # is well-formed and the body is unambiguously markdown prose.
+        broken.write_text(
+            "---\n"
+            "id: ISSUE-001\n"
+            "title: Fix the thing\n"
+            "status: active\n"
+            "type: story\n"
+            "# Fix the thing\n\n"
+            "Some body text.\n"
+        )
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "yaml_repair",
+            "file": str(broken),
+            "choice": "auto",
+        }, archive)
+
+        assert result.success is True, f"auto repair should succeed: {result.error}"
+        # the file now parses as valid frontmatter
+        fm, err = _p0_doctor._read_frontmatter_raw(broken)
+        assert err is None, f"repaired file must parse cleanly, got: {err}"
+        assert isinstance(fm, dict)
+        # original fields preserved
+        assert fm["id"] == "ISSUE-001"
+        assert fm["title"] == "Fix the thing"
+        assert fm["status"] == "active"
+        assert fm["type"] == "story"
+        # body preserved
+        assert "Some body text." in broken.read_text()
+        # backed up so it is reversible
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(broken))
+        assert before_entry.exists(), "auto repair must back up the original"
+
+    def test_auto_repair_fixes_missing_opening_delimiter(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+        broken = backlog / "ISSUE-002.md"
+        # opening delimiter missing, closing present — leading mapping is YAML.
+        broken.write_text(
+            "id: ISSUE-002\n"
+            "title: Second thing\n"
+            "status: active\n"
+            "type: story\n"
+            "---\n"
+            "# Second thing\n\n"
+            "Body.\n"
+        )
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "yaml_repair",
+            "file": str(broken),
+            "choice": "auto",
+        }, archive)
+
+        assert result.success is True, f"auto repair should succeed: {result.error}"
+        fm, err = _p0_doctor._read_frontmatter_raw(broken)
+        assert err is None, f"repaired file must parse cleanly, got: {err}"
+        assert fm["id"] == "ISSUE-002"
+        assert fm["type"] == "story"
+        assert "Body." in broken.read_text()
+
+    # ----- auto-repair: ambiguous garbage must NOT be silently corrupted ----
+
+    def test_auto_repair_ambiguous_garbage_signals_manual(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+        broken = backlog / "ISSUE-003.md"
+        # genuinely ambiguous: malformed mid-mapping YAML (bad indentation /
+        # broken structure) that no delimiter insertion can salvage.
+        garbage = (
+            "---\n"
+            "id: ISSUE-003\n"
+            "title: : : broken\n"
+            "  nested without key\n"
+            "status: [unterminated\n"
+            "garbage line :: :: more\n"
+            "Definitely not parseable as a clean mapping.\n"
+        )
+        broken.write_text(garbage)
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "yaml_repair",
+            "file": str(broken),
+            "choice": "auto",
+        }, archive)
+
+        # must NOT claim a successful repair on ambiguous garbage
+        assert result.success is False, "ambiguous garbage must not produce a bogus repair"
+        assert result.error, "must surface a manual-edit-needed signal"
+        # the file must be left untouched (no silent corruption)
+        assert broken.read_text() == garbage, "ambiguous case must not mutate the file"
+        # nothing backed up either
+        assert list((archive / "before").iterdir()) == [], "no backup on a refused repair"
+
+    # ----- manual: no-op, no backup ----------------------------------------
+
+    def test_manual_choice_is_noop_no_backup(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+        broken = backlog / "ISSUE-004.md"
+        original = (
+            "---\n"
+            "id: ISSUE-004\n"
+            "title: Manual\n"
+            "# heading\n"
+            "body\n"
+        )
+        broken.write_text(original)
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "yaml_repair",
+            "file": str(broken),
+            "choice": "manual",
+        }, archive)
+
+        assert result.success is True
+        assert broken.read_text() == original, "manual must leave the file untouched"
+        assert list((archive / "before").iterdir()) == [], "manual must not back up"
+        assert list((archive / "diffs").iterdir()) == [], "manual must not diff"
+
+    # ----- restore reversibility after an auto-repair ----------------------
+
+    def test_auto_repair_is_restore_reversible(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+        broken = backlog / "ISSUE-005.md"
+        original = (
+            "---\n"
+            "id: ISSUE-005\n"
+            "title: Reversible\n"
+            "status: active\n"
+            "type: story\n"
+            "# Reversible\n\n"
+            "Body content.\n"
+        )
+        broken.write_text(original)
+        original_bytes = broken.read_bytes()
+        archive = create_archive(project_dir)
+
+        # apply through the auto-fix pipeline (the path the skill uses) so the
+        # action is recorded in actions.json for restore to find
+        finding = {
+            "id": "state-integrity:yaml-parse:ISSUE-005.md",
+            "category": "state_integrity",
+            "summary": "broken frontmatter",
+            "fix_type": "prompted",
+            "fix_recipe": {
+                "action": "yaml_repair", "file": str(broken), "choice": "auto",
+            },
+        }
+        auto_fix(project_dir, [finding], archive, include_prompted=True)
+        assert broken.read_bytes() != original_bytes, "auto repair must mutate the file"
+
+        res = _p0_doctor.restore(project_dir, archive, file=str(broken))
+        assert broken.read_bytes() == original_bytes, "restore must revert byte-identically"
+        assert res["restored"], "restore must report what it restored"
+
+    # ----- end-to-end through auto_fix with the prompted recipe -----------
+
+    def test_auto_repair_via_autofix_pipeline(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+        broken = backlog / "ISSUE-006.md"
+        broken.write_text(
+            "---\n"
+            "id: ISSUE-006\n"
+            "title: Pipeline\n"
+            "status: active\n"
+            "type: story\n"
+            "# Pipeline\n\n"
+            "Body.\n"
+        )
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "state-integrity:yaml-parse:ISSUE-006.md",
+            "category": "state_integrity",
+            "summary": "broken frontmatter",
+            "fix_type": "prompted",
+            "fix_recipe": {
+                "action": "yaml_repair", "file": str(broken), "choice": "auto",
+            },
+        }
+        result = auto_fix(project_dir, [finding], archive, include_prompted=True)
+
+        assert result["actions"][0]["action"] == "auto-fix"
+        fm, err = _p0_doctor._read_frontmatter_raw(broken)
+        assert err is None
+        assert fm["id"] == "ISSUE-006"
+
+
+def test_yaml_repair_is_a_supported_action():
+    from doctor import EXECUTOR_SUPPORTED_ACTIONS
+    assert "yaml_repair" in EXECUTOR_SUPPORTED_ACTIONS

@@ -473,7 +473,11 @@ For fix types that require further user input or skill delegation:
 
 - `migration`: Delegate to the appropriate skill or script per Step 7. Record the result.
 
-- `yaml_repair`: Present options (auto-fix syntax, show file for manual edit, restore from archive) via AskUserQuestion. Apply, record.
+- `yaml_repair`: Present three options via AskUserQuestion — **auto-fix** (let SweetClaude repair common frontmatter-delimiter breakage), **restore from archive** (revert the file to a prior doctor run's saved copy), **show for manual edit** (open the file for hand-editing). Apply through the executor by building a finding whose recipe is the executable `yaml_repair` action carrying the chosen `choice` (`auto` / `restore` / `manual`) and the file path the prompt recipe threaded (`fix_recipe.file`). Do not write the file directly.
+  ```bash
+  echo '[{"id": "{finding_id}", "category": "{category}", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "yaml_repair", "file": "{fix_recipe.file}", "choice": "{chosen_choice}"}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+  ```
+  Only `auto` and `restore` mutate (both reversible via `restore`); `manual` is a no-op the executor records as success with no backup. `auto` repairs **only** unambiguous delimiter problems (a missing opening or closing `---`) — it never guesses at broken quoting, indentation, or values. If `auto` returns failure (the breakage is inside the frontmatter, not the delimiters), surface the manual-edit signal and offer the file for hand-editing instead. Then record the prompted-fix action.
 
 - `bootstrap`: Run the bootstrap script via the auto-fix pipeline with `--include-prompted`, record.
 

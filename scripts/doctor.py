@@ -141,6 +141,7 @@ EXECUTOR_SUPPORTED_ACTIONS = frozenset({
     "sync_parent_status",
     "convert_to_yaml",
     "config_conflict",
+    "yaml_repair",
 })
 
 # Manual guidance for known-unsupported actions, surfaced when an auto/prompted
@@ -2585,6 +2586,124 @@ def _check_precondition(recipe: dict, content: bytes, file_path: Path) -> bool:
     return False
 
 
+def _yaml_frontmatter_reparses(text: str) -> dict | None:
+    """Return the parsed mapping iff ``text`` is valid SweetClaude frontmatter.
+
+    Valid means: opens with a ``---`` line, has a closing ``---``, and the
+    region between them parses to a YAML mapping. Returns the mapping, or None
+    if any of those does not hold. This is the post-repair validation gate.
+    """
+    if not text.startswith("---"):
+        return None
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return None
+    try:
+        fm = yaml.safe_load(parts[1])
+    except yaml.YAMLError:
+        return None
+    if fm is None:
+        return {}
+    return fm if isinstance(fm, dict) else None
+
+
+def _yaml_repair_auto(before: bytes) -> bytes:
+    """Deterministically repair unambiguous frontmatter-DELIMITER breakage.
+
+    Scope is intentionally narrow — delimiter placement only, never quoting,
+    indentation, or value rewriting. Two unambiguous forms are repaired:
+
+    1. Missing closing ``---``: the file opens with a ``---`` line, then a run
+       of lines that parse as a YAML mapping, then markdown body. We find the
+       largest leading run of post-delimiter lines that parses as a mapping and
+       insert a closing ``---`` immediately after it.
+    2. Missing opening ``---``: the file begins with a YAML mapping, then a
+       ``---`` line, then body. We prepend an opening ``---``.
+
+    AMBIGUITY GUARD: a repair is accepted only if the reconstructed text
+    re-parses as valid frontmatter (``_yaml_frontmatter_reparses``) AND the
+    re-parsed mapping equals the mapping we isolated. If we cannot isolate a
+    clean mapping, or the reconstruction does not re-parse to the same fields,
+    we DO NOT guess — we raise ValueError so the executor signals manual-edit.
+    The caller treats any raise here as "not safely repairable".
+    """
+    text = before.decode("utf-8", errors="strict")
+    lines = text.splitlines(keepends=True)
+
+    def _strip_delims(seq: list[str]) -> str:
+        return "".join(seq)
+
+    # Already valid frontmatter: nothing to repair (idempotent / defensive).
+    if _yaml_frontmatter_reparses(text) is not None:
+        return before
+
+    # --- Form 1: opening delimiter present, closing delimiter missing -------
+    if lines and lines[0].rstrip("\r\n") == "---":
+        # The body boundary must be STRUCTURALLY unambiguous — we do not search
+        # for a split point that makes YAML happy (that is guessing). The body
+        # of a SweetClaude markdown file begins at the first blank line or the
+        # first markdown construct (a line starting with '#'). Everything from
+        # the opening delimiter to that boundary must parse, as a whole, into a
+        # YAML mapping. If it does not, the breakage is inside the frontmatter
+        # itself (quoting/indentation) — not a delimiter problem — so refuse.
+        body_start = None
+        for i in range(1, len(lines)):
+            stripped = lines[i].rstrip("\r\n")
+            if stripped == "" or stripped.lstrip().startswith("#"):
+                body_start = i
+                break
+        if body_start is None:
+            body_start = len(lines)
+        region = _strip_delims(lines[1:body_start])
+        if not region.strip():
+            raise ValueError(
+                "auto repair: no frontmatter content before the body boundary"
+            )
+        try:
+            isolated = yaml.safe_load(region)
+        except yaml.YAMLError:
+            isolated = None
+        if not isinstance(isolated, dict) or not isolated:
+            raise ValueError(
+                "auto repair: frontmatter is not unambiguously recoverable "
+                "(content before the body boundary is not a clean YAML mapping)"
+            )
+        head = lines[:body_start]
+        tail = lines[body_start:]
+        if head and not head[-1].endswith("\n"):
+            head[-1] = head[-1] + "\n"
+        rebuilt = "".join(head) + "---\n" + "".join(tail)
+        reparsed = _yaml_frontmatter_reparses(rebuilt)
+        if reparsed is None or reparsed != isolated:
+            raise ValueError(
+                "auto repair: reconstructed frontmatter did not re-parse to the "
+                "same fields — refusing to guess"
+            )
+        return rebuilt.encode("utf-8")
+
+    # --- Form 2: opening delimiter missing, closing delimiter present -------
+    delim_idx = None
+    for idx, ln in enumerate(lines):
+        if ln.rstrip("\r\n") == "---":
+            delim_idx = idx
+            break
+    if delim_idx is not None and delim_idx > 0:
+        region = _strip_delims(lines[:delim_idx])
+        try:
+            parsed = yaml.safe_load(region)
+        except yaml.YAMLError:
+            parsed = None
+        if isinstance(parsed, dict) and parsed:
+            rebuilt = "---\n" + text
+            reparsed = _yaml_frontmatter_reparses(rebuilt)
+            if reparsed is not None and reparsed == parsed:
+                return rebuilt.encode("utf-8")
+
+    raise ValueError(
+        "auto repair: not an unambiguous delimiter break — manual edit needed"
+    )
+
+
 def _config_conflict_adopt(before: bytes, recipe: dict) -> bytes:
     """Apply SweetClaude's rule for a config_conflict (the ``adopt`` choice).
 
@@ -2721,6 +2840,48 @@ def execute_recipe(
             return _record_mutation(archive_path, target_path, before, after)
         except Exception as e:
             return RecipeResult("", "", None, None, False, str(e))
+
+    if action == "yaml_repair":
+        choice = recipe.get("choice", "")
+        target_path = Path(recipe.get("path") or recipe.get("file", ""))
+        if not target_path.is_absolute():
+            target_path = project_dir / target_path
+
+        # manual = the skill shows the file for hand-editing. No-op success,
+        # no backup (nothing changed).
+        if choice == "manual":
+            return RecipeResult("", "", None, None, True, "no-op (manual)")
+
+        # restore = revert to a prior run's archived before-image. Delegate to
+        # the existing restore path against this run's archive.
+        if choice == "restore":
+            res = restore(project_dir, archive_path, file=str(target_path))
+            if res["restored"]:
+                return RecipeResult("", "", None, None, True, f"restored {res['restored']}")
+            return RecipeResult(
+                "", "", None, None, False,
+                "no archived before-image to restore from — choose manual edit",
+            )
+
+        # auto = deterministic delimiter repair, routed through _record_mutation
+        # so it is backed up, diffed, and reversible. The repair refuses to
+        # guess on ambiguous content (raises -> success=False, manual signal).
+        if choice == "auto":
+            if not target_path.exists():
+                return RecipeResult("", "", None, None, False, f"File not found: {target_path}")
+            try:
+                before = target_path.read_bytes()
+                after = _yaml_repair_auto(before)
+            except Exception as e:
+                # Ambiguous / unrecoverable: do not mutate, signal manual edit.
+                return RecipeResult("", "", None, None, False, str(e))
+            if after == before:
+                h = _hash_bytes(before)
+                return RecipeResult("", h, h, None, True, "already valid")
+            _atomic_write(target_path, after)
+            return _record_mutation(archive_path, target_path, before, after)
+
+        return RecipeResult("", "", None, None, False, f"unknown yaml_repair choice: {choice!r}")
 
     if action == "run_script":
         cmd = recipe.get("cmd", [])
