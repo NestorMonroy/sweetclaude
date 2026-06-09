@@ -469,7 +469,11 @@ For fix types that require further user input or skill delegation:
   ```
   Include only the target fields present on the prompt recipe (settings conflicts carry `tool` or `hook_command`/`matcher`; text conflicts carry `pattern`). Then record the prompted-fix action.
 
-- `hook_restore`: Present source options (backup vs repo) via AskUserQuestion. Restore the file, record the action.
+- `hook_restore`: Restore a missing or broken SweetClaude hook script, hooks config (`hooks.json` / `hooks-manifest.json`), or rules `.md` file from the installed plugin to its `~/.claude` destination. Present the source options the recipe offers (`fix_recipe.sources`, typically **repo/plugin** vs **backup**) via AskUserQuestion. Apply through the executor by building a finding whose recipe is the executable `hook_restore` action — carry the target `hook` name from the prompt recipe plus the resolved plugin source dir (`SC_PLUGIN_INSTALL_PATH` from the Step 0 preflight). Do **not** raw-`cp` in the skill: the executor resolves the correct per-kind source (`{plugin}/hooks/{name}` for scripts and configs, `{plugin}/rules/{name}` for rules) and dest (`~/.claude/hooks/sweetclaude/{name}` or `~/.claude/rules/sweetclaude/{name}`), backs up any existing dest through the pipeline (reversible via `restore` — these `~/.claude` files are outside the project git safety branch), then writes. If the source is genuinely absent it returns failure with a clear error — surface that, never a silent skip.
+  ```bash
+  echo '[{"id": "{finding_id}", "category": "hook_health", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "hook_restore", "hook": "{fix_recipe.hook}", "plugin_dir": "'"$SC_PLUGIN_INSTALL_PATH"'"}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+  ```
+  Then record the prompted-fix action.
 
 - `migration`: Delegate to the appropriate skill or script per Step 7. Record the result.
 

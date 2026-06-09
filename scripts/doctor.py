@@ -142,6 +142,7 @@ EXECUTOR_SUPPORTED_ACTIONS = frozenset({
     "convert_to_yaml",
     "config_conflict",
     "yaml_repair",
+    "hook_restore",
 })
 
 # Manual guidance for known-unsupported actions, surfaced when an auto/prompted
@@ -2753,6 +2754,39 @@ def _config_conflict_adopt(before: bytes, recipe: dict) -> bytes:
     return "".join(kept_lines).encode("utf-8")
 
 
+def _resolve_hook_restore_paths(recipe: dict) -> tuple[Path, Path]:
+    """Map a hook_restore target name to its real plugin SOURCE and ~/.claude
+    DEST, per restorable kind. This is the correct mapping the old skill-side
+    ``cp $PLUGIN_DIR/config/{hook}`` got wrong — the scripts ship in the plugin
+    ``hooks/`` dir, the rules in ``rules/``; ``config/`` never holds either.
+
+      - rules ``*.md``              : {plugin}/rules/{name} -> ~/.claude/rules/sweetclaude/{name}
+      - hook script ``*.sh`` / json : {plugin}/hooks/{name} -> ~/.claude/hooks/sweetclaude/{name}
+
+    An explicit ``source``/``dest`` on the recipe overrides the derivation.
+    """
+    name = recipe.get("hook", "")
+    if not name:
+        raise ValueError("hook_restore: no hook/target name in recipe")
+
+    explicit_source = recipe.get("source")
+    explicit_dest = recipe.get("dest")
+    if explicit_source and explicit_dest:
+        return Path(explicit_source), Path(explicit_dest)
+
+    plugin_dir = Path(recipe.get("plugin_dir", ""))
+    home_claude = Path.home() / ".claude"
+
+    if name.endswith(".md"):
+        source = plugin_dir / "rules" / name
+        dest = home_claude / "rules" / "sweetclaude" / name
+    else:
+        # hook scripts (.sh) and the hooks.json / hooks-manifest.json configs
+        source = plugin_dir / "hooks" / name
+        dest = home_claude / "hooks" / "sweetclaude" / name
+    return source, dest
+
+
 def execute_recipe(
     project_dir: Path, recipe: dict, archive_path: Path
 ) -> RecipeResult:
@@ -2882,6 +2916,37 @@ def execute_recipe(
             return _record_mutation(archive_path, target_path, before, after)
 
         return RecipeResult("", "", None, None, False, f"unknown yaml_repair choice: {choice!r}")
+
+    if action == "hook_restore":
+        # Restore a SweetClaude hook script, hooks config, or rules file from
+        # the plugin source to its ~/.claude destination. Resolves the correct
+        # per-kind source/dest (the old skill-side cp used the wrong path), and
+        # routes any overwrite through _record_mutation so a clobbered dest is
+        # backed up, diffed, and reversible via `restore` — important because
+        # these ~/.claude files live outside the project git safety branch.
+        try:
+            source, dest = _resolve_hook_restore_paths(recipe)
+        except Exception as e:
+            return RecipeResult("", "", None, None, False, str(e))
+        if not source.is_file():
+            return RecipeResult(
+                "", "", None, None, False,
+                f"hook_restore source not found: {source}",
+            )
+        try:
+            after = source.read_bytes()
+        except OSError as e:
+            return RecipeResult("", "", None, None, False, str(e))
+        before = dest.read_bytes() if dest.is_file() else b""
+        # Thread the resolved dest back onto the recipe so the auto_fix recorder
+        # logs the real mutated path (it reads recipe["file"]); restore keys on
+        # that path to find this run's before-image.
+        recipe["file"] = str(dest)
+        if before == after:
+            h = _hash_bytes(before)
+            return RecipeResult("", h, h, None, True, "already up to date")
+        _atomic_write(dest, after)
+        return _record_mutation(archive_path, dest, before, after)
 
     if action == "run_script":
         cmd = recipe.get("cmd", [])

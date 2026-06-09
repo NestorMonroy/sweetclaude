@@ -6827,7 +6827,7 @@ def test_executor_supported_actions_match_dispatch():
         "run_script", "rebuild_cache", "create_dir", "delete_file",
         "write_field", "write_frontmatter_field", "prompt",
         "sync_parent_status", "convert_to_yaml", "config_conflict",
-        "yaml_repair",
+        "yaml_repair", "hook_restore",
     }
     assert set(EXECUTOR_SUPPORTED_ACTIONS) == dispatched
 
@@ -7826,3 +7826,201 @@ class TestP1YamlRepair:
 def test_yaml_repair_is_a_supported_action():
     from doctor import EXECUTOR_SUPPORTED_ACTIONS
     assert "yaml_repair" in EXECUTOR_SUPPORTED_ACTIONS
+
+
+def _build_fake_plugin(tmp_path):
+    """Build a real plugin source tree mirroring the installed plugin layout:
+    hook scripts + hooks.json + hooks-manifest.json under hooks/, rules .md
+    under rules/. Returns the plugin root. NO MOCKS — real files on disk.
+    """
+    plugin = tmp_path / "plugin"
+    hooks = plugin / "hooks"
+    hooks.mkdir(parents=True)
+    (hooks / "hooks.json").write_text(json.dumps({"hooks": [{"x": 1}]}, indent=2))
+    (hooks / "hooks-manifest.json").write_text(json.dumps({"manifest": True}))
+    (hooks / "auto-test-runner.sh").write_text("#!/bin/bash\necho run\nexit 0\n")
+    (hooks / "git-checkpoint.sh").write_text("#!/bin/bash\nexit 0\n")
+    rules = plugin / "rules"
+    rules.mkdir(parents=True)
+    for rf in ("interaction-model.md", "phase-gates.md", "tdd-levels.md"):
+        (rules / rf).write_text(f"# {rf}\nCanonical rule body for {rf}.\n")
+    return plugin
+
+
+class TestP1HookRestore:
+    """P1 / T2h: hook_restore made a real, executor-owned action.
+
+    The old skill-side ``cp $PLUGIN_DIR/config/{hook}`` always hit
+    SOURCE_NOT_FOUND because the hook scripts ship in the plugin ``hooks/``
+    dir and the rules ship in ``rules/`` — never ``config/``. This locks the
+    correct source -> dest mapping per restorable kind:
+
+      - hook script (``*.sh``)        : {plugin}/hooks/{name}  -> ~/.claude/hooks/sweetclaude/{name}
+      - hooks.json / hooks-manifest   : {plugin}/hooks/{name}  -> ~/.claude/hooks/sweetclaude/{name}
+      - rules file (``*.md``)         : {plugin}/rules/{name}  -> ~/.claude/rules/sweetclaude/{name}
+
+    Any overwrite of an existing dest is backed up through _record_mutation so
+    it is ``restore``-reversible (these ~/.claude files are outside the project
+    git tree, so the safety branch cannot cover them). A genuinely absent
+    source returns success=False with an error — never a silent skip, never a
+    wrong-path write. NO MOCKS — a real fake plugin source tree is built.
+    """
+
+    # ----- restore a missing hook script: source present -> copied to dest --
+
+    def test_restore_missing_hook_script_copies_from_plugin_to_dest(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        plugin = _build_fake_plugin(tmp_path)
+        dest = Path.home() / ".claude" / "hooks" / "sweetclaude" / "auto-test-runner.sh"
+        assert not dest.exists(), "precondition: dest hook script is missing"
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "hook_restore",
+            "hook": "auto-test-runner.sh",
+            "plugin_dir": str(plugin),
+        }, archive)
+
+        assert result.success is True, f"restore should succeed: {result.error}"
+        # landed at the exact dest check_hook_health scans
+        assert dest.exists(), "hook script must be restored to ~/.claude/hooks/sweetclaude/"
+        assert dest.read_text() == (plugin / "hooks" / "auto-test-runner.sh").read_text()
+
+    def test_restore_hooks_json_copies_from_plugin_hooks_dir(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        plugin = _build_fake_plugin(tmp_path)
+        # remove the fixture's placeholder hooks.json so this is a true restore
+        dest = Path.home() / ".claude" / "hooks" / "sweetclaude" / "hooks.json"
+        dest.unlink()
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "hook_restore",
+            "hook": "hooks.json",
+            "plugin_dir": str(plugin),
+        }, archive)
+
+        assert result.success is True, f"restore should succeed: {result.error}"
+        assert dest.exists()
+        assert dest.read_text() == (plugin / "hooks" / "hooks.json").read_text()
+
+    def test_restore_rules_file_copies_from_plugin_rules_dir(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        plugin = _build_fake_plugin(tmp_path)
+        dest = Path.home() / ".claude" / "rules" / "sweetclaude" / "interaction-model.md"
+        dest.unlink()
+        assert not dest.exists()
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "hook_restore",
+            "hook": "interaction-model.md",
+            "plugin_dir": str(plugin),
+        }, archive)
+
+        assert result.success is True, f"restore should succeed: {result.error}"
+        # rules go to ~/.claude/rules/sweetclaude/, NOT the hooks dir
+        assert dest.exists(), "rules file must land in ~/.claude/rules/sweetclaude/"
+        assert dest.read_text() == (plugin / "rules" / "interaction-model.md").read_text()
+        wrong = Path.home() / ".claude" / "hooks" / "sweetclaude" / "interaction-model.md"
+        assert not wrong.exists(), "rules file must not be written into the hooks dir"
+
+    # ----- overwriting a stale dest is backed up (restore-reversible) -------
+
+    def test_restore_over_stale_dest_backs_up_prior_content(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        plugin = _build_fake_plugin(tmp_path)
+        dest = Path.home() / ".claude" / "hooks" / "sweetclaude" / "auto-test-runner.sh"
+        stale = "#!/bin/bash\n# STALE corrupted content\nexit 1\n"
+        dest.write_text(stale)
+        stale_bytes = dest.read_bytes()
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "hook_restore",
+            "hook": "auto-test-runner.sh",
+            "plugin_dir": str(plugin),
+        }, archive)
+
+        assert result.success is True, f"restore should succeed: {result.error}"
+        # dest now holds the canonical content
+        assert dest.read_text() == (plugin / "hooks" / "auto-test-runner.sh").read_text()
+        # the prior (stale) content was backed up to before/ for reversibility
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(dest))
+        assert before_entry.exists(), "overwrite must back up the prior dest content"
+        assert before_entry.read_bytes() == stale_bytes, "backup must hold the stale bytes"
+
+    def test_restore_over_stale_dest_is_restore_reversible(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        plugin = _build_fake_plugin(tmp_path)
+        dest = Path.home() / ".claude" / "hooks" / "sweetclaude" / "git-checkpoint.sh"
+        stale = "#!/bin/bash\n# old version\nexit 7\n"
+        dest.write_text(stale)
+        stale_bytes = dest.read_bytes()
+        archive = create_archive(project_dir)
+
+        # apply through the auto-fix pipeline (the path the skill uses) so the
+        # action is recorded for restore to find
+        finding = {
+            "id": "hook-health:syntax-error:git-checkpoint.sh",
+            "category": "hook_health",
+            "summary": "hook script broken",
+            "fix_type": "prompted",
+            "fix_recipe": {
+                "action": "hook_restore",
+                "hook": "git-checkpoint.sh",
+                "plugin_dir": str(plugin),
+            },
+        }
+        auto_fix(project_dir, [finding], archive, include_prompted=True)
+        assert dest.read_bytes() != stale_bytes, "restore must overwrite the stale dest"
+
+        res = _p0_doctor.restore(project_dir, archive, file=str(dest))
+        assert dest.read_bytes() == stale_bytes, "restore must revert to the prior bytes"
+        assert res["restored"], "restore must report what it restored"
+
+    # ----- genuinely absent source -> success=False, no wrong-path write ----
+
+    def test_restore_absent_source_fails_without_writing(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        plugin = _build_fake_plugin(tmp_path)
+        # a target that does not exist anywhere in the plugin source tree
+        dest = Path.home() / ".claude" / "hooks" / "sweetclaude" / "does-not-exist.sh"
+        assert not dest.exists()
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "hook_restore",
+            "hook": "does-not-exist.sh",
+            "plugin_dir": str(plugin),
+        }, archive)
+
+        assert result.success is False, "absent source must not report success"
+        assert result.error, "absent source must surface a clear error"
+        # never a silent success, never a wrong-path write
+        assert not dest.exists(), "absent source must not write the dest"
+        assert list((archive / "before").iterdir()) == [], "no backup on a failed restore"
+
+    def test_restore_missing_plugin_dir_fails_cleanly(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        missing_plugin = tmp_path / "no-such-plugin"
+        dest = Path.home() / ".claude" / "hooks" / "sweetclaude" / "auto-test-runner.sh"
+        dest_existed = dest.exists()
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "hook_restore",
+            "hook": "auto-test-runner.sh",
+            "plugin_dir": str(missing_plugin),
+        }, archive)
+
+        assert result.success is False
+        assert result.error
+        assert dest.exists() == dest_existed, "must not create the dest from a missing plugin"
+
+
+def test_hook_restore_is_a_supported_action():
+    from doctor import EXECUTOR_SUPPORTED_ACTIONS
+    assert "hook_restore" in EXECUTOR_SUPPORTED_ACTIONS
