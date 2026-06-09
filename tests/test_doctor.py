@@ -6827,7 +6827,7 @@ def test_executor_supported_actions_match_dispatch():
         "run_script", "rebuild_cache", "create_dir", "delete_file",
         "write_field", "write_frontmatter_field", "prompt",
         "sync_parent_status", "convert_to_yaml", "config_conflict",
-        "yaml_repair", "hook_restore",
+        "yaml_repair", "hook_restore", "file_move",
     }
     assert set(EXECUTOR_SUPPORTED_ACTIONS) == dispatched
 
@@ -8024,3 +8024,183 @@ class TestP1HookRestore:
 def test_hook_restore_is_a_supported_action():
     from doctor import EXECUTOR_SUPPORTED_ACTIONS
     assert "hook_restore" in EXECUTOR_SUPPORTED_ACTIONS
+
+
+class TestP1FileMove:
+    """P1 / T2c: file_move made a real, executor-owned action with move-aware
+    rollback.
+
+    storage-lint emits ``{"action":"prompt","type":"file_move","src":...,
+    "dest":...}`` for done-status items in the wrong folder. The executor moves
+    src -> dest, backing up src's content keyed to src so the move is
+    reversible. A move does NOT fit the content-revert restore model — backing
+    up src and writing it back to src would leave BOTH src and dest. So
+    ``restore`` must REVERSE the move: delete dest, recreate src from its
+    before-image. NO MOCKS — real files on disk.
+    """
+
+    def test_file_move_moves_src_to_dest_and_backs_up_src(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        done_dir = project_dir / ".sweetclaude" / "product" / "backlog" / "done"
+        src = done_dir / "ISSUE-500.md"
+        _write_frontmatter_file(src, {
+            "id": "ISSUE-500", "title": "Misfiled", "type": "enhancement",
+            "status": "new", "created": "2026-01-01"}, body="\n# body\n")
+        original = src.read_bytes()
+        dest = project_dir / ".sweetclaude" / "product" / "backlog" / "ISSUE-500.md"
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "file_move", "src": str(src), "dest": str(dest),
+        }, archive)
+
+        assert result.success is True, f"file_move should succeed: {result.error}"
+        assert not src.exists(), "src must be gone after the move"
+        assert dest.exists(), "dest must exist after the move"
+        assert dest.read_bytes() == original, "dest must hold the original src content"
+        # src's content was backed up to before/ keyed to src (reversible)
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(src))
+        assert before_entry.exists(), "move must back up src's content keyed to src"
+        assert before_entry.read_bytes() == original
+
+    def test_file_move_creates_missing_dest_parent_dir(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+        src = backlog / "ISSUE-501.md"
+        _write_frontmatter_file(src, {
+            "id": "ISSUE-501", "title": "Done item", "type": "enhancement",
+            "status": "done", "created": "2026-01-01"}, body="\n# body\n")
+        original = src.read_bytes()
+        # dest parent (done/) does not yet exist
+        dest = backlog / "done" / "ISSUE-501.md"
+        assert not dest.parent.exists(), "precondition: dest parent dir is absent"
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "file_move", "src": str(src), "dest": str(dest),
+        }, archive)
+
+        assert result.success is True, f"file_move should succeed: {result.error}"
+        assert dest.parent.is_dir(), "dest parent dir must be created"
+        assert dest.exists() and dest.read_bytes() == original
+        assert not src.exists()
+
+    def test_file_move_missing_src_fails_without_writing(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+        src = backlog / "done" / "ISSUE-502.md"  # never created
+        dest = backlog / "ISSUE-502.md"
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(project_dir, {
+            "action": "file_move", "src": str(src), "dest": str(dest),
+        }, archive)
+
+        assert result.success is False, "missing src must not report success"
+        assert result.error, "missing src must surface a clear error"
+        assert not dest.exists(), "missing src must not create dest"
+        assert list((archive / "before").iterdir()) == [], "no backup on a failed move"
+
+    def test_move_aware_restore_reverses_the_move(self, tmp_path, fake_home):
+        # The wrinkle: restore must REVERSE a move, not double the file.
+        project_dir = build_fixture(tmp_path)
+        done_dir = project_dir / ".sweetclaude" / "product" / "backlog" / "done"
+        src = done_dir / "ISSUE-503.md"
+        _write_frontmatter_file(src, {
+            "id": "ISSUE-503", "title": "Misfiled", "type": "enhancement",
+            "status": "new", "created": "2026-01-01"}, body="\n# body\n")
+        original = src.read_bytes()
+        dest = project_dir / ".sweetclaude" / "product" / "backlog" / "ISSUE-503.md"
+        archive = create_archive(project_dir)
+
+        # apply through the auto-fix pipeline (the path the skill uses) so the
+        # move action is recorded for restore to find
+        finding = {
+            "id": "storage-lint:done-status-mismatch:ISSUE-503.md",
+            "category": "storage_lint",
+            "summary": "ISSUE-503.md is in done/ but isn't marked done",
+            "fix_type": "prompted",
+            "fix_recipe": {"action": "file_move", "src": str(src), "dest": str(dest)},
+        }
+        auto_fix(project_dir, [finding], archive, include_prompted=True)
+        assert not src.exists() and dest.exists(), "precondition: the move happened"
+
+        res = _p0_doctor.restore(project_dir, archive, restore_all=True)
+
+        assert src.exists(), "restore must recreate src"
+        assert src.read_bytes() == original, "restored src must be byte-identical"
+        assert not dest.exists(), "restore must REMOVE dest — never leave a double file"
+        assert res["restored"], "restore must report what it reversed"
+
+    def test_move_aware_restore_by_file_targets_the_src(self, tmp_path, fake_home):
+        # restore(file=src) reverses the move keyed to the recorded src path
+        project_dir = build_fixture(tmp_path)
+        done_dir = project_dir / ".sweetclaude" / "product" / "backlog" / "done"
+        src = done_dir / "ISSUE-504.md"
+        _write_frontmatter_file(src, {
+            "id": "ISSUE-504", "title": "Misfiled", "type": "enhancement",
+            "status": "new", "created": "2026-01-01"}, body="\n# body\n")
+        original = src.read_bytes()
+        dest = project_dir / ".sweetclaude" / "product" / "backlog" / "ISSUE-504.md"
+        archive = create_archive(project_dir)
+
+        finding = {
+            "id": "storage-lint:done-status-mismatch:ISSUE-504.md",
+            "category": "storage_lint",
+            "summary": "misfiled",
+            "fix_type": "prompted",
+            "fix_recipe": {"action": "file_move", "src": str(src), "dest": str(dest)},
+        }
+        auto_fix(project_dir, [finding], archive, include_prompted=True)
+
+        res = _p0_doctor.restore(project_dir, archive, file=str(src))
+
+        assert src.exists() and src.read_bytes() == original
+        assert not dest.exists(), "restore must remove dest, not leave a double"
+        assert res["restored"]
+
+    def test_non_move_action_in_same_archive_still_content_restores(
+        self, tmp_path, fake_home
+    ):
+        # A plain content mutation and a move coexist in one archive; restoring
+        # all reverses both correctly — the move is reversed, the plain edit is
+        # content-reverted. No regression to the existing restore model.
+        project_dir = build_fixture(tmp_path)
+        ss = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss.write_text("phase_schema_version: 1\n")
+        ss_original = ss.read_bytes()
+        done_dir = project_dir / ".sweetclaude" / "product" / "backlog" / "done"
+        src = done_dir / "ISSUE-505.md"
+        _write_frontmatter_file(src, {
+            "id": "ISSUE-505", "title": "Misfiled", "type": "enhancement",
+            "status": "new", "created": "2026-01-01"}, body="\n# body\n")
+        src_original = src.read_bytes()
+        dest = project_dir / ".sweetclaude" / "product" / "backlog" / "ISSUE-505.md"
+        archive = create_archive(project_dir)
+
+        findings = [
+            _make_finding(action="write_field", file=str(ss),
+                          key="phase_schema_version", value=2),
+            {
+                "id": "storage-lint:done-status-mismatch:ISSUE-505.md",
+                "category": "storage_lint", "summary": "misfiled",
+                "fix_type": "prompted",
+                "fix_recipe": {"action": "file_move", "src": str(src), "dest": str(dest)},
+            },
+        ]
+        auto_fix(project_dir, findings, archive, include_prompted=True)
+        assert ss.read_bytes() != ss_original and not src.exists()
+
+        res = _p0_doctor.restore(project_dir, archive, restore_all=True)
+
+        # plain content mutation reverted by content
+        assert ss.read_bytes() == ss_original
+        # move reversed: src back, dest gone
+        assert src.exists() and src.read_bytes() == src_original
+        assert not dest.exists()
+        assert len(res["restored"]) == 2
+
+
+def test_file_move_is_a_supported_action():
+    from doctor import EXECUTOR_SUPPORTED_ACTIONS
+    assert "file_move" in EXECUTOR_SUPPORTED_ACTIONS

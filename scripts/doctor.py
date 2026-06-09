@@ -143,6 +143,7 @@ EXECUTOR_SUPPORTED_ACTIONS = frozenset({
     "config_conflict",
     "yaml_repair",
     "hook_restore",
+    "file_move",
 })
 
 # Manual guidance for known-unsupported actions, surfaced when an auto/prompted
@@ -2948,6 +2949,40 @@ def execute_recipe(
         _atomic_write(dest, after)
         return _record_mutation(archive_path, dest, before, after)
 
+    if action == "file_move":
+        # Relocate a misfiled artifact (src -> dest). Emitted by storage-lint
+        # for done-status items in the wrong folder. A move does NOT fit the
+        # content-revert restore model: backing up src and writing it back to
+        # src would leave BOTH src and dest. So the move is recorded as a move —
+        # the recorded file_path is src (its before-image is src's content) and
+        # a `moved_to` marker carries the dest — and `restore` REVERSES it
+        # (delete dest, recreate src from its before-image) rather than
+        # content-reverting.
+        src = Path(recipe.get("src", ""))
+        if not src.is_absolute():
+            src = project_dir / src
+        dest = Path(recipe.get("dest", ""))
+        if not dest.is_absolute():
+            dest = project_dir / dest
+        if not src.is_file():
+            return RecipeResult("", "", None, None, False, f"file_move source not found: {src}")
+        try:
+            before = src.read_bytes()
+            # Back up src's content (keyed to src) and diff src -> empty so the
+            # move is reversible through the same archive contract.
+            recorded = _record_mutation(archive_path, src, before, b"")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dest))
+        except Exception as e:
+            return RecipeResult("", "", None, None, False, str(e))
+        # Thread the real moved paths back onto the recipe so the auto_fix
+        # recorder logs file_path=src (restore keys its before-image on that)
+        # and moved_to=dest (restore reverses the move using it).
+        recipe["file"] = str(src)
+        recipe["moved_to"] = str(dest)
+        return RecipeResult("", recorded.before_hash, recorded.after_hash,
+                            recorded.backup_path, True)
+
     if action == "run_script":
         cmd = recipe.get("cmd", [])
         if len(cmd) < 2:
@@ -3044,7 +3079,7 @@ def auto_fix(
             result.finding_id = f["id"]
             if result.before_hash != result.after_hash:
                 fixed_categories.add(f["category"])
-            actions.append({
+            entry = {
                 "action": "auto-fix",
                 "finding_id": f["id"],
                 "category": f["category"],
@@ -3053,7 +3088,14 @@ def auto_fix(
                 "before_hash": result.before_hash,
                 "after_hash": result.after_hash,
                 "timestamp": _now_iso(),
-            })
+            }
+            # file_move threads a moved_to marker onto the recipe; carry it into
+            # the recorded action so `restore` can reverse the move (delete the
+            # dest, recreate src from its before-image) instead of content-
+            # reverting it. Plain actions never set this.
+            if recipe.get("moved_to"):
+                entry["moved_to"] = recipe["moved_to"]
+            actions.append(entry)
         except Exception as e:
             actions.append({
                 "action": "auto-fix-failed",
@@ -3137,6 +3179,19 @@ def restore(
         backup = archive_path / "before" / _sanitize_path(str(resolved))
         if backup.exists():
             data = backup.read_bytes()
+            # Move-aware rollback: a file_move action records file_path=src (its
+            # before-image is src's content) plus a moved_to=dest marker. A move
+            # cannot be content-reverted — rewriting src alone would leave BOTH
+            # src and dest. Reverse it: remove dest first, then recreate src
+            # from its before-image. Plain (non-move) actions have no marker and
+            # keep the existing content-revert behavior.
+            moved_to = a.get("moved_to", "")
+            if moved_to:
+                dest = Path(moved_to)
+                if not dest.is_absolute():
+                    dest = project_dir / dest
+                if dest.exists():
+                    dest.unlink()
             resolved.parent.mkdir(parents=True, exist_ok=True)
             _atomic_write(resolved, data)
             restored.append(str(resolved))

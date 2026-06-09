@@ -475,6 +475,12 @@ For fix types that require further user input or skill delegation:
   ```
   Then record the prompted-fix action.
 
+- `file_move`: Relocate a misfiled artifact — storage-lint emits this for done-status items in the wrong folder (a done/abandoned item not in `done/`, or a non-done item sitting in `done/`). Confirm the move via AskUserQuestion (**move** = relocate `fix_recipe.src` → `fix_recipe.dest`, **leave** = skip). On **move**, apply through the executor by building a finding whose recipe is the executable `file_move` action carrying the `src` and `dest` the prompt recipe threaded. Do **not** `mv` in the skill: the executor validates src exists, creates the dest parent dir if missing, backs up src's content through the pipeline keyed to src, and moves src → dest. The move is recorded as a move (the action carries a `moved_to` marker), so `restore` REVERSES it — deletes dest and recreates src from its before-image — rather than leaving a double file.
+  ```bash
+  echo '[{"id": "{finding_id}", "category": "storage_lint", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "file_move", "src": "{fix_recipe.src}", "dest": "{fix_recipe.dest}"}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+  ```
+  If src is genuinely absent the executor returns failure with a clear error — surface that, never a silent skip. Then record the prompted-fix action.
+
 - `migration`: Delegate to the appropriate skill or script per Step 7. Record the result.
 
 - `yaml_repair`: Present three options via AskUserQuestion — **auto-fix** (let SweetClaude repair common frontmatter-delimiter breakage), **restore from archive** (revert the file to a prior doctor run's saved copy), **show for manual edit** (open the file for hand-editing). Apply through the executor by building a finding whose recipe is the executable `yaml_repair` action carrying the chosen `choice` (`auto` / `restore` / `manual`) and the file path the prompt recipe threaded (`fix_recipe.file`). Do not write the file directly.
