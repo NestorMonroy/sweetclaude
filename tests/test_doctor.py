@@ -7299,3 +7299,39 @@ class TestP0Restore:
         assert code == 0
         assert ss.read_bytes() == original, "CLI restore --all must revert the run byte-identically"
         assert str(ss) in out["restored"]
+
+
+class TestP1Tier2:
+    """P1: Tier-2 prompted fixes made functional.
+
+    choose_value/provide_value reuse the existing write_frontmatter_field
+    executor action (no new transform — V7 tripwire). This locks the end-to-end
+    reuse path the SKILL choose_value/provide_value handlers emit.
+    """
+
+    def test_choose_value_reuse_applies_chosen_value_via_autofix(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        target = project_dir / ".sweetclaude" / "product" / "backlog" / "ISSUE-400.md"
+        _write_frontmatter_file(target, {
+            "id": "ISSUE-400", "title": "T", "type": "enhancement",
+            "status": "bogus", "created": "2026-01-01"}, body="\n# b\n")
+        archive = create_archive(project_dir)
+
+        # exactly the recipe the SKILL emits after the user picks a value for a
+        # choose_value/provide_value finding on field=status
+        finding = {
+            "id": "file-diagnostics:invalid-value:status:ISSUE-400.md",
+            "category": "file_diagnostics",
+            "summary": "invalid status value",
+            "fix_type": "prompted",
+            "fix_recipe": {"action": "write_frontmatter_field",
+                           "file": str(target), "key": "status", "value": "active"},
+        }
+        result = auto_fix(project_dir, [finding], archive, include_prompted=True)
+
+        assert len(result["actions"]) == 1
+        assert result["actions"][0]["action"] == "auto-fix"
+        fm = yaml.safe_load(target.read_text().split("---", 2)[1])
+        assert fm["status"] == "active"
+        # reversible: the reuse path records a before/ backup, so `restore` can revert it
+        assert list((archive / "before").iterdir()), "reuse path must record a backup"
