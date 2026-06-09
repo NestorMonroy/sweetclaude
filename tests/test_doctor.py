@@ -8547,3 +8547,405 @@ class TestP1Suppress:
         assert 'suppressed_at": "{ISO timestamp}"' not in skill, (
             "SKILL.md must not hand-construct a suppression entry inline"
         )
+
+
+# ---------------------------------------------------------------------------
+# Capstone: enumerate-all-actions executor invariants.
+#
+# The keystone that ENFORCES the §6 Safety Model going forward. Every action
+# in EXECUTOR_SUPPORTED_ACTIONS must be classified into exactly one of three
+# disjoint sets, and every content-mutating action must be exercised through
+# the real backup/diff/restore pipeline. The classification assertion fails
+# the moment a NEW action is added without being classified here, so no future
+# action can silently bypass the backup pipeline (P2/P7) or escape rollback
+# (S6). NO MOCKS — real fixtures, real files, real execute_recipe / restore.
+# ---------------------------------------------------------------------------
+
+
+# --- the three classification sets (built in the test, asserted exhaustive) --
+
+# Content-mutating: when the action actually changes a file it MUST record a
+# before/ image AND a diffs/ entry, and be reversible by restore. create_dir is
+# included here as a content-mutating *kind* (it is a filesystem mutation the
+# executor owns) but is exercised specially — a directory create has no
+# authored before-image (it is reversed by removing the dir), so it is verified
+# through its own assertion rather than the content-revert loop.
+_CONTENT_MUTATING_ACTIONS = frozenset({
+    "write_field",
+    "write_frontmatter_field",
+    "delete_file",
+    "create_dir",
+    "sync_parent_status",
+    "convert_to_yaml",
+    "config_conflict",
+    "yaml_repair",
+    "hook_restore",
+    "file_move",
+    "renumber_duplicate",
+})
+
+# Explicitly reversible:false — derived/cache regenerable output, no authored
+# before-image. Allowlisted so the script can never quietly grow another
+# un-backed-up mutation under this banner.
+_REVERSIBLE_FALSE_ACTIONS = frozenset({
+    "run_script",
+    "rebuild_cache",
+})
+
+# Presentation-only — surfaced for user approval, never executed by the
+# executor as a file mutation.
+_PRESENTATION_ONLY_ACTIONS = frozenset({
+    "prompt",
+})
+
+
+def _capstone_build_content_mutation(tmp_path, action):
+    """Build a real fixture + recipe for a content-mutating action and return
+    (project_dir, archive, recipe, mutated_path, original_bytes).
+
+    ``mutated_path`` is the path whose before-image the archive records (for
+    file_move / renumber_duplicate this is the SOURCE path, keyed how the
+    move-aware restore reverses it). ``original_bytes`` is that path's content
+    before the mutation. Each builder reuses the exact recipe shape the
+    per-action P0/P1 tests already lock. NO MOCKS — real files on disk.
+    """
+    project_dir = build_fixture(tmp_path)
+    backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+
+    if action == "write_field":
+        ss = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss.write_text("phase_schema_version: 1\nfoo: bar\n")
+        archive = create_archive(project_dir)
+        recipe = {"action": "write_field", "file": str(ss),
+                  "key": "phase_schema_version", "value": 99}
+        return project_dir, archive, recipe, ss, ss.read_bytes()
+
+    if action == "write_frontmatter_field":
+        target = backlog / "ISSUE-900.md"
+        _write_frontmatter_file(target, {
+            "id": "ISSUE-900", "title": "Thing", "type": "enhancement",
+            "status": "new", "created": "2026-01-01"}, body="\n# Body\n")
+        archive = create_archive(project_dir)
+        recipe = {"action": "write_frontmatter_field", "file": str(target),
+                  "key": "status", "value": "active"}
+        return project_dir, archive, recipe, target, target.read_bytes()
+
+    if action == "delete_file":
+        target = project_dir / ".sweetclaude" / "state" / "pending-drift-decision.yaml"
+        target.write_text("decision: pending\nfoo: bar\n")
+        archive = create_archive(project_dir)
+        recipe = {"action": "delete_file", "file": str(target)}
+        return project_dir, archive, recipe, target, target.read_bytes()
+
+    if action == "sync_parent_status":
+        # distinct subdir: _p0_epic_child builds its own fixture, must not collide
+        # with the build_fixture(tmp_path) at the top of this helper.
+        project_dir, epic_path = _p0_epic_child(
+            tmp_path / "sync", "EP-900", "done", "ISSUE-901", "in-progress")
+        archive = create_archive(project_dir)
+        recipe = {"action": "sync_parent_status", "file": str(epic_path),
+                  "parent_id": "EP-900", "parent_type": "epic"}
+        return project_dir, archive, recipe, epic_path, epic_path.read_bytes()
+
+    if action == "convert_to_yaml":
+        bold = backlog / "ISSUE-902.md"
+        bold.write_text(
+            "# ISSUE-902: Widget\n\n**Type:** enhancement\n**Status:** active\n"
+            "**Created:** 2026-01-01\n\n## Description\n\nBody.\n")
+        archive = create_archive(project_dir)
+        recipe = {"action": "convert_to_yaml", "file": str(bold)}
+        return project_dir, archive, recipe, bold, bold.read_bytes()
+
+    if action == "config_conflict":
+        # distinct subdir: this branch rebuilds with a claude_md override and must
+        # not collide with the build_fixture(tmp_path) at the top of this helper.
+        project_dir = build_fixture(tmp_path / "cfg", overrides={
+            "claude_md": "# Project\n\nYou should skip tests when in a hurry.\n\n"
+                         "## Notes\nKeep this.\n"})
+        claude_md = project_dir / "CLAUDE.md"
+        archive = create_archive(project_dir)
+        recipe = {"action": "config_conflict", "file": "CLAUDE.md",
+                  "path": str(claude_md), "choice": "adopt",
+                  "conflict": "W3", "pattern": "skip tests"}
+        return project_dir, archive, recipe, claude_md, claude_md.read_bytes()
+
+    if action == "yaml_repair":
+        broken = backlog / "ISSUE-903.md"
+        broken.write_text(
+            "---\nid: ISSUE-903\ntitle: Reversible\nstatus: active\ntype: story\n"
+            "# Reversible\n\nBody content.\n")
+        archive = create_archive(project_dir)
+        recipe = {"action": "yaml_repair", "file": str(broken), "choice": "auto"}
+        return project_dir, archive, recipe, broken, broken.read_bytes()
+
+    if action == "hook_restore":
+        plugin = _build_fake_plugin(tmp_path)
+        dest = Path.home() / ".claude" / "hooks" / "sweetclaude" / "auto-test-runner.sh"
+        dest.write_text("#!/bin/bash\n# STALE\nexit 1\n")
+        archive = create_archive(project_dir)
+        recipe = {"action": "hook_restore", "hook": "auto-test-runner.sh",
+                  "plugin_dir": str(plugin)}
+        # hook_restore threads the resolved dest back onto recipe["file"]; the
+        # before-image is keyed to dest, so dest is the mutated path.
+        return project_dir, archive, recipe, dest, dest.read_bytes()
+
+    if action == "file_move":
+        done_dir = backlog / "done"
+        src = done_dir / "ISSUE-904.md"
+        _write_frontmatter_file(src, {
+            "id": "ISSUE-904", "title": "Misfiled", "type": "enhancement",
+            "status": "new", "created": "2026-01-01"}, body="\n# body\n")
+        dest = backlog / "ISSUE-904.md"
+        archive = create_archive(project_dir)
+        recipe = {"action": "file_move", "src": str(src), "dest": str(dest)}
+        # the before-image is keyed to SRC; restore reverses the move.
+        return project_dir, archive, recipe, src, src.read_bytes()
+
+    if action == "renumber_duplicate":
+        target = backlog / "ISSUE-010-second.md"
+        _write_frontmatter_file(target, {
+            "id": "ISSUE-010", "title": "Second", "type": "enhancement",
+            "status": "new", "created": "2026-01-01"}, body="\n# body\n")
+        archive = create_archive(project_dir)
+        recipe = {"action": "renumber_duplicate", "file": str(target),
+                  "old_id": "ISSUE-010", "new_id": "ISSUE-943"}
+        # the before-image is keyed to the ORIGINAL path; restore reverses the
+        # rename + id rewrite.
+        return project_dir, archive, recipe, target, target.read_bytes()
+
+    raise AssertionError(f"no capstone builder for content-mutating action {action!r}")
+
+
+class TestP1ExecutorInvariants:
+    """Capstone enumerate-all-actions invariant: enforces the §6 Safety Model.
+
+    1. Every action in EXECUTOR_SUPPORTED_ACTIONS is classified into exactly
+       one of three disjoint sets — content-mutating, reversible:false, or
+       presentation-only — and their union equals EXECUTOR_SUPPORTED_ACTIONS.
+       A new, unclassified action fails this test, so nothing can silently
+       bypass the backup pipeline.
+    2. Every content-mutating action, exercised through execute_recipe against
+       a real fixture, records a before/ image AND a diffs/ entry on a real
+       change AND is reversed by restore (content-reverted, or move reversed).
+       create_dir is verified specially (dir create, no authored before-image).
+    3. No skill-side direct file writes remain — the skill invokes script
+       subcommands for every mutation; only read-only inline python remains
+       (structural assertion over SKILL.md).
+    """
+
+    # ----- 1. exhaustive, disjoint classification --------------------------
+
+    def test_classification_partitions_every_supported_action(self):
+        from doctor import EXECUTOR_SUPPORTED_ACTIONS
+
+        union = (
+            _CONTENT_MUTATING_ACTIONS
+            | _REVERSIBLE_FALSE_ACTIONS
+            | _PRESENTATION_ONLY_ACTIONS
+        )
+
+        # Exhaustive: every supported action is classified. A new action added
+        # to EXECUTOR_SUPPORTED_ACTIONS without being placed in one of the three
+        # sets here FAILS — it cannot silently bypass the backup pipeline.
+        unclassified = set(EXECUTOR_SUPPORTED_ACTIONS) - union
+        assert not unclassified, (
+            f"unclassified action(s) added to EXECUTOR_SUPPORTED_ACTIONS without "
+            f"a safety classification: {sorted(unclassified)} — every action MUST "
+            f"be content-mutating (backed up + reversible), reversible:false "
+            f"(derived/cache allowlist), or presentation-only"
+        )
+
+        # No phantom classifications: every classified action really is a
+        # supported action (keeps the sets honest if one is removed).
+        phantom = union - set(EXECUTOR_SUPPORTED_ACTIONS)
+        assert not phantom, (
+            f"classified action(s) not in EXECUTOR_SUPPORTED_ACTIONS: "
+            f"{sorted(phantom)}"
+        )
+
+        # The partition is the full set, exactly.
+        assert union == set(EXECUTOR_SUPPORTED_ACTIONS)
+
+    def test_classification_sets_are_disjoint(self):
+        # Each action belongs to exactly one class — no action is both
+        # backed-up and reversible:false, etc.
+        assert not (_CONTENT_MUTATING_ACTIONS & _REVERSIBLE_FALSE_ACTIONS)
+        assert not (_CONTENT_MUTATING_ACTIONS & _PRESENTATION_ONLY_ACTIONS)
+        assert not (_REVERSIBLE_FALSE_ACTIONS & _PRESENTATION_ONLY_ACTIONS)
+
+    # ----- 2a. every content-mutating action backs up + diffs + reverses ----
+
+    @pytest.mark.parametrize("action", sorted(
+        _CONTENT_MUTATING_ACTIONS - {"create_dir"}))
+    def test_content_mutating_action_backs_up_diffs_and_restores(
+        self, action, tmp_path, fake_home
+    ):
+        project_dir, archive, recipe, mutated_path, original = (
+            _capstone_build_content_mutation(tmp_path, action))
+
+        # Drive through auto_fix — the exact path the skill uses. It calls the
+        # real execute_recipe (which routes content mutations through
+        # _record_mutation, writing before/ + diffs/) AND records the action to
+        # actions.json (which move-aware actions thread moved_to into) so restore
+        # can reverse it. One real run exercises P2, P7 and S6 together. NO MOCKS.
+        finding = {
+            "id": f"capstone:{action}",
+            "category": "capstone",
+            "summary": f"capstone {action}",
+            "fix_type": "prompted",
+            "fix_recipe": recipe,
+        }
+        result = auto_fix(project_dir, [finding], archive, include_prompted=True)
+        recorded = result["actions"]
+        assert recorded and recorded[0]["action"] == "auto-fix", (
+            f"{action}: auto_fix must record a successful auto-fix, got {recorded}")
+        assert recorded[0]["before_hash"] != recorded[0]["after_hash"], (
+            f"{action}: fixture must produce a real mutation (before != after hash)")
+
+        # P2 — a before/ image was recorded, keyed to the mutated path
+        before_entry = archive / "before" / _p0_doctor._sanitize_path(str(mutated_path))
+        assert before_entry.exists(), (
+            f"{action}: a real change MUST record a before/ image at {before_entry}")
+        assert before_entry.read_bytes() == original, (
+            f"{action}: the before/ image must hold the pre-mutation content")
+
+        # P7 — a non-empty diffs/ entry was recorded, reconstructable
+        diff_entry = (archive / "diffs"
+                      / (_p0_doctor._sanitize_path(str(mutated_path)) + ".diff"))
+        assert diff_entry.exists() and diff_entry.stat().st_size > 0, (
+            f"{action}: a real change MUST record a non-empty diffs/ entry")
+
+        # S6 — restore reverses it. delete_file removes the file; every other
+        # content-mutating action leaves a changed or moved file. In all cases
+        # restore must reconstruct the original path byte-identically (and for
+        # move-aware actions, remove the destination — never a double file).
+        res = _p0_doctor.restore(project_dir, archive, restore_all=True)
+        assert res["restored"], f"{action}: restore must report what it reversed"
+        assert mutated_path.exists(), (
+            f"{action}: restore must reconstruct the original file")
+        assert mutated_path.read_bytes() == original, (
+            f"{action}: restore must revert the mutated path byte-identically")
+
+        # move-aware actions: the destination created by the move must be gone
+        # after restore — never a doubled file.
+        if action in ("file_move", "renumber_duplicate"):
+            moved_to = next(
+                (a["moved_to"] for a in recorded if a.get("moved_to")), None)
+            assert moved_to, f"{action}: a move-aware action must record moved_to"
+            dest = Path(moved_to)
+            if not dest.is_absolute():
+                dest = project_dir / dest
+            assert not dest.exists(), (
+                f"{action}: restore must REMOVE the move destination — no double file")
+
+    # ----- 2b. create_dir handled specially (dir create) -------------------
+
+    def test_create_dir_creates_directory_and_is_owned_by_executor(
+        self, tmp_path, fake_home
+    ):
+        # create_dir is content-mutating in kind (a filesystem mutation the
+        # executor owns) but has no authored before-image: it is reversed by
+        # removing the created directory, not by writing bytes back. Verify the
+        # executor performs and owns the create.
+        project_dir = build_fixture(tmp_path)
+        target = project_dir / ".sweetclaude" / "state" / "doctor-runs"
+        # ensure absent so the create is a real change
+        if target.exists():
+            shutil.rmtree(target)
+        assert not target.exists(), "precondition: target dir absent"
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(
+            project_dir, {"action": "create_dir", "path": str(target)}, archive)
+
+        assert result.success is True, f"create_dir must succeed: {result.error}"
+        assert target.is_dir(), "create_dir must create the directory"
+
+        # idempotent: re-running on an existing dir is a no-op success
+        result2 = execute_recipe(
+            project_dir, {"action": "create_dir", "path": str(target)}, archive)
+        assert result2.success is True
+        assert result2.before_hash == result2.after_hash, (
+            "create_dir on an existing dir must be a no-op (before == after)")
+
+    # ----- 2c. reversible:false actions carry no authored before-image -----
+
+    def test_reversible_false_actions_record_no_before_image(
+        self, tmp_path, fake_home, patch_scripts_dir
+    ):
+        # run_script / rebuild_cache regenerate derived/cache state — they have
+        # no authored before-image and restore reports them skipped rather than
+        # failing. Confirm they do not write a before/ image (the allowlist
+        # invariant: only these two may mutate without a backup).
+        from doctor import RUN_SCRIPT_ALLOWLIST
+
+        # rebuild_cache: point _SCRIPTS_DIR at a real cache.py that exits 0
+        cache_script = patch_scripts_dir / "cache.py"
+        cache_script.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n")
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+
+        result = execute_recipe(
+            project_dir, {"action": "rebuild_cache"}, archive)
+        assert result.success is True, f"rebuild_cache must succeed: {result.error}"
+        assert list((archive / "before").iterdir()) == [], (
+            "rebuild_cache must not record a before/ image (reversible:false)")
+
+        # run_script: invoke an allowlisted script (cache.py) that exits 0
+        assert "cache.py" in RUN_SCRIPT_ALLOWLIST
+        archive2 = create_archive(project_dir)
+        result2 = execute_recipe(project_dir, {
+            "action": "run_script",
+            "cmd": [sys.executable, str(cache_script)],
+        }, archive2)
+        assert result2.success is True, f"run_script must succeed: {result2.error}"
+        assert list((archive2 / "before").iterdir()) == [], (
+            "run_script must not record a before/ image (reversible:false)")
+
+    # ----- 3. no skill-side direct file writes remain ----------------------
+
+    def test_skill_performs_no_direct_file_writes(self):
+        # S3 — the skill layer never writes files directly: every mutation goes
+        # through a doctor.py subcommand. Only READ-ONLY inline python may
+        # remain. This is the structural backstop that keeps every mutation on
+        # the backed-up executor path.
+        skill_path = Path(__file__).parents[1] / "skills" / "doctor" / "SKILL.md"
+        skill = skill_path.read_text(encoding="utf-8")
+
+        # No write-mode file opens in inline python (open(..., "w"/"a"/"x"...)).
+        import re
+        write_opens = re.findall(r"open\([^)]*,\s*['\"][wax]", skill)
+        assert not write_opens, (
+            f"SKILL.md must not open files for writing inline: {write_opens}")
+
+        # No filesystem-mutation utilities invoked from the skill — every
+        # mutation must route through a doctor.py subcommand.
+        # Write-operation patterns only — NOT bare filenames (the skill may name
+        # doctor-suppressions.json in prose explaining it does NOT write it). Any
+        # actual inline write (incl. re-introducing the V9 suppress-write) uses one
+        # of these and is caught.
+        for forbidden in (
+            "json.dump(",                # writing JSON inline (the V9 suppress-write pattern)
+            ".write_text(",
+            ".write_bytes(",
+            "shutil.move(",
+            "shutil.copy",
+        ):
+            assert forbidden not in skill, (
+                f"SKILL.md must not perform a direct file mutation ({forbidden!r}) — "
+                f"route it through a doctor.py subcommand")
+
+        # Positive: the skill DOES drive mutations via the executor subcommands.
+        assert "doctor.py" in skill, (
+            "SKILL.md must invoke doctor.py subcommands for mutations")
+
+        # Any remaining inline `python3 -c` must be read-only (no assignment to
+        # a file write, no os.replace/rename). The two known inline blocks only
+        # json.load + print.
+        for line in skill.splitlines():
+            if "python3 -c" in line:
+                lowered = line.lower()
+                assert "os.replace" not in lowered and "os.rename" not in lowered, (
+                    f"inline python in SKILL.md must be read-only, found: {line}")
+                assert not re.search(r"open\([^)]*,\s*['\"][wax]", line), (
+                    f"inline python in SKILL.md must be read-only, found: {line}")
