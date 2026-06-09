@@ -191,6 +191,13 @@ def build_fixture(tmp_path, overrides=None):
         path = hooks_dir / hf["name"]
         path.write_text(hf["content"])
 
+    if "hook_manifest" in overrides:
+        hooks_dir = Path.home() / ".claude" / "hooks" / "sweetclaude"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        (hooks_dir / "hooks-manifest.json").write_text(
+            json.dumps(overrides["hook_manifest"])
+        )
+
     if "suppressions" in overrides:
         (state_dir / "doctor-suppressions.json").write_text(
             json.dumps(overrides["suppressions"])
@@ -953,6 +960,104 @@ class TestHookHealth:
         )
         assert "hook-health:missing-rule:tdd-levels.md" in ids, (
             f"Expected tdd-levels.md finding in {ids}"
+        )
+
+    # ------------------------------------------------------------------
+    # C3.2a: missing hook scripts (manifest-declared but absent on disk)
+    # ------------------------------------------------------------------
+
+    # Scenario: a manifest-declared hook is absent from disk -> finding
+    def test_manifest_declared_hook_absent_produces_missing_finding(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path, overrides={
+            "hook_manifest": {
+                "hooks": [
+                    {"file": "auto-test-runner.sh", "required": True},
+                ],
+            },
+        })
+        state = build_project_state(project_dir)
+        findings = check_hook_health(state)
+
+        ids = [f.id for f in findings]
+        assert "hook-health:missing-hook:auto-test-runner.sh" in ids, (
+            f"Expected missing-hook finding for auto-test-runner.sh, got: {ids}"
+        )
+
+        f = next(
+            x for x in findings
+            if x.id == "hook-health:missing-hook:auto-test-runner.sh"
+        )
+        assert f.fix_type == "prompted"
+        assert f.fix_recipe["action"] == "prompt"
+        assert f.fix_recipe["type"] == "hook_restore"
+        assert f.fix_recipe["hook"] == "auto-test-runner.sh"
+
+    # Scenario: a manifest-declared hook present on disk -> no missing finding
+    def test_manifest_declared_hook_present_produces_no_missing_finding(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path, overrides={
+            "hook_manifest": {
+                "hooks": [
+                    {"file": "auto-test-runner.sh", "required": True},
+                ],
+            },
+            "hook_files": [
+                {"name": "auto-test-runner.sh",
+                 "content": "#!/bin/bash\nexit 0\n"},
+            ],
+        })
+        state = build_project_state(project_dir)
+        findings = check_hook_health(state)
+
+        ids = [f.id for f in findings]
+        assert "hook-health:missing-hook:auto-test-runner.sh" not in ids, (
+            f"Present hook should produce no missing-hook finding, got: {ids}"
+        )
+
+    # Scenario: no manifest at all -> no missing-hook findings (no regression)
+    def test_no_manifest_produces_no_missing_hook_findings(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        state = build_project_state(project_dir)
+        assert state.hook_manifest is None
+        findings = check_hook_health(state)
+
+        missing_ids = [
+            f.id for f in findings if f.id.startswith("hook-health:missing-hook")
+        ]
+        assert missing_ids == [], (
+            f"No manifest should produce no missing-hook findings, got: {missing_ids}"
+        )
+
+    # Scenario: missing hook AND missing hooks.json both detected (no regression)
+    def test_missing_hook_and_missing_hooks_json_both_detected(
+        self, tmp_path, fake_home
+    ):
+        hooks_json_path = (
+            fake_home / ".claude" / "hooks" / "sweetclaude" / "hooks.json"
+        )
+        hooks_json_path.unlink()
+
+        project_dir = build_fixture(tmp_path, overrides={
+            "hook_manifest": {
+                "hooks": [
+                    {"file": "auto-test-runner.sh", "required": True},
+                ],
+            },
+        })
+        state = build_project_state(project_dir)
+        findings = check_hook_health(state)
+
+        ids = [f.id for f in findings]
+        assert "hook-health:missing:hooks.json" in ids, (
+            f"Expected hooks.json finding in {ids}"
+        )
+        assert "hook-health:missing-hook:auto-test-runner.sh" in ids, (
+            f"Expected missing-hook finding in {ids}"
         )
 
 
@@ -4258,6 +4363,180 @@ class TestFileDiagnostics:
             f"No-frontmatter error should stop further field checks; "
             f"no missing-field findings expected, got: {missing_ids}"
         )
+
+    # ------------------------------------------------------------------
+    # C3.4f: legacy item-type aliases are detected and remapped to canonical
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize("alias,canonical", [
+        ("bug", "bug-fix"),
+        ("debt", "tech-debt"),
+        ("chore", "tech-debt"),
+        ("feature", "net-new-feature"),
+    ])
+    def test_legacy_type_alias_produces_remap_finding(
+        self, tmp_path, fake_home, alias, canonical
+    ):
+        project_dir = build_fixture(tmp_path, overrides={
+            "backlog_files": [
+                {"name": "ISSUE-001-test.md", "frontmatter": {
+                    "id": "ISSUE-001", "type": alias,
+                    "title": "Test", "status": "active",
+                }},
+            ],
+        })
+        state = build_project_state(project_dir)
+        findings = check_file_diagnostics(state)
+
+        ids = [f.id for f in findings]
+        assert "file-diagnostics:legacy-type-alias:ISSUE-001-test.md" in ids, (
+            f"Legacy alias '{alias}' should produce a remap finding, got: {ids}"
+        )
+
+        f = next(
+            x for x in findings
+            if x.id == "file-diagnostics:legacy-type-alias:ISSUE-001-test.md"
+        )
+        assert f.severity == "warning"
+        assert f.fix_type == "prompted"
+        assert f.fix_recipe["action"] == "prompt"
+        assert f.fix_recipe["type"] == "choose_value"
+        assert f.fix_recipe["field"] == "type"
+        assert f.fix_recipe["file"] == str(
+            project_dir / ".sweetclaude" / "product" / "backlog" / "ISSUE-001-test.md"
+        )
+        # The recommended/expected value is the canonical target.
+        assert f.fix_recipe["recommended"] == canonical, (
+            f"Alias '{alias}' should recommend '{canonical}', "
+            f"got: {f.fix_recipe.get('recommended')}"
+        )
+        # The canonical target is genuinely a valid type, offered in options.
+        assert canonical in f.fix_recipe["options"]
+
+    # Scenario: a legacy alias does NOT also produce a generic unknown-type
+    # finding (the remap finding supersedes it).
+    def test_legacy_type_alias_produces_no_unknown_type_finding(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path, overrides={
+            "backlog_files": [
+                {"name": "ISSUE-001-test.md", "frontmatter": {
+                    "id": "ISSUE-001", "type": "bug",
+                    "title": "Test", "status": "active",
+                }},
+            ],
+        })
+        state = build_project_state(project_dir)
+        findings = check_file_diagnostics(state)
+
+        unknown_ids = [
+            f.id for f in findings
+            if f.id.startswith("file-diagnostics:unknown-type")
+        ]
+        assert unknown_ids == [], (
+            f"Legacy alias should not also produce unknown-type finding, "
+            f"got: {unknown_ids}"
+        )
+
+    # Scenario: valid type "story" is NOT treated as a legacy alias (no finding)
+    def test_valid_type_story_produces_no_legacy_alias_finding(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path, overrides={
+            "backlog_files": [
+                {"name": "ISSUE-001-test.md", "frontmatter": {
+                    "id": "ISSUE-001", "type": "story",
+                    "title": "Test", "status": "active",
+                }},
+            ],
+        })
+        state = build_project_state(project_dir)
+        findings = check_file_diagnostics(state)
+
+        alias_ids = [
+            f.id for f in findings
+            if f.id.startswith("file-diagnostics:legacy-type-alias")
+        ]
+        invalid_type_ids = [
+            f.id for f in findings
+            if f.id.startswith("file-diagnostics:unknown-type")
+            or f.id.startswith("file-diagnostics:invalid-type")
+        ]
+        assert alias_ids == [], (
+            f"Valid type 'story' should produce no legacy-alias finding, got: {alias_ids}"
+        )
+        assert invalid_type_ids == [], (
+            f"Valid type 'story' should produce no invalid-type finding, got: {invalid_type_ids}"
+        )
+
+    # Scenario: valid type "release" is NOT treated as a legacy alias (no finding)
+    def test_valid_type_release_produces_no_legacy_alias_finding(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path, overrides={
+            "backlog_files": [
+                {"name": "ISSUE-001-test.md", "frontmatter": {
+                    "id": "ISSUE-001", "type": "release",
+                    "title": "Test", "status": "active",
+                }},
+            ],
+        })
+        state = build_project_state(project_dir)
+        findings = check_file_diagnostics(state)
+
+        alias_ids = [
+            f.id for f in findings
+            if f.id.startswith("file-diagnostics:legacy-type-alias")
+        ]
+        assert alias_ids == [], (
+            f"Valid type 'release' should produce no legacy-alias finding, got: {alias_ids}"
+        )
+
+    # Scenario: applying the remap sets the canonical type through the executor
+    # (content-backed up, reversible) by reusing write_frontmatter_field.
+    def test_remap_applies_canonical_type_through_executor(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path, overrides={
+            "backlog_files": [
+                {"name": "ISSUE-001-test.md", "frontmatter": {
+                    "id": "ISSUE-001", "type": "bug",
+                    "title": "Test", "status": "active",
+                }},
+            ],
+        })
+        target = (
+            project_dir / ".sweetclaude" / "product" / "backlog" / "ISSUE-001-test.md"
+        )
+
+        state = build_project_state(project_dir)
+        findings = check_file_diagnostics(state)
+        f = next(
+            x for x in findings
+            if x.id == "file-diagnostics:legacy-type-alias:ISSUE-001-test.md"
+        )
+        canonical = f.fix_recipe["recommended"]
+        assert canonical == "bug-fix"
+
+        archive = create_archive(project_dir)
+        result = execute_recipe(
+            project_dir,
+            {
+                "action": "write_frontmatter_field",
+                "file": str(target),
+                "key": "type",
+                "value": canonical,
+            },
+            archive,
+        )
+        assert result.success is True
+
+        fm = yaml.safe_load(target.read_text().split("---", 2)[1])
+        assert fm["type"] == "bug-fix"
+
+        # The before/ backup must exist (reversible).
+        before_entries = list((archive / "before").iterdir())
+        assert before_entries, "remap must write a before/ backup"
 
 
 # ---------------------------------------------------------------------------

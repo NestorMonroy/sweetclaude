@@ -508,7 +508,7 @@ echo '[{single_finding_json}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py
 
 For fix types that require further user input or skill delegation:
 
-- `choose_value`: Present `fix_recipe.options` for `fix_recipe.field` via AskUserQuestion. With the chosen value, apply through the executor by **reusing the `write_frontmatter_field` action** (do not write the file directly) — build a finding whose recipe is the executable write and pipe it to auto-fix:
+- `choose_value`: Present `fix_recipe.options` for `fix_recipe.field` via AskUserQuestion. If the recipe carries `fix_recipe.recommended` (e.g. a legacy item-type alias whose canonical target is known — `bug`→`bug-fix`, `debt`/`chore`→`tech-debt`, `feature`→`net-new-feature`), list that value first and label it "Recommended". With the chosen value, apply through the executor by **reusing the `write_frontmatter_field` action** (do not write the file directly) — build a finding whose recipe is the executable write and pipe it to auto-fix:
   ```bash
   echo '[{"id": "{finding_id}", "category": "{category}", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "write_frontmatter_field", "file": "{fix_recipe.file}", "key": "{fix_recipe.field}", "value": "{chosen_value}"}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
   ```

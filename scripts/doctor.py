@@ -599,6 +599,31 @@ def check_hook_health(state: ProjectState) -> list[Finding]:
         except (subprocess.TimeoutExpired, OSError):
             pass
 
+    # A hook the manifest declares but that is absent on disk cannot fire.
+    # Consult the loaded manifest (hooks-manifest.json) for expected scripts and
+    # compare against what is present, so a missing hook is detectable AND
+    # fixable end-to-end via the hook_restore prompt.
+    if state.hook_manifest:
+        hooks_dir = Path.home() / ".claude" / "hooks" / "sweetclaude"
+        present_names = {hf.name for hf in state.hook_files}
+        for entry in state.hook_manifest.get("hooks", []):
+            name = entry.get("file") if isinstance(entry, dict) else None
+            if not name:
+                continue
+            if name in present_names:
+                continue
+            findings.append(Finding(
+                id=f"hook-health:missing-hook:{name}",
+                category="hook_health",
+                severity="error",
+                summary=f"Hook script {name} is declared in the manifest but missing",
+                detail=f"Expected {hooks_dir / name} (declared in hooks-manifest.json)",
+                file_paths=[str(hooks_dir / name)],
+                fix_type="prompted",
+                fix_recipe={"action": "prompt", "type": "hook_restore",
+                            "hook": name, "sources": ["backup", "repo"]},
+            ))
+
     rules_dir = Path.home() / ".claude" / "rules" / "sweetclaude"
     expected_rules = ["interaction-model.md", "phase-gates.md", "tdd-levels.md"]
     for rf in expected_rules:
@@ -1049,9 +1074,15 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
     return findings
 
 
-_LEGACY_TYPE_ALIASES: frozenset[str] = frozenset({
-    "story", "bug", "debt", "chore", "release", "feature",
-})
+# Genuinely-invalid legacy item-type aliases mapped to their current-taxonomy
+# canonical target in schema.VALID_TYPES. `story` and `release` are valid item
+# types in VALID_TYPES and therefore need no remap (they produce no finding).
+_LEGACY_TYPE_ALIASES: dict[str, str] = {
+    "bug": "bug-fix",
+    "debt": "tech-debt",
+    "chore": "tech-debt",
+    "feature": "net-new-feature",
+}
 
 
 def _violation_to_finding(violation: str, p: Path, fm: dict) -> Finding | None:
@@ -1322,8 +1353,35 @@ def check_file_diagnostics(state: ProjectState) -> list[Finding]:
 
             violations = validate_frontmatter(fm_normalized)
             for v in violations:
-                if v.startswith("invalid type:") and raw_type.lower() in _LEGACY_TYPE_ALIASES:
-                    continue
+                if v.startswith("invalid type:"):
+                    canonical = _LEGACY_TYPE_ALIASES.get(raw_type.lower())
+                    if canonical:
+                        # A legacy item-type alias with a known canonical target:
+                        # emit a remap finding instead of the generic
+                        # unknown-type one. A type change is semantically
+                        # significant, so present it as a prompted choose_value
+                        # seeded so the recommended value is the canonical
+                        # target. The skill applies the chosen value through the
+                        # executor's write_frontmatter_field backup pipeline.
+                        findings.append(Finding(
+                            id=f"file-diagnostics:legacy-type-alias:{p.name}",
+                            category="file_diagnostics",
+                            severity="warning",
+                            summary=(
+                                f"{p.name} uses legacy type '{raw_type}' "
+                                f"— remap to '{canonical}'"
+                            ),
+                            detail=(
+                                f"legacy-type-alias:{raw_type}->{canonical} in {p}"
+                            ),
+                            file_paths=[str(p)],
+                            fix_type="prompted",
+                            fix_recipe={"action": "prompt", "type": "choose_value",
+                                        "file": str(p), "field": "type",
+                                        "recommended": canonical,
+                                        "options": sorted(VALID_TYPES)},
+                        ))
+                        continue
                 finding = _violation_to_finding(v, p, fm)
                 if finding:
                     if finding.id.endswith(":missing-field-id:" + p.name) and item_id:
