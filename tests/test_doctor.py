@@ -131,6 +131,11 @@ def build_fixture(tmp_path, overrides=None):
     state_dir.mkdir(parents=True)
 
     sc_yaml = overrides.get("sweetclaude_yaml", {
+        # schema_version 2 keeps the fixture genuinely migration-current: the real
+        # migration runner reports DRIFT_COUNT=0 for it. Without it the runner
+        # reports sweetclaude.yaml as drifted/missing (C3.5b previously masked this
+        # because the doctor swallowed the runner output).
+        "schema_version": 2,
         "phase_schema_version": 2,
         "framework": {"installed_version": "4.0.8-beta"},
     })
@@ -165,9 +170,27 @@ def build_fixture(tmp_path, overrides=None):
 
     (project_dir / "hooks").mkdir(exist_ok=True)
 
+    # Default migration runner stub. C3.5b: the doctor reads the runner's
+    # machine-parseable --report-drift-for-skill mode (DRIFT_COUNT=N then
+    # FINDING|<key>|v<from>-><to>|chain=<ok|broken>), NOT the human-prose
+    # --scan-drift mode. This default reports a healthy project (DRIFT_COUNT=0).
+    # The previous stub emitted JSON `[]`, which matched the buggy --scan-drift +
+    # json.loads call and so masked the dead-path defect. NOTE: this stub only
+    # takes effect for tests that also use patch_scripts_dir (which redirects
+    # doctor._SCRIPTS_DIR to project/scripts); otherwise the real repo runner runs.
     runner_dir = project_dir / "scripts" / "migrations"
     runner_dir.mkdir(parents=True, exist_ok=True)
-    (runner_dir / "runner.py").write_text("#!/usr/bin/env python3\nimport json, sys\nprint(json.dumps([]))\n")
+    (runner_dir / "runner.py").write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "if '--report-drift-for-skill' in sys.argv:\n"
+        "    print('DRIFT_COUNT=0')\n"
+        "    sys.exit(0)\n"
+        "if '--scan-drift' in sys.argv:\n"
+        "    print('Drift scan (2026-06-09): 0 finding(s)')\n"
+        "    sys.exit(0)\n"
+        "sys.exit(0)\n"
+    )
 
     for bf in overrides.get("backlog_files", []):
         path = product_base / "backlog" / bf["name"]
@@ -1792,8 +1815,12 @@ class TestMigrationCurrency:
     # ------------------------------------------------------------------
 
     # Scenario: Healthy project produces no migration_currency findings
+    #
+    # patch_scripts_dir redirects doctor._SCRIPTS_DIR to project/scripts so the
+    # build_fixture default runner stub (DRIFT_COUNT=0 on --report-drift-for-skill)
+    # drives the check, rather than the real repo runner.
     def test_healthy_project_produces_no_migration_currency_findings(
-        self, tmp_path, fake_home
+        self, tmp_path, fake_home, patch_scripts_dir
     ):
         project_dir = build_fixture(tmp_path)
         state = build_project_state(project_dir)
@@ -1846,20 +1873,34 @@ class TestMigrationCurrency:
     # ------------------------------------------------------------------
 
     # Scenario: Migration runner absent skips schema drift check
+    #
+    # patch_scripts_dir redirects doctor._SCRIPTS_DIR (where _find_migration_runner
+    # resolves the runner) to project/scripts; removing the fixture runner there
+    # makes migration_runner_path None. The documented contract for an absent
+    # runner is DependencyMissing (the scan layer catches it into
+    # skipped_categories), NOT a silent empty result. The old bug masked this:
+    # build_fixture + the real repo _SCRIPTS_DIR always supplied a runner whose
+    # prose --scan-drift output was json.loads()'d and swallowed, so this test
+    # never actually exercised the absent path.
     def test_migration_runner_absent_skips_schema_drift_check(
-        self, tmp_path, fake_home
+        self, tmp_path, fake_home, patch_scripts_dir
     ):
         project_dir = build_fixture(tmp_path)
-        # Explicitly do NOT create scripts/migrations/runner.py
+        # Remove the default fixture runner so the runner is genuinely absent
+        # (patch_scripts_dir points _SCRIPTS_DIR at project/scripts).
+        (project_dir / "scripts" / "migrations" / "runner.py").unlink()
         state = build_project_state(project_dir)
-        findings = check_migration_currency(state)
-
-        schema_ids = [f.id for f in findings if f.id.startswith("migration-currency:schema-drift")]
-        assert schema_ids == [], (
-            f"Absent migration runner should skip schema drift check, got: {schema_ids}"
-        )
+        assert state.migration_runner_path is None
+        with pytest.raises(DependencyMissing):
+            check_migration_currency(state)
 
     # Scenario: Migration runner reports schema drift produces warning
+    #
+    # C3.5b: the runner's machine-parseable mode is --report-drift-for-skill,
+    # which emits DRIFT_COUNT=N then FINDING|<key>|v<from>-><to>|chain=<ok|broken>.
+    # --scan-drift prints human prose, NOT JSON. This REAL stub (no mocks) mirrors
+    # the production contract: prose on --scan-drift, line format on
+    # --report-drift-for-skill. The doctor must shell out to --report-drift-for-skill.
     def test_migration_runner_reports_schema_drift_produces_warning(
         self, tmp_path, fake_home, patch_scripts_dir
     ):
@@ -1867,7 +1908,17 @@ class TestMigrationCurrency:
         runner_path = project_dir / "scripts" / "migrations" / "runner.py"
         runner_path.parent.mkdir(parents=True, exist_ok=True)
         runner_path.write_text(
-            'import json; print(json.dumps({"findings": [{"file": "test.yaml", "message": "needs upgrade"}]}))\n'
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "if '--report-drift-for-skill' in sys.argv:\n"
+            "    print('DRIFT_COUNT=1')\n"
+            "    print('FINDING|sweetclaude.yaml|v1->v2|chain=ok')\n"
+            "    sys.exit(0)\n"
+            "if '--scan-drift' in sys.argv:\n"
+            "    print('Drift scan (2026-06-09): 1 finding(s)')\n"
+            "    print('  [DRIFT] sweetclaude.yaml: on_disk=v1 target=v2 type=state')\n"
+            "    sys.exit(0)\n"
+            "sys.exit(0)\n"
         )
 
         state = build_project_state(project_dir)
@@ -1879,24 +1930,32 @@ class TestMigrationCurrency:
         )
 
         first = schema_findings[0]
+        assert first.id == "migration-currency:schema-drift:sweetclaude.yaml"
         assert first.severity == "warning"
         assert first.fix_type == "prompted"
 
-    # Scenario: Migration runner returns empty findings list
-    def test_migration_runner_returns_empty_findings_list(
-        self, tmp_path, fake_home
+    # Scenario: Migration runner reports zero drift (DRIFT_COUNT=0)
+    def test_migration_runner_reports_zero_drift_produces_no_finding(
+        self, tmp_path, fake_home, patch_scripts_dir
     ):
         project_dir = build_fixture(tmp_path)
         runner_path = project_dir / "scripts" / "migrations" / "runner.py"
         runner_path.parent.mkdir(parents=True, exist_ok=True)
-        runner_path.write_text('import json; print(json.dumps({"findings": []}))\n')
+        runner_path.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "if '--report-drift-for-skill' in sys.argv:\n"
+            "    print('DRIFT_COUNT=0')\n"
+            "    sys.exit(0)\n"
+            "sys.exit(0)\n"
+        )
 
         state = build_project_state(project_dir)
         findings = check_migration_currency(state)
 
         schema_ids = [f.id for f in findings if f.id.startswith("migration-currency:schema-drift")]
         assert schema_ids == [], (
-            f"Empty findings list should produce no schema-drift findings, got: {schema_ids}"
+            f"DRIFT_COUNT=0 should produce no schema-drift findings, got: {schema_ids}"
         )
 
     # Scenario: Migration runner subprocess times out is silently skipped
@@ -1925,26 +1984,49 @@ class TestMigrationCurrency:
             f"Timeout should be silently skipped, got: {schema_ids}"
         )
 
-    # Scenario: Migration runner returns invalid JSON is silently skipped
-    def test_migration_runner_invalid_json_is_silently_skipped(
-        self, tmp_path, fake_home
+    # Scenario: Drifted file reported via --report-drift-for-skill IS detected
+    #
+    # C3.5b regression lock. This test previously asserted the OPPOSITE — that a
+    # runner emitting prose (`print("not json")`, exactly what the real runner
+    # prints on --scan-drift) was "silently skipped" — which enshrined the bug:
+    # the doctor json.loads()'d the prose --scan-drift output, swallowed the
+    # JSONDecodeError, and could NEVER produce a schema-drift finding. The dead
+    # path is now fixed: the doctor calls --report-drift-for-skill and parses the
+    # DRIFT_COUNT / FINDING| line format, so a drifted file MUST surface a finding.
+    def test_migration_runner_reported_drift_is_detected(
+        self, tmp_path, fake_home, patch_scripts_dir
     ):
         project_dir = build_fixture(tmp_path)
         runner_path = project_dir / "scripts" / "migrations" / "runner.py"
         runner_path.parent.mkdir(parents=True, exist_ok=True)
-        runner_path.write_text('print("not json")\n')
+        # Realistic runner: human prose on --scan-drift (the BUGGY call), and the
+        # machine line format on --report-drift-for-skill (the CORRECT call).
+        runner_path.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "if '--report-drift-for-skill' in sys.argv:\n"
+            "    print('DRIFT_COUNT=1')\n"
+            "    print('FINDING|phase.yaml|v2->v3|chain=ok')\n"
+            "    sys.exit(0)\n"
+            "if '--scan-drift' in sys.argv:\n"
+            "    print('Drift scan (2026-06-09): 1 finding(s)')\n"
+            "    print('  [DRIFT] phase.yaml: on_disk=v2 target=v3 type=state')\n"
+            "    sys.exit(0)\n"
+            "sys.exit(0)\n"
+        )
 
         state = build_project_state(project_dir)
         findings = check_migration_currency(state)
 
         schema_ids = [f.id for f in findings if f.id.startswith("migration-currency:schema-drift")]
-        assert schema_ids == [], (
-            f"Invalid JSON from runner should be silently skipped, got: {schema_ids}"
+        assert "migration-currency:schema-drift:phase.yaml" in schema_ids, (
+            f"A drifted file reported via --report-drift-for-skill MUST produce a "
+            f"schema-drift finding, got: {schema_ids}"
         )
 
     # Scenario: Migration runner exits non-zero is silently skipped
     def test_migration_runner_exits_nonzero_is_silently_skipped(
-        self, tmp_path, fake_home
+        self, tmp_path, fake_home, patch_scripts_dir
     ):
         project_dir = build_fixture(tmp_path)
         runner_path = project_dir / "scripts" / "migrations" / "runner.py"
@@ -1959,41 +2041,60 @@ class TestMigrationCurrency:
             f"Non-zero exit from runner should be silently skipped, got: {schema_ids}"
         )
 
-    # Scenario: Migration runner returns JSON list directly
-    def test_migration_runner_returns_json_list_directly(
+    # Scenario: Migration runner emits multiple drift findings -> one per file
+    def test_migration_runner_reports_multiple_drift_findings(
         self, tmp_path, fake_home, patch_scripts_dir
     ):
         project_dir = build_fixture(tmp_path)
         runner_path = project_dir / "scripts" / "migrations" / "runner.py"
         runner_path.parent.mkdir(parents=True, exist_ok=True)
         runner_path.write_text(
-            'import json; print(json.dumps([{"file": "test.yaml", "message": "needs upgrade"}]))\n'
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "if '--report-drift-for-skill' in sys.argv:\n"
+            "    print('DRIFT_COUNT=2')\n"
+            "    print('FINDING|sweetclaude.yaml|v1->v2|chain=ok')\n"
+            "    print('FINDING|phase.yaml|v9->v3|chain=broken')\n"
+            "    sys.exit(0)\n"
+            "sys.exit(0)\n"
         )
 
         state = build_project_state(project_dir)
         findings = check_migration_currency(state)
 
-        schema_findings = [f for f in findings if f.id.startswith("migration-currency:schema-drift")]
-        assert len(schema_findings) >= 1, (
-            f"JSON list format should produce at least 1 schema-drift finding, "
-            f"got: {[f.id for f in findings]}"
+        schema_ids = sorted(
+            f.id for f in findings if f.id.startswith("migration-currency:schema-drift")
         )
+        assert schema_ids == [
+            "migration-currency:schema-drift:phase.yaml",
+            "migration-currency:schema-drift:sweetclaude.yaml",
+        ], f"Each drifted file should produce its own finding, got: {schema_ids}"
 
-    # Scenario: Migration runner returns valid JSON of unexpected type is silently skipped
-    def test_migration_runner_unexpected_json_type_is_silently_skipped(
-        self, tmp_path, fake_home
+    # Scenario: Migration runner emits unparseable line format is tolerated
+    #
+    # Under the line-format contract there is no JSON to decode. Malformed output
+    # (no FINDING| lines, garbage text) must not crash and must produce no finding.
+    def test_migration_runner_malformed_line_format_is_tolerated(
+        self, tmp_path, fake_home, patch_scripts_dir
     ):
         project_dir = build_fixture(tmp_path)
         runner_path = project_dir / "scripts" / "migrations" / "runner.py"
         runner_path.parent.mkdir(parents=True, exist_ok=True)
-        runner_path.write_text('import json; print(json.dumps("unexpected string"))\n')
+        runner_path.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "if '--report-drift-for-skill' in sys.argv:\n"
+            "    print('unexpected garbage with no parseable lines')\n"
+            "    sys.exit(0)\n"
+            "sys.exit(0)\n"
+        )
 
         state = build_project_state(project_dir)
         findings = check_migration_currency(state)
 
         schema_ids = [f.id for f in findings if f.id.startswith("migration-currency:schema-drift")]
         assert schema_ids == [], (
-            f"Unexpected JSON type should be silently skipped, got: {schema_ids}"
+            f"Malformed runner output should produce no schema-drift findings, got: {schema_ids}"
         )
 
     # Scenario: Migration runner OSError is silently skipped
@@ -2003,7 +2104,14 @@ class TestMigrationCurrency:
         project_dir = build_fixture(tmp_path)
         runner_path = project_dir / "scripts" / "migrations" / "runner.py"
         runner_path.parent.mkdir(parents=True, exist_ok=True)
-        runner_path.write_text('import json; print(json.dumps({"findings": []}))\n')
+        runner_path.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "if '--report-drift-for-skill' in sys.argv:\n"
+            "    print('DRIFT_COUNT=0')\n"
+            "    sys.exit(0)\n"
+            "sys.exit(0)\n"
+        )
 
         original_run = subprocess.run
 

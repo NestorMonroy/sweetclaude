@@ -831,28 +831,48 @@ def check_migration_currency(state: ProjectState) -> list[Finding]:
         ))
 
     if state.migration_runner_path:
+        # C3.5b: --scan-drift prints HUMAN PROSE, not JSON — json.loads()'ing it
+        # always raised JSONDecodeError, which was swallowed, so a schema-drift
+        # finding could never be produced. The machine-parseable mode is
+        # --report-drift-for-skill, which emits DRIFT_COUNT=N then
+        # FINDING|<file_key>|v<from>-><to>|chain=<ok|broken> (and MISSING|<file_key>
+        # for absent files). Parse that line format, reusing the P2.1 pattern from
+        # _trigger_out_of_chain. Degrades gracefully on absent/erroring runner.
         try:
             r = subprocess.run(
                 [sys.executable, str(state.migration_runner_path),
-                 "--scan-drift", "--project-dir", str(state.project_dir)],
+                 "--report-drift-for-skill", "--project-dir", str(state.project_dir)],
                 capture_output=True, text=True, timeout=15,
             )
             if r.returncode == 0:
-                drift_data = json.loads(r.stdout)
-                drift_findings = drift_data if isinstance(drift_data, list) else drift_data.get("findings", [])
-                for df in drift_findings:
+                for line in r.stdout.splitlines():
+                    line = line.strip()
+                    if line.startswith("FINDING|"):
+                        parts = line.split("|")
+                        file_key = parts[1] if len(parts) > 1 else "unknown"
+                        version = parts[2] if len(parts) > 2 else ""
+                        chain = parts[3] if len(parts) > 3 else ""
+                        detail = f"Schema drift: {file_key} {version}".strip()
+                        if chain:
+                            detail = f"{detail} ({chain})"
+                    elif line.startswith("MISSING|"):
+                        parts = line.split("|")
+                        file_key = parts[1] if len(parts) > 1 else "unknown"
+                        detail = f"Schema drift: {file_key} is missing and cannot be migrated"
+                    else:
+                        continue
                     findings.append(Finding(
-                        id=f"migration-currency:schema-drift:{df.get('file', 'unknown')}",
+                        id=f"migration-currency:schema-drift:{file_key}",
                         category="migration_currency",
                         severity="warning",
                         summary="A state file needs to be upgraded to the current schema",
-                        detail=f"Schema drift: {df.get('message', str(df))}",
-                        file_paths=[str(df.get("file", ""))],
+                        detail=detail,
+                        file_paths=[file_key],
                         fix_type="prompted",
                         fix_recipe={"action": "prompt", "type": "migration",
                                     "script": "runner.py", "args": []},
                     ))
-        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError, AttributeError):
+        except (subprocess.TimeoutExpired, OSError):
             pass
 
     backlog_dir = state.product_base / "backlog"
