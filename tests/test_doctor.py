@@ -7276,3 +7276,26 @@ class TestP0Restore:
         res = _p0_doctor.restore(project_dir, archive, restore_all=True)
         assert res["restored"] == []
         assert res["skipped"], "restore must report an action with no before-image as skipped"
+
+    def test_restore_cli_subcommand_reverts_whole_run(self, tmp_path, fake_home, capsys):
+        # Locks the exact CLI contract the doctor skill's rollback step invokes:
+        #   doctor.py restore --project-dir . --archive-dir <run> --all
+        from doctor import main
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+        ss = project_dir / ".sweetclaude" / "state" / "session-state.yaml"
+        ss.write_text("phase_schema_version: 1\n")
+        original = ss.read_bytes()
+        auto_fix(project_dir, [_make_finding(
+            action="write_field", file=str(ss),
+            key="phase_schema_version", value=7)], archive)
+        assert ss.read_bytes() != original
+
+        code = main([
+            "restore", "--project-dir", str(project_dir),
+            "--archive-dir", str(archive), "--all"])
+        out = json.loads(capsys.readouterr().out)
+
+        assert code == 0
+        assert ss.read_bytes() == original, "CLI restore --all must revert the run byte-identically"
+        assert str(ss) in out["restored"]

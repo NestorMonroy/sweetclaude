@@ -1,7 +1,7 @@
 ---
 spdx-license: AGPL-3.0-or-later
 user-invocable: true
-description: "Diagnostic scan and repair. Checks 8 categories: state integrity, hooks, storage, migration, config, files, onboarding, environment."
+description: "Diagnostic scan, repair, and rollback. Checks 8 categories (state integrity, hooks, storage, migration, config, files, onboarding, environment), fixes what it safely can, and can restore (roll back / undo / revert) the files a previous doctor run changed."
 ---
 
 
@@ -53,6 +53,46 @@ update/recovery behavior. No project files were changed.
 Do not invoke `/sweetclaude:update`, `/sweetclaude:doctor`,
 `/sweetclaude:recover`, `/sweetclaude:migrate`, `_migrate`, setup, purge, or
 any project-mutating skill from this stale-beta stop path.
+
+## Step 0b: Roll back a prior run when requested
+
+If the user is explicitly asking to undo, roll back, or revert a previous doctor run
+(e.g. "roll back the doctor changes", "undo that doctor run"), handle it HERE and skip
+the diagnostic scan. This restores files from a run's archived `before/` images through
+the executor — the rollback counterpart to the safety branch, and the path for changes
+outside the project git tree (e.g. `~/.claude` files) that a safety branch can't cover.
+
+1. Pick the run archive. Default to the most recent; if the user names a specific run, use
+   that instead:
+
+   ```bash
+   ls -1d .sweetclaude/state/doctor-runs/*/ 2>/dev/null | sort | tail -1
+   ```
+
+   If none exist, tell the user there is no doctor run to roll back, and stop.
+
+2. Show what that run changed — list the affected files from its manifest:
+
+   ```bash
+   python3 -c "import json,sys; m=json.load(open(sys.argv[1])); print('\n'.join(sorted({a.get('file_path','') for a in m.get('actions',[]) if a.get('file_path')})) or '(no file mutations recorded)')" {run_dir}/manifest.json
+   ```
+
+3. Restore writes files back over the live ones, so require explicit approval. Present via
+   AskUserQuestion:
+   - **Roll back the whole run (Recommended)** — restore every file this run changed
+   - **Roll back specific files** — choose which files to restore
+   - **Cancel** — leave everything as-is
+
+4. Invoke restore (whole run, or once per chosen file with `--file {path}` instead of `--all`):
+
+   ```bash
+   python3 ~/.claude/scripts/sweetclaude/doctor.py restore --project-dir . --archive-dir {run_dir} --all
+   ```
+
+5. Report the result. `restored` lists the files reverted byte-for-byte; `skipped` lists any
+   with no archived before-image (`reversible:false` — e.g. cache/derived rebuilds). Tell the
+   user any skipped files were not archive-reversible, and if that run created a git safety
+   branch, point to it as the fallback. Stop after rollback unless the user asks for more.
 
 ## Step 1a: Maintenance route preflight
 
@@ -506,6 +546,12 @@ Render the summary line:
 
 Report the archive location (unconditional — always show if an archive exists):
 > Run details saved to `.sweetclaude/state/doctor-runs/{timestamp}/`
+
+If the run changed any files (`auto_fixed + user_fixed > 0`), tell the user it is reversible:
+> These changes are backed up and reversible. To undo this run, say "roll back the doctor
+> changes" (or run `/sweetclaude:doctor` and ask to roll back).
+
+If a git safety branch was created this run, add: ` The git safety branch \`{branch_name}\` is also available.`
 
 Prune old archives:
 
