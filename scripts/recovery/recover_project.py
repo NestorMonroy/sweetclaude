@@ -103,6 +103,7 @@ def _read_sweetclaude_state(project: Path) -> dict[str, Any]:
         "taxonomy_recovery_status": None,
         "taxonomy_migration_required": None,
         "taxonomy_blind_migration_allowed": None,
+        "taxonomy_compatibility_exited": None,
     }
     if not state_path.exists():
         return state
@@ -135,6 +136,9 @@ def _read_sweetclaude_state(project: Path) -> dict[str, Any]:
             state["taxonomy_migration_required"] = taxonomy.get("migration_required")
             state["taxonomy_blind_migration_allowed"] = taxonomy.get(
                 "blind_taxonomy_migration_allowed"
+            )
+            state["taxonomy_compatibility_exited"] = taxonomy.get(
+                "compatibility_exited"
             )
 
     return state
@@ -1342,7 +1346,12 @@ def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
     failure_classes: list[dict[str, Any]] = []
     blocking_factors: list[dict[str, Any]] = []
 
-    if has_typed_backlog_dirs and taxonomy_candidate_count and not accepted_legacy_layout:
+    migration_complete_no_old = (
+        sweetclaude_state.get("migration_status") == "complete"
+        and old_prefix_count == 0
+    )
+    compatibility_exited = bool(sweetclaude_state.get("taxonomy_compatibility_exited"))
+    if has_typed_backlog_dirs and taxonomy_candidate_count and not accepted_legacy_layout and not migration_complete_no_old and not compatibility_exited:
         _add_failure_class(
             failure_classes,
             code="unsupported-typed-backlog-layout",
