@@ -548,8 +548,9 @@ SweetClaude update PARTIAL.
 ✗ Project:    {DRIFT_COUNT} state file(s) need migration review
 
 No project files were changed by update.
-Run /sweetclaude:doctor for a read-only diagnostic, or /sweetclaude:recover if
-doctor/status reports a recoverable migration/update state.
+Run /sweetclaude:doctor — it auto-fixes state schema drift through the
+migration runner (backed up, reversible). Bootstrap will also offer this
+migration at the next session start.
 
 Drift details:
   {Print the DRIFT lines from $DRIFT_OUTPUT}
