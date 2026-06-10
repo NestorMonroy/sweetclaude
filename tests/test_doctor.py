@@ -6206,11 +6206,15 @@ class TestP5ScanReadOnlySuppression:
             f"execute phase must prune the resolved suppression, got: {remaining_ids}"
         )
 
-        before_text = "\n".join(
-            p.read_text() for p in (archive / "before").rglob("*") if p.is_file()
-        )
-        assert "env-wiring:missing:plans-directory" in before_text, (
-            "the pre-prune ledger must be backed up under the archive's before/"
+        # Parse the before-image as JSON (not a text search) and confirm the
+        # pruned entry was present in the backed-up ledger at the canonical path.
+        before_images = [p for p in (archive / "before").rglob("*")
+                         if p.is_file() and "doctor-suppressions" in p.name]
+        assert before_images, "the pre-prune ledger must be backed up under before/"
+        backed_up = json.loads(before_images[0].read_text())
+        assert any(e.get("finding_id") == "env-wiring:missing:plans-directory"
+                   for e in backed_up), (
+            f"the backed-up before-image must contain the pruned entry, got: {backed_up}"
         )
         diff_text = "\n".join(
             p.read_text() for p in (archive / "diffs").rglob("*.diff")
@@ -6265,6 +6269,101 @@ class TestP5ScanReadOnlySuppression:
         assert supp_path.read_bytes() == before_bytes, (
             "persist without scan_findings must not prune (findings unknown)"
         )
+
+    def test_prune_keeps_entry_without_finding_id(self, tmp_path, fake_home):
+        # C1: an entry lacking a finding_id (hand-written/legacy) must survive a
+        # prune rather than being collateral-dropped by the resolved-set filter.
+        project_dir = build_fixture(tmp_path, overrides={
+            "suppressions": [
+                {"reason": "legacy entry, no finding_id"},
+                {"finding_id": "stale-resolved-finding"},
+            ],
+        })
+        archive = create_archive(project_dir)
+        # "stale-resolved-finding" is not in the current set -> resolved/pruned;
+        # the finding_id-less entry must remain.
+        resolved = prune_resolved_suppressions(project_dir, archive, {"other-live"})
+        assert "stale-resolved-finding" in resolved
+        remaining = load_suppressions(project_dir)
+        assert any("finding_id" not in e for e in remaining), (
+            f"entry without finding_id must survive prune, got: {remaining}"
+        )
+        assert all(e.get("finding_id") != "stale-resolved-finding" for e in remaining)
+
+
+class TestPrePushHardening:
+    """Path-containment guards surfaced by the pre-push security review (F1/F3/F5).
+
+    doctor may only write inside the project tree or the user's ~/.claude install
+    — never an arbitrary path supplied via a crafted recipe or archive.
+    """
+
+    def test_file_move_rejects_dest_outside_project(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        src = project_dir / ".sweetclaude" / "state" / "moveme.md"
+        src.write_text("payload\n")
+        escape = tmp_path / "outside" / "owned.md"  # outside the project tree
+        archive = create_archive(project_dir)
+        result = execute_recipe(
+            project_dir,
+            {"action": "file_move", "src": str(src), "dest": str(escape)},
+            archive,
+        )
+        assert result.success is False
+        assert "outside project" in (result.error or "")
+        assert not escape.exists(), "file_move must not write outside the project"
+        assert src.exists(), "source must be untouched on a rejected move"
+
+    def test_run_script_rejects_path_outside_trusted_roots(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+        evil = tmp_path / "evil"
+        evil.mkdir()
+        # Allowlisted basename, but living outside every trusted root.
+        stub = evil / "generate-session-state.sh"
+        stub.write_text("#!/bin/bash\necho pwned\n")
+        with pytest.raises(ValueError, match="outside trusted roots"):
+            execute_recipe(
+                project_dir,
+                {"action": "run_script", "cmd": ["bash", str(stub)]},
+                archive,
+            )
+
+    def test_restore_skips_action_escaping_allowed_roots(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+        # Forge an archive action pointing at a path outside project + ~/.claude,
+        # with a before-image present, and confirm restore refuses to write it.
+        escape = tmp_path / "outside" / "victim.txt"
+        from doctor import backup_content, write_manifest
+        backup_content(archive, escape, b"original\n")
+        write_manifest(archive, {"actions": [{"action": "auto-fix", "file_path": str(escape)}]})
+        result = _doctor_module.restore(project_dir, archive, restore_all=True)
+        assert str(escape) not in result["restored"]
+        assert any(s["reason"] == "outside allowed roots" for s in result["skipped"]), (
+            f"restore must skip the escaping action, got: {result}"
+        )
+        assert not escape.exists(), "restore must not write outside allowed roots"
+
+    def test_delete_file_restore_recreates_file_byte_identically(self, tmp_path, fake_home):
+        # Test gap: no standalone proof that restore recreates a DELETED file.
+        project_dir = build_fixture(tmp_path)
+        target = project_dir / ".sweetclaude" / "state" / "deleteme.yaml"
+        target.write_text("foo: bar\n")
+        original = target.read_bytes()
+        archive = create_archive(project_dir)
+        finding = {
+            "id": "x", "category": "y", "summary": "s", "fix_type": "auto",
+            "fix_recipe": {"action": "delete_file", "file": str(target)},
+        }
+        auto_fix(project_dir, [finding], archive)
+        assert not target.exists(), "precondition: file deleted by auto_fix"
+
+        result = _doctor_module.restore(project_dir, archive, restore_all=True)
+        assert str(target) in result["restored"], (
+            f"restore must recreate the deleted file, got: {result}"
+        )
+        assert target.exists() and target.read_bytes() == original
 
 
 # ---------------------------------------------------------------------------
@@ -9557,6 +9656,17 @@ class TestP1ExecutorInvariants:
 
         # The partition is the full set, exactly.
         assert union == set(EXECUTOR_SUPPORTED_ACTIONS)
+
+    def test_reversible_false_actions_stays_empty(self):
+        # The reversible:false allowlist is currently empty — every mutating
+        # action is backed up. Adding an action here is a deliberate, reviewed
+        # exception that bypasses backup; this lock forces that review by failing
+        # if the set silently grows. (Partition alone would still pass.)
+        assert _REVERSIBLE_FALSE_ACTIONS == frozenset(), (
+            f"a mutating action was placed in _REVERSIBLE_FALSE_ACTIONS "
+            f"(bypasses the backup pipeline): {sorted(_REVERSIBLE_FALSE_ACTIONS)} — "
+            f"this needs an explicit safety review, not a silent allowlist add"
+        )
 
     def test_classification_sets_are_disjoint(self):
         # Each action belongs to exactly one class — no action is both

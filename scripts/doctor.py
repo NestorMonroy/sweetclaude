@@ -2186,7 +2186,10 @@ def prune_resolved_suppressions(
     }
     if not resolved:
         return set()
-    remaining = [e for e in entries if e.get("finding_id") in current_finding_ids]
+    # Keep everything NOT in the resolved set — so entries lacking a finding_id
+    # (hand-written/legacy) survive rather than being collateral-dropped by a
+    # membership test against current findings.
+    remaining = [e for e in entries if e.get("finding_id") not in resolved]
     path = _suppressions_path(project_dir)
     before = path.read_bytes() if path.exists() else b""
     after = json.dumps(remaining, indent=2).encode()
@@ -2948,6 +2951,28 @@ def _atomic_write(path: Path, content: bytes) -> None:
         raise
 
 
+def _resolve_within(path: Path, *roots: Path) -> bool:
+    """True if ``path`` (resolved) lies within any of ``roots`` (resolved).
+
+    Containment guard for executor/restore writes. Doctor may only touch the
+    project tree or the user's ``~/.claude`` SweetClaude install — never anywhere
+    else. Blocks path traversal (``../``) and absolute escapes in recipe- or
+    archive-supplied paths from reaching ``shutil.move``/``_atomic_write``/
+    ``unlink``. Symlinks are resolved, so a symlinked escape is also caught.
+    """
+    try:
+        rp = path.resolve()
+    except (OSError, RuntimeError):
+        return False
+    for root in roots:
+        try:
+            rp.relative_to(root.resolve())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 def _apply_transform(content: bytes, recipe: dict, project_dir: Path) -> bytes:
     action = recipe["action"]
 
@@ -3423,6 +3448,9 @@ def execute_recipe(
         dest = Path(recipe.get("dest", ""))
         if not dest.is_absolute():
             dest = project_dir / dest
+        if not (_resolve_within(src, project_dir) and _resolve_within(dest, project_dir)):
+            return RecipeResult("", "", None, None, False,
+                                f"file_move path outside project: src={src} dest={dest}")
         if not src.is_file():
             return RecipeResult("", "", None, None, False, f"file_move source not found: {src}")
         try:
@@ -3455,6 +3483,9 @@ def execute_recipe(
         target = Path(recipe.get("file", ""))
         if not target.is_absolute():
             target = project_dir / target
+        if not _resolve_within(target, project_dir):
+            return RecipeResult("", "", None, None, False,
+                                f"renumber_duplicate path outside project: {target}")
         old_id = recipe.get("old_id", "")
         new_id = recipe.get("new_id", "")
         if not old_id or not new_id:
@@ -3510,6 +3541,16 @@ def execute_recipe(
             raise ValueError(
                 f"Script '{script_name}' not in allowlist: {RUN_SCRIPT_ALLOWLIST}"
             )
+        # The allowlist matches only the basename, so it alone would pass a
+        # traversal path like "../../evil/cache.py". Require the resolved script
+        # to live in a trusted root — the framework scripts dir, ~/.claude (where
+        # the real hook scripts live), or the project tree doctor operates on — so
+        # a crafted cmd[1] cannot escape to run an arbitrary file (e.g. /etc,
+        # ~/.ssh, /tmp) under an allowlisted name.
+        if not _resolve_within(
+            Path(cmd[1]), _SCRIPTS_DIR, Path.home() / ".claude", project_dir
+        ):
+            raise ValueError(f"run_script path outside trusted roots: {cmd[1]}")
         # `regenerates` names the file(s) the script rewrites. Capture their
         # bytes BEFORE running so each changed target is routed through
         # _record_mutation (before/ image + diff) and is reversible by restore.
@@ -3725,6 +3766,22 @@ def restore(
         if key in seen:
             continue
         seen.add(key)
+        # Containment: restore only writes inside the project tree or the user's
+        # ~/.claude install (hook_restore legitimately targets the latter). A
+        # crafted archive with file_path/moved_to escaping those roots is refused
+        # rather than allowed to delete/overwrite an arbitrary path.
+        roots = (project_dir, Path.home() / ".claude")
+        moved_to = a.get("moved_to", "")
+        dest = None
+        if moved_to:
+            dest = Path(moved_to)
+            if not dest.is_absolute():
+                dest = project_dir / dest
+        if not _resolve_within(resolved, *roots) or (
+            dest is not None and not _resolve_within(dest, *roots)
+        ):
+            skipped.append({"file": str(resolved), "reason": "outside allowed roots"})
+            continue
         backup = archive_path / "before" / _sanitize_path(str(resolved))
         if backup.exists():
             data = backup.read_bytes()
@@ -3734,13 +3791,8 @@ def restore(
             # src and dest. Reverse it: remove dest first, then recreate src
             # from its before-image. Plain (non-move) actions have no marker and
             # keep the existing content-revert behavior.
-            moved_to = a.get("moved_to", "")
-            if moved_to:
-                dest = Path(moved_to)
-                if not dest.is_absolute():
-                    dest = project_dir / dest
-                if dest.exists():
-                    dest.unlink()
+            if dest is not None and dest.exists():
+                dest.unlink()
             resolved.parent.mkdir(parents=True, exist_ok=True)
             _atomic_write(resolved, data)
             restored.append(str(resolved))
