@@ -51,7 +51,7 @@ No. The pipeline is a guide, not a cage.
 
 You can:
 - Skip directly to architecture if you already know what you are building.
-- Use only the strategy skills (install with `--strategy-skills-only` for the lighter footprint).
+- Use only the strategy and product skills — just invoke the ones you want; the rest stay idle. There is no separate install flag for this.
 - Use only the code skills if you do not want strategy and product workflows.
 - Skip phases by saying "I've addressed this informally — proceed."
 - Disable SweetClaude per project by touching `.sweetclaude/disabled`.

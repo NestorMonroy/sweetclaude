@@ -1,7 +1,7 @@
 # State and Memory
 
-**Version:** 2.1
-**Date:** 2026-05-25
+**Version:** 2.2
+**Date:** 2026-06-10
 
 SweetClaude persists project context across sessions in `.sweetclaude/`. Commit this directory to git. It is project-critical data, not cache. Decision history, assumptions, scope changes, and progress live here — and they need to travel with the repo.
 
@@ -23,7 +23,12 @@ This page is reference. For why state is structured the way it is, read [How It 
 │   ├── scope-changes.md        ← Scope additions and removals with justification
 │   ├── backups/                ← Migration backups created by guarded migration flows
 │   ├── doctor-runs/            ← Doctor repair archives and manifests
-│   └── recovery-runs/          ← Recovery snapshots and rollback manifests (do not commit)
+│   ├── recovery-runs/          ← Recovery snapshots and rollback manifests (do not commit)
+│   ├── workflows/              ← Large-/small-story workflow state ({workflow_id}.yaml)
+│   └── evidence/               ← Control receipts proving high-stakes claims
+├── contracts/                  ← Frozen success-criteria contracts for story workflows
+├── reports/                    ← Success-criteria ledger + per-workflow implementation evidence
+├── work/                       ← (opt-in) Per-work-item artifact directories: .sweetclaude/work/<ITEM-ID>/
 ├── product/                    ← 4.x beta product artifacts: backlog, roadmap, issues
 ├── plans/                      ← Claude Code plan files (.sweetclaude/plans is set as plansDirectory)
 │   └── archive/                ← Plans archived at ship time, organized by milestone/sprint
@@ -32,6 +37,12 @@ This page is reference. For why state is structured the way it is, read [How It 
 ```
 
 Skills create additional state files as they run — `state/discovery.yaml`, `state/personas.yaml`, `state/brief.yaml`, etc. Treat the schema as extensible.
+
+The `contracts/`, `reports/`, `state/workflows/`, and `state/evidence/` directories
+are written by the controller-gated story workflows — see
+[Large-Story and Small-Story Workflows](large-story-workflow.md) and
+[Evidence and Success-Criteria Contracts](evidence-and-contracts.md). The opt-in
+`work/` tree is covered in [Work-Item Artifacts](work-item-artifacts.md).
 
 Version note: stable 3.x and 4.x beta share the same state principle but differ
 in operational details. In 4.x beta, project maintenance data may include
