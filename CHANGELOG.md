@@ -4,6 +4,32 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.5-beta] — 2026-06-10 (4.x beta channel)
+
+### Fixed — doctor conformance, safety hardening
+
+- **Doctor conformance remediation (P0–P5).** The `sweetclaude:doctor` subsystem
+  now fully satisfies its PRD (verified 127/0/0 by an independent caucus): every
+  Tier-2 prompted fix is wired end-to-end through the executor backup pipeline;
+  the Tier-4 purge/re-onboard fallback is surfaced; detection gaps (missing hooks,
+  legacy type aliases, schema drift) are closed; taxonomy drift routes to migrate;
+  and a real `restore`/rollback path exists.
+- **Scan is strictly read-only (P2/P4).** The suppression-ledger prune was moved
+  out of the read-only scan into the execute phase and routed through the backup
+  pipeline (before-image + diff, `restore`-reversible).
+- **Path-containment guards.** `restore`, `file_move`, `renumber_duplicate`, and
+  `run_script` now reject paths that escape the project tree or `~/.claude`,
+  closing arbitrary-write/exec vectors via crafted recipes or archives.
+
+### Added — release & test infrastructure
+
+- **Tag-push release automation** (`.github/workflows/release.yml`): pushing a
+  `v*` tag now publishes a GitHub release with CHANGELOG-sourced notes.
+- **Test collection fix:** hyphenated `test-*.py` suites (~440 tests) are now
+  collected and run; 7 pre-existing, unrelated failures are tracked via `xfail`.
+
+---
+
 ## [4.2.4-beta] — 2026-06-08 (4.x beta channel)
 
 ### Added — small-story workflow
