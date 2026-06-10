@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import tarfile
@@ -254,6 +255,37 @@ def _add_failure_class(
 
 def _has_failure(diagnosis: dict[str, Any], code: str) -> bool:
     return code in diagnosis.get("failure_class_codes", [])
+
+
+def _state_schema_drift_findings(project: Path) -> list[dict[str, Any]]:
+    """Read-only drift report from the migration runner's registry.
+
+    Drift is resolved by the runner (bootstrap Step 5c offers it; doctor
+    auto-fixes through it), not by recovery — so callers report these as
+    informational, never as route-driving failure classes.
+    """
+    runner = SCRIPTS_DIR / "migrations" / "runner.py"
+    if not runner.is_file():
+        return []
+    completed = subprocess.run(
+        [sys.executable, str(runner), "--project-dir", str(project),
+         "--report-drift-for-skill"],
+        capture_output=True, text=True, check=False,
+    )
+    if completed.returncode != 0:
+        return []
+    findings: list[dict[str, Any]] = []
+    for line in completed.stdout.splitlines():
+        if not line.startswith("FINDING|"):
+            continue
+        parts = line.split("|")
+        findings.append({
+            "file": parts[1] if len(parts) > 1 else "",
+            "migration": parts[2] if len(parts) > 2 else "",
+            "chain": (parts[3].removeprefix("chain=")
+                      if len(parts) > 3 else ""),
+        })
+    return findings
 
 
 def _taxonomy_recovery_accepts_legacy_layout(state: dict[str, Any]) -> bool:
@@ -1415,13 +1447,40 @@ def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
             "detail": sweetclaude_state["parse_error"],
         })
 
+    drift_findings = _state_schema_drift_findings(project)
+    if drift_findings:
+        _add_failure_class(
+            failure_classes,
+            code="state-schema-drift",
+            severity="informational",
+            title="State files are behind the registry schema",
+            evidence={"findings": drift_findings},
+            recovery_strategy="run-migration-runner",
+        )
+
     failure_codes = [entry["code"] for entry in failure_classes]
     cannot_plan = any(factor["severity"] == "cannot-plan" for factor in blocking_factors)
-    has_recoverable_state = bool(failure_classes) and not cannot_plan
+    # Informational classes are reported but never drive the route: schema
+    # drift belongs to the migration runner (bootstrap Step 5c / doctor
+    # auto-fix), not to recovery planning.
+    route_driving_classes = [
+        entry for entry in failure_classes
+        if entry.get("severity") != "informational"
+    ]
+    has_recoverable_state = bool(route_driving_classes) and not cannot_plan
 
-    if not failure_classes and not blocking_factors:
+    if not route_driving_classes and not blocking_factors:
         recovery_route = "no-recovery-needed"
-        next_step = "No recovery action is currently indicated by read-only diagnosis."
+        if drift_findings:
+            drifted = ", ".join(f["file"] for f in drift_findings)
+            next_step = (
+                f"No recovery action is needed, but state schema drift was "
+                f"detected ({drifted}). The migration runner resolves it — "
+                "bootstrap offers this at session start, or run "
+                "/sweetclaude:doctor to auto-fix."
+            )
+        else:
+            next_step = "No recovery action is currently indicated by read-only diagnosis."
     elif has_recoverable_state:
         recovery_route = "stabilize-without-migration"
         next_step = "Run recovery plan generation after creating a project snapshot."
@@ -1588,6 +1647,245 @@ def graduate(project_dir: Path | str) -> dict[str, Any]:
     }
 
 
+_BLOCKER_RESOLUTION_CAPABILITY = "doctor.fix_graduation_blockers"
+_RESOLVABLE_BLOCKER_CODES = {"duplicate-ids"}
+
+# Blockers doctor's prompted-fix flow can clear, even without a deterministic
+# one-shot command. Structural blockers (old taxonomy prefixes, non-standard
+# layout) are NOT here: fixing those means migration, which stays blocked by
+# policy — those projects remain honestly in compatibility mode.
+_FIXABLE_BLOCKER_CODES = _RESOLVABLE_BLOCKER_CODES | {
+    "legacy-type-aliases",
+    "missing-required-fields",
+    "frontmatter-parse-errors",
+}
+
+
+def _with_blocker_resolution(blocker: dict[str, Any]) -> dict[str, Any]:
+    code = str(blocker.get("code", ""))
+    resolution: dict[str, Any] = {
+        "capability_id": _BLOCKER_RESOLUTION_CAPABILITY,
+        "delegate_skill": "sweetclaude:doctor",
+    }
+    if code in _RESOLVABLE_BLOCKER_CODES:
+        script = Path(__file__).resolve()
+        resolution["command"] = (
+            f"python3 {script} resolve-graduation-blocker "
+            f"--code {code} --project-dir <project>"
+        )
+    return {**blocker, "resolution": resolution}
+
+
+def _frontmatter_id(path: Path) -> str | None:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return None
+    for line in parts[1].splitlines():
+        if line.startswith("id:"):
+            value = line.split(":", 1)[1].strip().strip("'\"")
+            return value or None
+    return None
+
+
+_WORK_ITEM_ID_RE = re.compile(r"^[A-Z]+-\d+$")
+
+
+def _collect_known_ids(product_base: Path) -> set[str]:
+    ids: set[str] = set()
+    for path in product_base.rglob("*.md"):
+        value = _frontmatter_id(path)
+        if value:
+            ids.add(value)
+    return ids
+
+
+def _next_available_id(duplicate_id: str, known_ids: set[str]) -> str:
+    prefix, _, number = duplicate_id.rpartition("-")
+    width = len(number)
+    highest = 0
+    for known in known_ids:
+        k_prefix, _, k_number = known.rpartition("-")
+        if k_prefix == prefix and k_number.isdigit():
+            highest = max(highest, int(k_number))
+    return f"{prefix}-{highest + 1:0{width}d}"
+
+
+def _pick_renumber_targets(
+    files: list[Path], product_base: Path, choose: str | None,
+) -> list[Path]:
+    if choose:
+        chosen = Path(choose).expanduser().resolve()
+        matches = [f for f in files if f.resolve() == chosen]
+        if not matches:
+            raise ValueError(
+                f"--choose did not match a duplicate file: {choose}"
+            )
+        return matches
+    ordered = sorted(files)
+    in_backlog = [
+        f for f in ordered
+        if f.resolve().is_relative_to(product_base)
+        and f.resolve().relative_to(product_base).parts[:1] == ("backlog",)
+    ]
+    canonical = in_backlog[0] if in_backlog else ordered[0]
+    return [f for f in ordered if f != canonical]
+
+
+def resolve_graduation_blocker(
+    project_dir: Path | str, code: str, choose: str | None = None,
+) -> dict[str, Any]:
+    """Resolve a graduation blocker through doctor's executor (archived, reversible).
+
+    Only blocker codes with a deterministic resolution are supported here;
+    everything else routes to the doctor skill's prompted-fix flow.
+    """
+    project = Path(project_dir).expanduser().resolve()
+    if code not in _RESOLVABLE_BLOCKER_CODES:
+        return {
+            "status": "unsupported",
+            "code": code,
+            "detail": (
+                f"No deterministic resolution for blocker '{code}'. "
+                "Run /sweetclaude:doctor for the prompted-fix flow."
+            ),
+        }
+
+    characterization = characterize_project(project)
+    product_base = Path(
+        characterization.get("product_base")
+        or project / ".sweetclaude" / "product"
+    ).resolve()
+    duplicates = characterization.get("ids", {}).get("duplicates", [])
+    if not duplicates:
+        return {
+            "status": "nothing-to-resolve",
+            "code": code,
+            "detail": "No duplicate work-item IDs found.",
+        }
+
+    known_ids = _collect_known_ids(product_base)
+    doctor_script = SCRIPTS_DIR / "doctor.py"
+
+    archive_result = subprocess.run(
+        [sys.executable, str(doctor_script), "create-archive",
+         "--project-dir", str(project)],
+        capture_output=True, text=True, check=False,
+    )
+    if archive_result.returncode != 0:
+        return {
+            "status": "error",
+            "detail": f"create-archive failed: {archive_result.stderr}",
+        }
+    archive_dir = json.loads(archive_result.stdout)["archive_dir"]
+
+    findings: list[dict[str, Any]] = []
+    renumbered: list[dict[str, Any]] = []
+    renamed: list[dict[str, Any]] = []
+    for group in duplicates:
+        dup_id = str(group.get("id", ""))
+        files = [
+            (product_base / f) if not Path(f).is_absolute() else Path(f)
+            for f in group.get("files", [])
+        ]
+        # The duplicate groups key on FILENAME ids (characterize_project).
+        # A file whose frontmatter carries a different valid id is misnamed,
+        # not duplicated: rename it to match its frontmatter. Renumbering it
+        # would clobber a valid id other artifacts may reference.
+        colliding: list[Path] = []
+        for path in files:
+            fm_id = _frontmatter_id(path)
+            if fm_id and fm_id != dup_id and _WORK_ITEM_ID_RE.match(fm_id):
+                dest = path.parent / path.name.replace(dup_id, fm_id, 1)
+                findings.append({
+                    "id": f"graduation-blocker:misnamed-file:{path.name}",
+                    "category": "file_diagnostics",
+                    "summary": (
+                        f"Rename {path.name} to match its frontmatter id {fm_id}"
+                    ),
+                    "fix_type": "prompted",
+                    "fix_recipe": {
+                        "action": "file_move",
+                        "src": str(path),
+                        "dest": str(dest),
+                        "file": str(path),
+                    },
+                })
+                renamed.append({
+                    "id": fm_id,
+                    "from": str(path),
+                    "to": str(dest),
+                })
+            else:
+                colliding.append(path)
+
+        if len(colliding) < 2:
+            continue
+        targets = _pick_renumber_targets(colliding, product_base, choose)
+        for target in targets:
+            new_id = _next_available_id(dup_id, known_ids)
+            known_ids.add(new_id)
+            findings.append({
+                "id": f"graduation-blocker:duplicate-id:{dup_id}",
+                "category": "file_diagnostics",
+                "summary": f"Renumber duplicate {dup_id} -> {new_id}",
+                "fix_type": "prompted",
+                "fix_recipe": {
+                    "action": "renumber_duplicate",
+                    "file": str(target),
+                    "old_id": dup_id,
+                    "new_id": new_id,
+                },
+            })
+            renumbered.append({
+                "old_id": dup_id,
+                "new_id": new_id,
+                "file": str(target),
+            })
+
+    fix_result = subprocess.run(
+        [sys.executable, str(doctor_script), "auto-fix",
+         "--project-dir", str(project),
+         "--archive-dir", archive_dir,
+         "--include-prompted"],
+        input=json.dumps(findings),
+        capture_output=True, text=True, check=False,
+    )
+    if fix_result.returncode != 0:
+        return {
+            "status": "error",
+            "detail": f"auto-fix failed: {fix_result.stderr}",
+            "archive_dir": archive_dir,
+        }
+    fix_payload = json.loads(fix_result.stdout)
+    failed = [
+        a for a in fix_payload.get("actions", [])
+        if a.get("action") == "auto-fix-failed"
+    ]
+    if failed:
+        return {
+            "status": "error",
+            "detail": f"{len(failed)} renumber action(s) failed",
+            "failed_actions": failed,
+            "archive_dir": archive_dir,
+        }
+
+    return {
+        "status": "resolved",
+        "code": code,
+        "renumbered": renumbered,
+        "renamed": renamed,
+        "archive_dir": archive_dir,
+        "restore_hint": (
+            f"python3 {doctor_script} restore --project-dir {project} "
+            f"--archive-dir {archive_dir}"
+        ),
+    }
+
+
 def guard_project(project_dir: Path | str) -> dict[str, Any]:
     """Return a concise read-only routing decision for migration guards."""
     project = Path(project_dir).expanduser().resolve()
@@ -1607,6 +1905,7 @@ def guard_project(project_dir: Path | str) -> dict[str, Any]:
     accepted_legacy_layout = _taxonomy_recovery_accepts_legacy_layout(state)
     route = diagnosis.get("recovery_route")
 
+    graduation_blockers: list[dict[str, Any]] = []
     if route == "stabilize-without-migration":
         project_shape = "recovery_required"
     elif route == "manual-escalation":
@@ -1615,6 +1914,15 @@ def guard_project(project_dir: Path | str) -> dict[str, Any]:
         grad_check = graduation_check(project)
         if grad_check.get("graduation_allowed"):
             project_shape = "graduation_candidate"
+        elif grad_check.get("reason") == "validation-failures" and all(
+            b.get("code") in _FIXABLE_BLOCKER_CODES
+            for b in grad_check.get("blockers", [])
+        ):
+            project_shape = "graduation_blocked"
+            graduation_blockers = [
+                _with_blocker_resolution(b)
+                for b in grad_check.get("blockers", [])
+            ]
         else:
             project_shape = "accepted_legacy_taxonomy"
     elif old_prefix_count and flat_bl_count and not has_typed_backlog_dirs:
@@ -1644,6 +1952,7 @@ def guard_project(project_dir: Path | str) -> dict[str, Any]:
         "product_base": product_base,
         "product_base_exists": product_base_exists,
         "old_prefix_count": old_prefix_count,
+        "graduation_blockers": graduation_blockers,
         "failure_class_codes": diagnosis.get("failure_class_codes", []),
         "blocking_factor_codes": [
             factor.get("code") for factor in diagnosis.get("blocking_factors", [])
@@ -1729,6 +2038,18 @@ def main(argv: list[str] | None = None) -> int:
     grad_parser.add_argument("--project-dir", default=".", help="Project directory")
     grad_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
 
+    resolve_parser = subparsers.add_parser(
+        "resolve-graduation-blocker",
+        help="Resolve a graduation blocker through doctor's executor (archived, reversible)",
+    )
+    resolve_parser.add_argument("--project-dir", default=".", help="Project directory")
+    resolve_parser.add_argument("--code", required=True, help="Blocker code to resolve")
+    resolve_parser.add_argument(
+        "--choose", default=None,
+        help="Duplicate file to renumber (defaults to the non-canonical copy)",
+    )
+    resolve_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
+
     args = parser.parse_args(argv)
 
     try:
@@ -1755,6 +2076,10 @@ def main(argv: list[str] | None = None) -> int:
             result = graduation_check(Path(args.project_dir))
         elif args.command == "graduate":
             result = graduate(Path(args.project_dir))
+        elif args.command == "resolve-graduation-blocker":
+            result = resolve_graduation_blocker(
+                Path(args.project_dir), args.code, choose=args.choose,
+            )
         else:
             parser.error(f"unsupported command: {args.command}")
     except Exception as exc:

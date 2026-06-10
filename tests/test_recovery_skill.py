@@ -56,7 +56,7 @@ def test_legacy_project_skills_use_recovery_guard_before_migration():
 
     for name in guarded_skills:
         skill = (root / name / "SKILL.md").read_text(encoding="utf-8")
-        assert "guard --project-dir . --pretty" in skill
+        assert "guard --project-dir ." in skill
         assert "/sweetclaude:recover" in skill
         assert "Run: /sweetclaude:migrate" not in skill
 
@@ -66,11 +66,22 @@ def test_bootstrap_v4_hard_stop_classifies_before_recommending_migrate():
         Path(__file__).parents[1] / "skills" / "bootstrap" / "SKILL.md"
     ).read_text(encoding="utf-8")
 
-    guard_idx = skill.index("guard --project-dir . --pretty")
-    migrate_idx = skill.index("Run /sweetclaude:migrate only when the guard says")
-    assert guard_idx < migrate_idx
-    assert "If the guard says recovery is needed, run: /sweetclaude:recover" in skill
-    assert "do not recommend migration" in skill
+    guard_idx = skill.index("guard --project-dir .")
+    migrate_idx = skill.index(
+        "Never recommend `/sweetclaude:migrate` for any status except"
+    )
+    assert guard_idx < migrate_idx, (
+        "the guard must classify the project before any migrate recommendation"
+    )
+    assert "invoke\n`sweetclaude:recover`" in skill or "sweetclaude:recover" in skill
+    assert "`migration-may-be-needed`" in skill
+    assert "graduation-blocked" in skill, (
+        "bootstrap must route blocked graduation, not dead-end it"
+    )
+    assert "LEGACY_FILES" in skill, (
+        "advisory mode must also trigger on legacy-taxonomy files when state "
+        "claims migration is complete (state/artifact disagreement)"
+    )
 
 
 def test_migrate_skill_runs_preflight_before_lock_and_backup():
