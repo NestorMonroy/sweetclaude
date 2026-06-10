@@ -29,19 +29,26 @@ Feature: Doctor migration_currency checks
 
   # --- Schema drift via migration runner ---
 
-  Scenario: Migration runner absent skips schema drift check
+  Scenario: Migration runner absent raises DependencyMissing
+    Given the migration runner is absent
     When check_migration_currency runs against the project state
-    Then no finding has id prefix "migration-currency:schema-drift"
+    Then it raises DependencyMissing and the scan layer skips the category
+
+  # C3.5b: the doctor reads the runner's machine-parseable --report-drift-for-skill
+  # mode (DRIFT_COUNT=N then FINDING|<key>|v<from>-><to>|chain=<ok|broken>), NOT
+  # the human-prose --scan-drift mode. Previously the doctor json.loads()'d the
+  # prose --scan-drift output, swallowed the JSONDecodeError, and could never
+  # produce a schema-drift finding (dead path).
 
   Scenario: Migration runner reports schema drift produces warning
-    Given migration runner exists and returns drift findings
+    Given migration runner exists and reports a drifted file via --report-drift-for-skill
     When check_migration_currency runs against the project state
     Then the result contains at least 1 finding with id prefix "migration-currency:schema-drift"
     And the first schema-drift finding has severity "warning"
     And the first schema-drift finding has fix_type "prompted"
 
-  Scenario: Migration runner returns empty findings list
-    Given migration runner exists and returns zero drift findings
+  Scenario: Migration runner reports zero drift produces no finding
+    Given migration runner exists and reports DRIFT_COUNT=0
     When check_migration_currency runs against the project state
     Then no finding has id prefix "migration-currency:schema-drift"
 
@@ -50,23 +57,23 @@ Feature: Doctor migration_currency checks
     When check_migration_currency runs against the project state
     Then no finding has id prefix "migration-currency:schema-drift"
 
-  Scenario: Migration runner returns invalid JSON is silently skipped
-    Given migration runner exists and returns invalid JSON
+  Scenario: Drifted file reported via --report-drift-for-skill is detected
+    Given migration runner exists and reports a drifted file via --report-drift-for-skill
     When check_migration_currency runs against the project state
-    Then no finding has id prefix "migration-currency:schema-drift"
+    Then the findings include a schema-drift finding for that file
 
   Scenario: Migration runner exits non-zero is silently skipped
     Given migration runner exists and exits non-zero
     When check_migration_currency runs against the project state
     Then no finding has id prefix "migration-currency:schema-drift"
 
-  Scenario: Migration runner returns JSON list directly
-    Given migration runner exists and returns drift findings as a JSON list
+  Scenario: Migration runner reports multiple drifted files
+    Given migration runner exists and reports two drifted files via --report-drift-for-skill
     When check_migration_currency runs against the project state
-    Then the result contains at least 1 finding with id prefix "migration-currency:schema-drift"
+    Then the result contains one schema-drift finding per drifted file
 
-  Scenario: Migration runner returns valid JSON of unexpected type is silently skipped
-    Given migration runner exists and returns a JSON string
+  Scenario: Migration runner emits unparseable line format is tolerated
+    Given migration runner exists and reports unparseable output on --report-drift-for-skill
     When check_migration_currency runs against the project state
     Then no finding has id prefix "migration-currency:schema-drift"
 

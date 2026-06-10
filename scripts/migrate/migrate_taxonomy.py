@@ -4,9 +4,12 @@ system to unified ISSUE-NNN taxonomy.
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
+import json
 import os
 import re
+import sys
 import tarfile
 import tempfile
 import time
@@ -1731,3 +1734,103 @@ def _parse_dest_file(path: Path) -> dict:
                     pass
 
     return {}
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def run_migration(
+    project_dir: str,
+    dry_run: bool = False,
+    allow_overwrite: bool = False,
+) -> dict:
+    """Orchestrate the taxonomy migration using the existing module functions.
+
+    Reuses scan_sources / validate / build_plan / create_snapshot / execute /
+    verify — it does NOT reimplement any migration logic. Returns a JSON-able
+    result dict. Doctor never calls this directly; sweetclaude:migrate delegates
+    here.
+    """
+    pd = Path(project_dir)
+
+    sources = scan_sources(str(pd))
+    if not sources:
+        return {
+            "ok": True,
+            "dry_run": dry_run,
+            "migrated": 0,
+            "message": "No legacy taxonomy source files found — nothing to migrate.",
+        }
+
+    errors = validate(str(pd), allow_overwrite=allow_overwrite)
+    if errors:
+        return {"ok": False, "dry_run": dry_run, "errors": errors}
+
+    plan = build_plan(str(pd))
+
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "planned_moves": len(plan.moves),
+            "collision_map": plan.collision_map,
+        }
+
+    snapshot_path = create_snapshot(str(pd), [str(_get_product_base(pd))])
+    result = execute(
+        plan, str(pd), snapshot_path=str(snapshot_path),
+        overwrite_existing=allow_overwrite,
+    )
+    verify_errors = verify(str(pd))
+
+    return {
+        "ok": not verify_errors,
+        "dry_run": False,
+        "snapshot": str(snapshot_path),
+        "migrated": result.migrated,
+        "archived": result.archived,
+        "retired": result.retired,
+        "restructured": result.restructured,
+        "rewritten": result.rewritten,
+        "spike_archived": result.spike_archived,
+        "verify_errors": verify_errors,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint so sweetclaude:migrate can drive the taxonomy migration
+    through a script call. Reuses run_migration (which reuses the existing
+    functions) — no reimplementation of the migration. JSON to stdout; non-zero
+    exit when the operation fails so callers can detect it.
+
+    Doctor must NOT call this directly: doctor detects taxonomy drift and the
+    skill delegates to sweetclaude:migrate, which owns the safety flow.
+    """
+    parser = argparse.ArgumentParser(
+        description="Migrate legacy multi-prefix artifacts to unified "
+        "ISSUE-NNN taxonomy.")
+    parser.add_argument("--project-dir", default=".", help="Project directory")
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Plan only — do not write any files")
+    parser.add_argument(
+        "--overwrite", action="store_true",
+        help="Overwrite existing destination ids if they collide")
+    parser.add_argument(
+        "--pretty", action="store_true", help="Pretty-print JSON output")
+
+    args = parser.parse_args(argv)
+
+    result = run_migration(
+        args.project_dir,
+        dry_run=args.dry_run,
+        allow_overwrite=args.overwrite,
+    )
+
+    print(json.dumps(result, indent=2 if args.pretty else None, sort_keys=True, default=str))
+    return 0 if result.get("ok") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

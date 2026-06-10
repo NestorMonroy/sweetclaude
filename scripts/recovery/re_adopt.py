@@ -20,8 +20,11 @@ it as the terminal fallback), never as an automatic fix recipe.
 """
 from __future__ import annotations
 
+import argparse
 import datetime
+import json
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -95,3 +98,43 @@ def reverse_re_adopt(project_dir: str | Path, legacy_path: str | Path) -> dict[s
         return {"ok": False, "reason": f"{sc} already exists; refusing to overwrite."}
     shutil.move(str(archived), str(sc))
     return {"ok": True, "restored": str(sc)}
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI so doctor can drive the re-onboard archive through a script call
+    rather than a skill-side mv. Reuses the functions above — no reimplementation
+    of the archiving. JSON to stdout; non-zero exit when the operation fails so
+    callers can detect it."""
+    parser = argparse.ArgumentParser(
+        description="Re-adopt: archive .sweetclaude/ aside (reversible) and "
+        "re-onboard via sweetclaude:init.")
+    subparsers = parser.add_subparsers(dest="command")
+
+    plan_parser = subparsers.add_parser(
+        "plan", help="Read-only: describe what execute would archive.")
+    plan_parser.add_argument("--project-dir", default=".", help="Project directory")
+    plan_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
+
+    execute_parser = subparsers.add_parser(
+        "execute",
+        help="Archive .sweetclaude/ to .sweetclaude.legacy/<ts>/ (reversible).")
+    execute_parser.add_argument("--project-dir", default=".", help="Project directory")
+    execute_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
+
+    args = parser.parse_args(argv)
+
+    if args.command == "plan":
+        result = plan_re_adopt(args.project_dir)
+    elif args.command == "execute":
+        result = execute_re_adopt(args.project_dir)
+    else:
+        parser.error("a command is required: plan | execute")
+        return 2  # unreachable — parser.error exits
+
+    pretty = bool(getattr(args, "pretty", False))
+    print(json.dumps(result, indent=2 if pretty else None, sort_keys=True))
+    return 0 if result.get("ok") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

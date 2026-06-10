@@ -40,6 +40,9 @@ scripts/bump-version.sh
 # Generated script output
 scripts/migration-report.md
 
+# Build artifacts (npm pack tarballs)
+/dist/
+
 # Python cache
 __pycache__/
 *.pyc

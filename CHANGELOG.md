@@ -4,6 +4,26 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.4-beta] — 2026-06-08 (4.x beta channel)
+
+### Added — small-story workflow
+
+- **Small-story controller, hooks, skill, and routing** for lightweight,
+  single-session work items (the small-story counterpart to the large-story flow).
+
+---
+
+## [4.2.3-beta] — 2026-06-08 (4.x beta channel)
+
+### Added — unified artifact integrity system
+
+- **Phases 1–2:** unified artifact integrity foundation.
+- **Phase 3:** data-store consolidation — SQLite established as the single query store.
+- **Phase 4:** skill-layer cleanup.
+- **Phase 5:** project remediation and behavioral regression tests.
+
+---
+
 ## [4.2.2-beta] — 2026-06-08 (4.x beta channel)
 
 ### Added — dashboard enhancements
@@ -49,6 +69,10 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ## [4.2.0-beta] — 2026-06-08 (4.x beta channel)
 
+> **Tag note:** `4.2.0-beta` and `4.2.1-beta` were tracked here but never cut as
+> standalone git tags — their changes shipped under tag `v4.2.2-beta`. The tag
+> sequence is `…v4.1.17-beta → v4.2.2-beta → v4.2.3-beta → v4.2.4-beta`.
+
 ### Added — per-work-item artifact directories
 
 New opt-in feature (`work_item_artifacts`) that co-locates all artifacts
@@ -90,6 +114,16 @@ item means looking in one place.
 - Beta channel only. Not part of the stable 3.x release.
 - Minor version bump (4.1 → 4.2) — this is a structural change to how
   artifacts are organized.
+
+## [4.1.17-beta] — 2026-06-07 (4.x beta channel)
+
+### Fixed
+
+- Eliminated hardcoded hook paths from bang-command preambles.
+- Compound bang commands now hard-error on standard-permission installs instead
+  of failing silently.
+
+---
 
 ## [4.1.16-beta] — 2026-06-07 (4.x beta channel)
 

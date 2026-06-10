@@ -140,6 +140,11 @@ EXECUTOR_SUPPORTED_ACTIONS = frozenset({
     "prompt",
     "sync_parent_status",
     "convert_to_yaml",
+    "config_conflict",
+    "yaml_repair",
+    "hook_restore",
+    "file_move",
+    "renumber_duplicate",
 })
 
 # Manual guidance for known-unsupported actions, surfaced when an auto/prompted
@@ -183,15 +188,121 @@ def _report_only_has_guidance(finding: Finding) -> bool:
     return any(m in (finding.detail or "") for m in _GUIDANCE_MARKERS)
 
 
-def _build_terminal_fallback(maintenance_route: dict) -> dict:
-    """The guaranteed no-data-loss exits when nothing else resolves a finding.
+def _trigger_out_of_chain(state: "ProjectState | None") -> bool:
+    """True if the migration runner reports a schema version OUTSIDE the
+    supported migration chain (any FINDING|...|chain=broken).
 
-    Re-adopt is the universal backstop: it works even when a layout has no
-    validated migrator. Both snapshot first.
+    Source primitive: runner.py --report-drift-for-skill, which emits
+    DRIFT_COUNT=N then FINDING|<key>|v<from>-><to>|chain=<ok|broken>. Degrades
+    gracefully to False if the runner is absent or errors (no crash)."""
+    if state is None or not getattr(state, "migration_runner_path", None):
+        return False
+    try:
+        r = subprocess.run(
+            [sys.executable, str(state.migration_runner_path),
+             "--report-drift-for-skill", "--project-dir", str(state.project_dir)],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    if r.returncode != 0:
+        return False
+    for line in r.stdout.splitlines():
+        if line.startswith("FINDING|") and line.rstrip().endswith("chain=broken"):
+            return True
+    return False
+
+
+def _trigger_uncorrectable_after_repair(state: "ProjectState | None") -> bool:
+    """True if the core sweetclaude.yaml has an unrecoverable parse error — the
+    best available signal that no state-file repair can fix the project.
+
+    Source primitive: the same YAML parse-detection check_state_integrity uses
+    (sweetclaude.yaml present on disk but state.sweetclaude_yaml is None because
+    it failed to parse). Degrades gracefully to False if the file is absent."""
+    if state is None:
+        return False
+    sc_yaml_path = state.project_dir / ".sweetclaude" / "state" / "sweetclaude.yaml"
+    if not sc_yaml_path.exists() or state.sweetclaude_yaml is not None:
+        return False
+    try:
+        yaml.safe_load(sc_yaml_path.read_text())
+    except yaml.YAMLError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def _trigger_recovery_looped(state: "ProjectState | None") -> bool:
+    """True if recover_project's recovery state signals a stopped/looped
+    recovery. We READ the signal recovery already computes — we do not
+    re-derive it.
+
+    Source primitive: recover_project writes execution-manifest.json under
+    .sweetclaude/state/recovery-runs/<run>/ with status="stopped" and
+    repair_loop.stop=True when should_stop_repair_loop fires. Degrades
+    gracefully to False if no recovery run exists or a manifest is unreadable."""
+    if state is None:
+        return False
+    runs_dir = state.project_dir / ".sweetclaude" / "state" / "recovery-runs"
+    if not runs_dir.is_dir():
+        return False
+    for run_dir in runs_dir.iterdir():
+        manifest_path = run_dir / "execution-manifest.json"
+        if not manifest_path.exists():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        repair_loop = manifest.get("repair_loop")
+        if isinstance(repair_loop, dict) and repair_loop.get("stop") is True:
+            return True
+        if manifest.get("status") == "stopped":
+            return True
+    return False
+
+
+def _build_terminal_fallback(
+    maintenance_route: dict,
+    state: "ProjectState | None" = None,
+    findings: "list[Finding] | None" = None,
+) -> dict:
+    """The guaranteed exits when nothing else resolves a finding.
+
+    Re-adopt is the universal no-data-loss backstop: it works even when a layout
+    has no validated migrator. Purge is the clean-break last resort. Both
+    full-migration and re-adopt snapshot first; purge snapshots first too as a
+    safety net even though it does not preserve data.
+
+    The `triggers` dict tells the SKILL WHEN to surface the Tier-4 menu. The
+    three script-computed triggers are SAFE on a healthy project (all False) and
+    degrade gracefully when the runner/recovery state is absent. `user_requested`
+    is never script-computed — it is a flag the skill sets on explicit user
+    request (default False) and does NOT feed `any`.
     """
     migration_available = maintenance_route.get("status") == "supported-migration-available"
+
+    out_of_chain = _trigger_out_of_chain(state)
+    uncorrectable_after_repair = _trigger_uncorrectable_after_repair(state)
+    recovery_looped = _trigger_recovery_looped(state)
+
+    triggers = {
+        "out_of_chain": out_of_chain,
+        "uncorrectable_after_repair": uncorrectable_after_repair,
+        "recovery_looped": recovery_looped,
+        # Skill-set only — never script-computed. The skill flips this on an
+        # explicit user request to surface Tier-4. Excluded from `any`.
+        "user_requested": False,
+        "any": bool(out_of_chain or uncorrectable_after_repair or recovery_looped),
+    }
+
     return {
         "always_available": True,
+        "triggers": triggers,
         "options": [
             {
                 "id": "full-migration",
@@ -211,16 +322,31 @@ def _build_terminal_fallback(maintenance_route: dict) -> dict:
                 "available": True,
                 "no_data_loss": True,
                 "snapshot_first": True,
-                "capability": "adopt",
+                # V8 / plan §8.4: re_adopt.py archives .sweetclaude/ then hands
+                # to sweetclaude:init as the re-onboard entry point. There is NO
+                # sweetclaude:adopt skill.
+                "capability": "init",
                 "executable": "scripts/recovery/re_adopt.py",
                 "plan_first": "recovery.re_adopt.plan_re_adopt",
                 "reversible": "recovery.re_adopt.reverse_re_adopt",
+            },
+            {
+                "id": "purge",
+                "label": "Remove SweetClaude entirely (clean break — no legacy archive)",
+                "available": True,
+                "no_data_loss": False,
+                "snapshot_first": True,
+                "capability": "purge",
             },
         ],
     }
 
 
-def _classify_all(findings: list[Finding], maintenance_route: dict) -> tuple[dict, dict]:
+def _classify_all(
+    findings: list[Finding],
+    maintenance_route: dict,
+    state: "ProjectState | None" = None,
+) -> tuple[dict, dict]:
     """Return (resolution_summary, per_finding_class). Totality guarantee:
     every finding maps to a class; if any is unresolved, the terminal fallback
     is present."""
@@ -235,7 +361,8 @@ def _classify_all(findings: list[Finding], maintenance_route: dict) -> tuple[dic
         "by_class": by_class,
         "unresolved_count": by_class.get(RESOLUTION_FALLBACK, 0),
         "all_findings_routed": True,  # true by construction of classify_resolution
-        "terminal_fallback": _build_terminal_fallback(maintenance_route),
+        "terminal_fallback": _build_terminal_fallback(
+            maintenance_route, state=state, findings=findings),
     }
     return summary, per_id
 
@@ -368,7 +495,8 @@ def check_state_integrity(state: ProjectState) -> list[Finding]:
             fix_type="auto",
             fix_recipe={"action": "run_script",
                         "cmd": ["bash", str(Path.home() / ".claude" / "hooks" / "sweetclaude" / "generate-session-state.sh")],
-                        "args": []},
+                        "args": [],
+                        "regenerates": [".sweetclaude/state/session-state.yaml"]},
         ))
 
     if state.sweetclaude_yaml:
@@ -426,7 +554,8 @@ def check_state_integrity(state: ProjectState) -> list[Finding]:
                 fix_type="auto",
                 fix_recipe={"action": "run_script",
                             "cmd": ["bash", str(Path.home() / ".claude" / "hooks" / "sweetclaude" / "generate-session-state.sh")],
-                            "args": []},
+                            "args": [],
+                            "regenerates": [".sweetclaude/state/session-state.yaml"]},
             ))
 
     return findings
@@ -469,6 +598,31 @@ def check_hook_health(state: ProjectState) -> list[Finding]:
                 ))
         except (subprocess.TimeoutExpired, OSError):
             pass
+
+    # A hook the manifest declares but that is absent on disk cannot fire.
+    # Consult the loaded manifest (hooks-manifest.json) for expected scripts and
+    # compare against what is present, so a missing hook is detectable AND
+    # fixable end-to-end via the hook_restore prompt.
+    if state.hook_manifest:
+        hooks_dir = Path.home() / ".claude" / "hooks" / "sweetclaude"
+        present_names = {hf.name for hf in state.hook_files}
+        for entry in state.hook_manifest.get("hooks", []):
+            name = entry.get("file") if isinstance(entry, dict) else None
+            if not name:
+                continue
+            if name in present_names:
+                continue
+            findings.append(Finding(
+                id=f"hook-health:missing-hook:{name}",
+                category="hook_health",
+                severity="error",
+                summary=f"Hook script {name} is declared in the manifest but missing",
+                detail=f"Expected {hooks_dir / name} (declared in hooks-manifest.json)",
+                file_paths=[str(hooks_dir / name)],
+                fix_type="prompted",
+                fix_recipe={"action": "prompt", "type": "hook_restore",
+                            "hook": name, "sources": ["backup", "repo"]},
+            ))
 
     rules_dir = Path.home() / ".claude" / "rules" / "sweetclaude"
     expected_rules = ["interaction-model.md", "phase-gates.md", "tdd-levels.md"]
@@ -677,28 +831,48 @@ def check_migration_currency(state: ProjectState) -> list[Finding]:
         ))
 
     if state.migration_runner_path:
+        # C3.5b: --scan-drift prints HUMAN PROSE, not JSON — json.loads()'ing it
+        # always raised JSONDecodeError, which was swallowed, so a schema-drift
+        # finding could never be produced. The machine-parseable mode is
+        # --report-drift-for-skill, which emits DRIFT_COUNT=N then
+        # FINDING|<file_key>|v<from>-><to>|chain=<ok|broken> (and MISSING|<file_key>
+        # for absent files). Parse that line format, reusing the P2.1 pattern from
+        # _trigger_out_of_chain. Degrades gracefully on absent/erroring runner.
         try:
             r = subprocess.run(
                 [sys.executable, str(state.migration_runner_path),
-                 "--scan-drift", "--project-dir", str(state.project_dir)],
+                 "--report-drift-for-skill", "--project-dir", str(state.project_dir)],
                 capture_output=True, text=True, timeout=15,
             )
             if r.returncode == 0:
-                drift_data = json.loads(r.stdout)
-                drift_findings = drift_data if isinstance(drift_data, list) else drift_data.get("findings", [])
-                for df in drift_findings:
+                for line in r.stdout.splitlines():
+                    line = line.strip()
+                    if line.startswith("FINDING|"):
+                        parts = line.split("|")
+                        file_key = parts[1] if len(parts) > 1 else "unknown"
+                        version = parts[2] if len(parts) > 2 else ""
+                        chain = parts[3] if len(parts) > 3 else ""
+                        detail = f"Schema drift: {file_key} {version}".strip()
+                        if chain:
+                            detail = f"{detail} ({chain})"
+                    elif line.startswith("MISSING|"):
+                        parts = line.split("|")
+                        file_key = parts[1] if len(parts) > 1 else "unknown"
+                        detail = f"Schema drift: {file_key} is missing and cannot be migrated"
+                    else:
+                        continue
                     findings.append(Finding(
-                        id=f"migration-currency:schema-drift:{df.get('file', 'unknown')}",
+                        id=f"migration-currency:schema-drift:{file_key}",
                         category="migration_currency",
                         severity="warning",
                         summary="A state file needs to be upgraded to the current schema",
-                        detail=f"Schema drift: {df.get('message', str(df))}",
-                        file_paths=[str(df.get("file", ""))],
+                        detail=detail,
+                        file_paths=[file_key],
                         fix_type="prompted",
                         fix_recipe={"action": "prompt", "type": "migration",
                                     "script": "runner.py", "args": []},
                     ))
-        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError, AttributeError):
+        except (subprocess.TimeoutExpired, OSError):
             pass
 
     backlog_dir = state.product_base / "backlog"
@@ -766,21 +940,32 @@ def check_migration_currency(state: ProjectState) -> list[Finding]:
 def check_config_compat(state: ProjectState) -> list[Finding]:
     findings: list[Finding] = []
 
-    _text_sources: list[tuple[str, str]] = []
+    home_claude = Path.home() / ".claude"
+
+    # Logical source name -> real filesystem path, so config_conflict adopt can
+    # perform a targeted edit through the executor (the logical names like
+    # "~/.claude/settings.json" do not resolve under project_dir).
+    _text_sources: list[tuple[str, str, str]] = []
     if state.claude_md_project:
-        _text_sources.append(("CLAUDE.md", state.claude_md_project))
+        _text_sources.append(
+            ("CLAUDE.md", state.claude_md_project, str(state.project_dir / "CLAUDE.md")))
     if state.claude_md_global:
-        _text_sources.append(("~/.claude/CLAUDE.md", state.claude_md_global))
+        _text_sources.append(
+            ("~/.claude/CLAUDE.md", state.claude_md_global, str(home_claude / "CLAUDE.md")))
     for name, content in state.rules_files.items():
-        _text_sources.append((f"rules/{name}", content))
+        _text_sources.append(
+            (f"rules/{name}", content, str(home_claude / "rules" / name)))
 
-    _settings_sources: list[tuple[str, dict]] = []
+    _settings_sources: list[tuple[str, dict, str]] = []
     if state.settings_global:
-        _settings_sources.append(("~/.claude/settings.json", state.settings_global))
+        _settings_sources.append(
+            ("~/.claude/settings.json", state.settings_global, str(home_claude / "settings.json")))
     if state.settings_local:
-        _settings_sources.append((".claude/settings.local.json", state.settings_local))
+        _settings_sources.append(
+            (".claude/settings.local.json", state.settings_local,
+             str(state.project_dir / ".claude" / "settings.local.json")))
 
-    for sname, sdata in _settings_sources:
+    for sname, sdata, spath in _settings_sources:
         allowed = sdata.get("allowedTools")
         if allowed is not None:
             for tool in ("Agent", "Bash", "Write"):
@@ -794,7 +979,8 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
                         file_paths=[sname],
                         fix_type="prompted",
                         fix_recipe={"action": "prompt", "type": "config_conflict",
-                                    "file": sname, "line": 0,
+                                    "file": sname, "path": spath, "line": 0,
+                                    "conflict": "F1", "tool": tool,
                                     "options": ["adopt", "keep", "both"]},
                     ))
 
@@ -816,7 +1002,9 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
                                 file_paths=[sname],
                                 fix_type="prompted",
                                 fix_recipe={"action": "prompt", "type": "config_conflict",
-                                            "file": sname, "line": 0,
+                                            "file": sname, "path": spath, "line": 0,
+                                            "conflict": "F2", "hook_command": cmd,
+                                            "matcher": matcher,
                                             "options": ["adopt", "keep", "both"]},
                             ))
                     test_runners = ["npm test", "pytest", "cargo test", "jest ", "vitest", "go test"]
@@ -831,7 +1019,9 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
                                 file_paths=[sname],
                                 fix_type="prompted",
                                 fix_recipe={"action": "prompt", "type": "config_conflict",
-                                            "file": sname, "line": 0,
+                                            "file": sname, "path": spath, "line": 0,
+                                            "conflict": "F3", "hook_command": cmd,
+                                            "matcher": matcher,
                                             "options": ["adopt", "keep", "both"]},
                             ))
                             break
@@ -861,7 +1051,7 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
                 matched.append(pat)
         return matched
 
-    for src_name, src_content in _text_sources:
+    for src_name, src_content, src_path in _text_sources:
         for pat in _scan_text("", f4_patterns, src_name):
             pass
         hits = _scan_text(src_content, f4_patterns, src_name)
@@ -873,7 +1063,8 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
                 detail=f"F4: '{h}' found in {src_name}",
                 file_paths=[src_name], fix_type="prompted",
                 fix_recipe={"action": "prompt", "type": "config_conflict",
-                            "file": src_name, "line": 0,
+                            "file": src_name, "path": src_path, "line": 0,
+                            "conflict": "F4", "pattern": h,
                             "options": ["adopt", "keep", "both"]},
             ))
 
@@ -894,7 +1085,8 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
                     file_paths=[src_name],
                     fix_type="prompted" if sev != "info" else "report-only",
                     fix_recipe={"action": "prompt", "type": "config_conflict",
-                                "file": src_name, "line": 0,
+                                "file": src_name, "path": src_path, "line": 0,
+                                "conflict": code, "pattern": h,
                                 "options": ["adopt", "keep", "both"]}
                     if sev != "info" else {},
                 ))
@@ -902,9 +1094,15 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
     return findings
 
 
-_LEGACY_TYPE_ALIASES: frozenset[str] = frozenset({
-    "story", "bug", "debt", "chore", "release", "feature",
-})
+# Genuinely-invalid legacy item-type aliases mapped to their current-taxonomy
+# canonical target in schema.VALID_TYPES. `story` and `release` are valid item
+# types in VALID_TYPES and therefore need no remap (they produce no finding).
+_LEGACY_TYPE_ALIASES: dict[str, str] = {
+    "bug": "bug-fix",
+    "debt": "tech-debt",
+    "chore": "tech-debt",
+    "feature": "net-new-feature",
+}
 
 
 def _violation_to_finding(violation: str, p: Path, fm: dict) -> Finding | None:
@@ -1038,6 +1236,28 @@ def _violation_to_finding(violation: str, p: Path, fm: dict) -> Finding | None:
     return None
 
 
+def _propose_next_id(old_id: str, known_ids: set[str]) -> str | None:
+    """Propose the next-available id of old_id's prefix family (PREFIX-<max+1>).
+
+    Scans known_ids for the highest numeric suffix sharing old_id's prefix and
+    returns PREFIX-(max+1). Returns None if old_id has no PREFIX-N shape. Used
+    by the duplicate-id finding so the renumber prompt can offer a concrete new
+    id without the renamer having to invent one.
+    """
+    m = re.match(r"^([A-Za-z]+)-(\d+)$", old_id)
+    if not m:
+        return None
+    prefix = m.group(1)
+    max_n = 0
+    width = len(m.group(2))
+    for kid in known_ids:
+        km = re.match(r"^([A-Za-z]+)-(\d+)$", kid)
+        if km and km.group(1) == prefix:
+            max_n = max(max_n, int(km.group(2)))
+            width = max(width, len(km.group(2)))
+    return f"{prefix}-{max_n + 1:0{width}d}"
+
+
 def check_file_diagnostics(state: ProjectState) -> list[Finding]:
     findings: list[Finding] = []
     seen_ids: dict[str, Path] = {}
@@ -1049,6 +1269,20 @@ def check_file_diagnostics(state: ProjectState) -> list[Finding]:
         dirs_to_scan.append(backlog_dir)
     if roadmap_dir.is_dir():
         dirs_to_scan.append(roadmap_dir)
+
+    # Pre-pass: collect every id across the scanned dirs so a duplicate-id
+    # finding can propose the next-available id of that prefix family. The
+    # inline detection loop below cannot see ids that sort after the duplicate,
+    # so the proposal must come from a full sweep.
+    all_known_ids: set[str] = set()
+    for scan_dir in dirs_to_scan:
+        for p in scan_dir.rglob("*.md"):
+            if p.name in ("INDEX.md", "MIGRATION-MAP.md") or \
+               p.name.endswith("-INDEX.md") or "archived" in p.parts:
+                continue
+            fm, _err = _read_frontmatter_raw(p)
+            if fm and fm.get("id"):
+                all_known_ids.add(str(fm["id"]))
 
     for scan_dir in dirs_to_scan:
         for p in scan_dir.rglob("*.md"):
@@ -1089,16 +1323,33 @@ def check_file_diagnostics(state: ProjectState) -> list[Finding]:
             item_id = fm.get("id")
             if item_id:
                 if item_id in seen_ids:
+                    first = seen_ids[item_id]
+                    file_a, file_b = str(first), str(p)
+                    proposed = _propose_next_id(item_id, all_known_ids)
                     findings.append(Finding(
                         id=f"file-diagnostics:duplicate-id:{item_id}",
                         category="file_diagnostics",
                         severity="error",
                         summary=f"ID {item_id} is used by multiple files",
-                        detail=f"duplicate-id: {item_id} in {p} and {seen_ids[item_id]}",
-                        file_paths=[str(p), str(seen_ids[item_id])],
+                        detail=f"duplicate-id: {item_id} in {file_b} and {file_a}",
+                        file_paths=[file_a, file_b],
                         fix_type="prompted",
-                        fix_recipe={"action": "prompt", "type": "config_conflict",
-                                    "file": str(p), "line": 0, "options": []},
+                        # renumber_duplicate: the user picks WHICH colliding copy
+                        # gets a fresh id. The recipe carries both files, their
+                        # location labels, the duplicate id, and a proposed
+                        # next-available id so the skill can renumber the chosen
+                        # file (rewrite its id + rename it) via the executor.
+                        fix_recipe={
+                            "action": "prompt",
+                            "type": "renumber_duplicate",
+                            "duplicate_id": item_id,
+                            "files": [file_a, file_b],
+                            "labels": [
+                                Path(file_a).parent.name,
+                                Path(file_b).parent.name,
+                            ],
+                            "proposed_new_id": proposed,
+                        },
                     ))
                 else:
                     seen_ids[item_id] = p
@@ -1122,8 +1373,35 @@ def check_file_diagnostics(state: ProjectState) -> list[Finding]:
 
             violations = validate_frontmatter(fm_normalized)
             for v in violations:
-                if v.startswith("invalid type:") and raw_type.lower() in _LEGACY_TYPE_ALIASES:
-                    continue
+                if v.startswith("invalid type:"):
+                    canonical = _LEGACY_TYPE_ALIASES.get(raw_type.lower())
+                    if canonical:
+                        # A legacy item-type alias with a known canonical target:
+                        # emit a remap finding instead of the generic
+                        # unknown-type one. A type change is semantically
+                        # significant, so present it as a prompted choose_value
+                        # seeded so the recommended value is the canonical
+                        # target. The skill applies the chosen value through the
+                        # executor's write_frontmatter_field backup pipeline.
+                        findings.append(Finding(
+                            id=f"file-diagnostics:legacy-type-alias:{p.name}",
+                            category="file_diagnostics",
+                            severity="warning",
+                            summary=(
+                                f"{p.name} uses legacy type '{raw_type}' "
+                                f"— remap to '{canonical}'"
+                            ),
+                            detail=(
+                                f"legacy-type-alias:{raw_type}->{canonical} in {p}"
+                            ),
+                            file_paths=[str(p)],
+                            fix_type="prompted",
+                            fix_recipe={"action": "prompt", "type": "choose_value",
+                                        "file": str(p), "field": "type",
+                                        "recommended": canonical,
+                                        "options": sorted(VALID_TYPES)},
+                        ))
+                        continue
                 finding = _violation_to_finding(v, p, fm)
                 if finding:
                     if finding.id.endswith(":missing-field-id:" + p.name) and item_id:
@@ -1867,17 +2145,82 @@ def save_suppressions(project_dir: Path, entries: list[dict]) -> None:
     os.replace(tmp, path)
 
 
-def auto_cleanup_suppressions(
+def compute_resolved_suppressions(
     project_dir: Path, current_finding_ids: set[str]
 ) -> set[str]:
+    """Read-only: which suppression entries are stale (their finding resolved).
+
+    Used during the read-only scan phase to flag previously_suppressed findings
+    and populate suppressions_resolved WITHOUT mutating the ledger. The actual
+    prune is deferred to the execute phase (``prune_resolved_suppressions``),
+    where it is backed up through the archive — keeping scan strictly read-only
+    (P4) and every mutation on the executor backup pipeline (P2).
+    """
+    entries = load_suppressions(project_dir)
+    return {
+        e["finding_id"]
+        for e in entries
+        if e.get("finding_id") and e["finding_id"] not in current_finding_ids
+    }
+
+
+def prune_resolved_suppressions(
+    project_dir: Path, archive_path: Path, current_finding_ids: set[str]
+) -> set[str]:
+    """Execute-phase prune of stale suppression entries, backed up via the archive.
+
+    Computes the same resolved set as ``compute_resolved_suppressions``; if any
+    entries are stale, backs up the ledger through ``_record_mutation``
+    (before-image + diff, ``restore``-reversible) before writing the pruned
+    file. This is the executor-routed mutation that replaces the former
+    scan-time write, satisfying the "every mutation goes through the backup
+    pipeline" invariant (P2) while leaving scan read-only (P4).
+    """
     entries = load_suppressions(project_dir)
     if not entries:
         return set()
-    resolved = [e for e in entries if e.get("finding_id") not in current_finding_ids]
-    remaining = [e for e in entries if e.get("finding_id") in current_finding_ids]
-    if resolved:
-        save_suppressions(project_dir, remaining)
-    return {e["finding_id"] for e in resolved}
+    resolved = {
+        e["finding_id"]
+        for e in entries
+        if e.get("finding_id") and e["finding_id"] not in current_finding_ids
+    }
+    if not resolved:
+        return set()
+    # Keep everything NOT in the resolved set — so entries lacking a finding_id
+    # (hand-written/legacy) survive rather than being collateral-dropped by a
+    # membership test against current findings.
+    remaining = [e for e in entries if e.get("finding_id") not in resolved]
+    path = _suppressions_path(project_dir)
+    before = path.read_bytes() if path.exists() else b""
+    after = json.dumps(remaining, indent=2).encode()
+    _record_mutation(archive_path, path, before, after)
+    save_suppressions(project_dir, remaining)
+    return resolved
+
+
+def suppress_finding(
+    project_dir: Path, finding_id: str, reason: str | None = None
+) -> dict:
+    """Append a suppression entry through save_suppressions.
+
+    Idempotent: an already-suppressed finding_id is not duplicated and its
+    existing entry is preserved. This is the script-owned path that replaces
+    the former skill-side inline write to doctor-suppressions.json (S3).
+    """
+    entries = load_suppressions(project_dir)
+    already = any(e.get("finding_id") == finding_id for e in entries)
+    if not already:
+        entry = {"finding_id": finding_id, "suppressed_at": _now_iso()}
+        if reason:
+            entry["reason"] = reason
+        entries.append(entry)
+        save_suppressions(project_dir, entries)
+    return {
+        "suppressed": True,
+        "finding_id": finding_id,
+        "already_suppressed": already,
+        "count": len(entries),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2235,6 +2578,38 @@ def _apply_compatibility_mode_policy(
             },
         ))
 
+    # Surface a Tier-2 exit prompt so the user can unlock migration. Migration
+    # stays blocked while compatibility mode is active; exiting clears the lock
+    # by setting recovery.taxonomy.compatibility_exited (the flag recover_project
+    # reads). The prompt is the UX surface; the SKILL's apply step emits a
+    # write_field reuse recipe with that nested key_path (no new transform —
+    # V7 tripwire). The recipe carries the sweetclaude.yaml path and key_path so
+    # the handler has everything it needs.
+    project_dir = (maintenance_route.get("guard") or {}).get("project_dir", "")
+    sc_yaml_path = (
+        str(Path(project_dir) / ".sweetclaude" / "state" / "sweetclaude.yaml")
+        if project_dir else ""
+    )
+    visible.append(Finding(
+        id="compatibility-mode:exit-available",
+        category="compatibility_mode",
+        severity="warning",
+        summary="Compatibility mode is active — migration is blocked until you exit it",
+        detail=(
+            "The project was previously stabilized without migration. Exiting "
+            "compatibility mode clears the lock and allows migration."
+        ),
+        file_paths=[sc_yaml_path] if sc_yaml_path else [],
+        fix_type="prompted",
+        fix_recipe={
+            "action": "prompt",
+            "type": "exit_compatibility_mode",
+            "file": sc_yaml_path,
+            "key_path": ["recovery", "taxonomy", "compatibility_exited"],
+            "value": True,
+        },
+    ))
+
     return visible, {
         "applied": True,
         "collapsed_count": collapsed_count,
@@ -2252,6 +2627,8 @@ def _apply_manifest_migration_policy(
         if allowed
         else None
     )
+    taxonomy_script = _SCRIPTS_DIR / "migrate" / "migrate_taxonomy.py"
+    taxonomy_runnable = _script_has_cli_entrypoint(taxonomy_script)
     visible: list[Finding] = []
     blocked_count = 0
     for finding in findings:
@@ -2263,6 +2640,13 @@ def _apply_manifest_migration_policy(
             allowed_capability == "migrate.flat_bl_to_issue"
             and recipe.get("script") == "migrate-v3-to-v4.py"
         ):
+            visible.append(finding)
+            continue
+        # T3b (plan §8.2, LOCKED): taxonomy migration now has a runnable CLI and
+        # routes through sweetclaude:migrate, which owns its own preflight/safety
+        # flow — the same delegation contract as the v3-to-v4 path. So it is no
+        # longer manifest-blocked; let the runnable prompted finding through.
+        if recipe.get("script") == "migrate_taxonomy.py" and taxonomy_runnable:
             visible.append(finding)
             continue
         blocked_count += 1
@@ -2296,6 +2680,35 @@ def _apply_manifest_migration_policy(
 # Scan
 # ---------------------------------------------------------------------------
 
+def _dedup_duplicate_id_findings(findings: list[Finding]) -> list[Finding]:
+    """F5.1.4: a cross-location duplicate supersedes the same-directory/file
+    duplicate-id finding for the same id.
+
+    When one id is duplicated across backlog and roadmap, storage-lint emits
+    `storage-lint:cross-location-duplicate-id:<id>` AND file-diagnostics emits
+    `file-diagnostics:duplicate-id:<id>` for the same id. The cross-location
+    finding is the more specific, actionable one, so drop the same-directory
+    duplicate-id for that id. Same-directory-only duplicates (no cross-location
+    counterpart) and all other findings are untouched.
+    """
+    cross_location_ids: set[str] = set()
+    for f in findings:
+        prefix = "storage-lint:cross-location-duplicate-id:"
+        if f.id.startswith(prefix):
+            cross_location_ids.add(f.id[len(prefix):])
+
+    if not cross_location_ids:
+        return findings
+
+    deduped: list[Finding] = []
+    for f in findings:
+        prefix = "file-diagnostics:duplicate-id:"
+        if f.id.startswith(prefix) and f.id[len(prefix):] in cross_location_ids:
+            continue
+        deduped.append(f)
+    return deduped
+
+
 def _scan(
     project_state: ProjectState,
     categories: list[str] | None = None,
@@ -2324,7 +2737,7 @@ def _scan(
     suppressed_ids = {s.get("finding_id") for s in project_state.suppressions if s.get("finding_id")}
 
     if not categories:
-        resolved_ids = auto_cleanup_suppressions(
+        resolved_ids = compute_resolved_suppressions(
             project_state.project_dir, all_finding_ids
         )
     else:
@@ -2343,11 +2756,13 @@ def _scan(
     active, manifest_migration_policy = _apply_manifest_migration_policy(
         active, maintenance_route,
     )
+    active = _dedup_duplicate_id_findings(active)
     migration_recs = _build_migration_recommendations(
         active, project_state, maintenance_route,
     )
 
-    resolution_summary, _resolution_by_id = _classify_all(active, maintenance_route)
+    resolution_summary, _resolution_by_id = _classify_all(
+        active, maintenance_route, state=project_state)
     finding_dicts = []
     for f in active:
         d = asdict(f)
@@ -2401,6 +2816,7 @@ def create_archive(project_dir: Path) -> Path:
 def backup_content(archive_path: Path, file_path: Path, content: bytes) -> str:
     h = _hash_bytes(content)
     dest = archive_path / "before" / _sanitize_path(str(file_path))
+    dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(content)
     return h
 
@@ -2417,7 +2833,73 @@ def write_diff(
     diff_text = "".join(diff)
     if diff_text:
         dest = archive_path / "diffs" / (_sanitize_path(str(file_path)) + ".diff")
+        dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(diff_text)
+
+
+def _record_mutation(
+    archive_path: Path, file_path: Path, before: bytes, after: bytes
+) -> RecipeResult:
+    """Record a file mutation through the archive pipeline.
+
+    Backs up the original content to before/, writes a unified diff to diffs/,
+    and returns a RecipeResult with real before/after hashes. The caller
+    performs the actual write (or delete); routing every mutation through this
+    helper guarantees it is backed up and diffed so it can be reversed by
+    ``restore``. This is the single backup/diff contract the executor relies on.
+    """
+    before_hash = backup_content(archive_path, file_path, before)
+    write_diff(archive_path, file_path, before, after)
+    return RecipeResult(
+        "", before_hash, _hash_bytes(after),
+        archive_path / "before" / _sanitize_path(str(file_path)), True,
+    )
+
+
+def _record_subprocess_mutations(
+    archive_path: Path, recipe: dict, targets: list[Path],
+    before_map: dict[Path, bytes],
+) -> RecipeResult:
+    """Back up + diff the file(s) a subprocess action regenerated.
+
+    run_script and rebuild_cache run an external script that rewrites derived/
+    cache state. The caller captures each target's bytes BEFORE running and
+    passes them here. For every target whose content actually changed, this
+    routes the (before, after) pair through ``_record_mutation`` so a before/
+    image and a unified diff are recorded — making the subprocess output
+    reversible by ``restore`` exactly like an in-process file mutation.
+
+    The first changed target is threaded onto ``recipe["file"]`` so the
+    ``auto_fix`` action entry keys ``restore`` to it; any additional changed
+    targets are threaded onto ``recipe["extra_files"]`` so ``auto_fix`` can emit
+    one extra action entry per file. If nothing changed, the result reports a
+    no-op (before == after) with no backup. If no targets were declared, the
+    result is honestly reversible:false (backup_path is None).
+    """
+    changed: list[tuple[Path, bytes, bytes]] = []
+    for tp in targets:
+        before = before_map.get(tp, b"")
+        after = tp.read_bytes() if tp.exists() else b""
+        if before != after:
+            changed.append((tp, before, after))
+
+    if not changed:
+        # No declared target changed (or none declared): no authored before-
+        # image. Report a no-op success; restore reports reversible:false.
+        return RecipeResult("", "", None, None, True)
+
+    primary_path, primary_before, primary_after = changed[0]
+    primary = _record_mutation(archive_path, primary_path, primary_before, primary_after)
+    recipe["file"] = str(primary_path)
+
+    extra: list[str] = []
+    for tp, before, after in changed[1:]:
+        _record_mutation(archive_path, tp, before, after)
+        extra.append(str(tp))
+    if extra:
+        recipe["extra_files"] = extra
+
+    return primary
 
 
 def write_manifest(archive_path: Path, manifest: dict) -> None:
@@ -2469,13 +2951,50 @@ def _atomic_write(path: Path, content: bytes) -> None:
         raise
 
 
+def _resolve_within(path: Path, *roots: Path) -> bool:
+    """True if ``path`` (resolved) lies within any of ``roots`` (resolved).
+
+    Containment guard for executor/restore writes. Doctor may only touch the
+    project tree or the user's ``~/.claude`` SweetClaude install — never anywhere
+    else. Blocks path traversal (``../``) and absolute escapes in recipe- or
+    archive-supplied paths from reaching ``shutil.move``/``_atomic_write``/
+    ``unlink``. Symlinks are resolved, so a symlinked escape is also caught.
+    """
+    try:
+        rp = path.resolve()
+    except (OSError, RuntimeError):
+        return False
+    for root in roots:
+        try:
+            rp.relative_to(root.resolve())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 def _apply_transform(content: bytes, recipe: dict, project_dir: Path) -> bytes:
     action = recipe["action"]
 
     if action == "write_field":
         text = content.decode("utf-8")
         data = yaml.safe_load(text) or {}
-        data[recipe["key"]] = recipe["value"]
+        # key_path supports nested writes (e.g. recovery.taxonomy.compatibility
+        # _exited) so exit_compatibility_mode can REUSE write_field rather than
+        # add a new transform (V7 tripwire). A flat `key` keeps the top-level
+        # behavior unchanged.
+        key_path = recipe.get("key_path")
+        if key_path:
+            node = data
+            for k in key_path[:-1]:
+                child = node.get(k)
+                if not isinstance(child, dict):
+                    child = {}
+                    node[k] = child
+                node = child
+            node[key_path[-1]] = recipe["value"]
+        else:
+            data[recipe["key"]] = recipe["value"]
         return yaml.safe_dump(data, default_flow_style=False).encode("utf-8")
 
     if action == "write_frontmatter_field":
@@ -2515,6 +3034,14 @@ def _check_precondition(recipe: dict, content: bytes, file_path: Path) -> bool:
     if action == "write_field":
         try:
             data = yaml.safe_load(content.decode("utf-8")) or {}
+            key_path = recipe.get("key_path")
+            if key_path:
+                node = data
+                for k in key_path[:-1]:
+                    node = node.get(k) if isinstance(node, dict) else None
+                    if not isinstance(node, dict):
+                        return False
+                return node.get(key_path[-1]) == recipe["value"]
             return data.get(recipe["key"]) == recipe["value"]
         except (yaml.YAMLError, UnicodeDecodeError):
             return False
@@ -2543,6 +3070,206 @@ def _check_precondition(recipe: dict, content: bytes, file_path: Path) -> bool:
         return target.is_dir()
 
     return False
+
+
+def _yaml_frontmatter_reparses(text: str) -> dict | None:
+    """Return the parsed mapping iff ``text`` is valid SweetClaude frontmatter.
+
+    Valid means: opens with a ``---`` line, has a closing ``---``, and the
+    region between them parses to a YAML mapping. Returns the mapping, or None
+    if any of those does not hold. This is the post-repair validation gate.
+    """
+    if not text.startswith("---"):
+        return None
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return None
+    try:
+        fm = yaml.safe_load(parts[1])
+    except yaml.YAMLError:
+        return None
+    if fm is None:
+        return {}
+    return fm if isinstance(fm, dict) else None
+
+
+def _yaml_repair_auto(before: bytes) -> bytes:
+    """Deterministically repair unambiguous frontmatter-DELIMITER breakage.
+
+    Scope is intentionally narrow — delimiter placement only, never quoting,
+    indentation, or value rewriting. Two unambiguous forms are repaired:
+
+    1. Missing closing ``---``: the file opens with a ``---`` line, then a run
+       of lines that parse as a YAML mapping, then markdown body. We find the
+       largest leading run of post-delimiter lines that parses as a mapping and
+       insert a closing ``---`` immediately after it.
+    2. Missing opening ``---``: the file begins with a YAML mapping, then a
+       ``---`` line, then body. We prepend an opening ``---``.
+
+    AMBIGUITY GUARD: a repair is accepted only if the reconstructed text
+    re-parses as valid frontmatter (``_yaml_frontmatter_reparses``) AND the
+    re-parsed mapping equals the mapping we isolated. If we cannot isolate a
+    clean mapping, or the reconstruction does not re-parse to the same fields,
+    we DO NOT guess — we raise ValueError so the executor signals manual-edit.
+    The caller treats any raise here as "not safely repairable".
+    """
+    text = before.decode("utf-8", errors="strict")
+    lines = text.splitlines(keepends=True)
+
+    def _strip_delims(seq: list[str]) -> str:
+        return "".join(seq)
+
+    # Already valid frontmatter: nothing to repair (idempotent / defensive).
+    if _yaml_frontmatter_reparses(text) is not None:
+        return before
+
+    # --- Form 1: opening delimiter present, closing delimiter missing -------
+    if lines and lines[0].rstrip("\r\n") == "---":
+        # The body boundary must be STRUCTURALLY unambiguous — we do not search
+        # for a split point that makes YAML happy (that is guessing). The body
+        # of a SweetClaude markdown file begins at the first blank line or the
+        # first markdown construct (a line starting with '#'). Everything from
+        # the opening delimiter to that boundary must parse, as a whole, into a
+        # YAML mapping. If it does not, the breakage is inside the frontmatter
+        # itself (quoting/indentation) — not a delimiter problem — so refuse.
+        body_start = None
+        for i in range(1, len(lines)):
+            stripped = lines[i].rstrip("\r\n")
+            if stripped == "" or stripped.lstrip().startswith("#"):
+                body_start = i
+                break
+        if body_start is None:
+            body_start = len(lines)
+        region = _strip_delims(lines[1:body_start])
+        if not region.strip():
+            raise ValueError(
+                "auto repair: no frontmatter content before the body boundary"
+            )
+        try:
+            isolated = yaml.safe_load(region)
+        except yaml.YAMLError:
+            isolated = None
+        if not isinstance(isolated, dict) or not isolated:
+            raise ValueError(
+                "auto repair: frontmatter is not unambiguously recoverable "
+                "(content before the body boundary is not a clean YAML mapping)"
+            )
+        head = lines[:body_start]
+        tail = lines[body_start:]
+        if head and not head[-1].endswith("\n"):
+            head[-1] = head[-1] + "\n"
+        rebuilt = "".join(head) + "---\n" + "".join(tail)
+        reparsed = _yaml_frontmatter_reparses(rebuilt)
+        if reparsed is None or reparsed != isolated:
+            raise ValueError(
+                "auto repair: reconstructed frontmatter did not re-parse to the "
+                "same fields — refusing to guess"
+            )
+        return rebuilt.encode("utf-8")
+
+    # --- Form 2: opening delimiter missing, closing delimiter present -------
+    delim_idx = None
+    for idx, ln in enumerate(lines):
+        if ln.rstrip("\r\n") == "---":
+            delim_idx = idx
+            break
+    if delim_idx is not None and delim_idx > 0:
+        region = _strip_delims(lines[:delim_idx])
+        try:
+            parsed = yaml.safe_load(region)
+        except yaml.YAMLError:
+            parsed = None
+        if isinstance(parsed, dict) and parsed:
+            rebuilt = "---\n" + text
+            reparsed = _yaml_frontmatter_reparses(rebuilt)
+            if reparsed is not None and reparsed == parsed:
+                return rebuilt.encode("utf-8")
+
+    raise ValueError(
+        "auto repair: not an unambiguous delimiter break — manual edit needed"
+    )
+
+
+def _config_conflict_adopt(before: bytes, recipe: dict) -> bytes:
+    """Apply SweetClaude's rule for a config_conflict (the ``adopt`` choice).
+
+    Two targeted mechanisms, derived from how check_config_compat detected the
+    conflict (NOT a general config editor — the recipe names the exact target):
+
+    - Settings conflicts (F1-F3): edit settings.json structurally. F1 adds the
+      excluded ``tool`` back to allowedTools; F2/F3 remove the conflicting hook
+      entry (matched by its command, optionally narrowed by matcher).
+    - Text conflicts (F4, W1-W4, I1, I2): remove the line(s) of the source file
+      that contain the matched ``pattern`` (case-insensitive substring).
+    """
+    tool = recipe.get("tool")
+    hook_command = recipe.get("hook_command")
+
+    if tool is not None or hook_command is not None:
+        data = json.loads(before.decode("utf-8"))
+        if tool is not None:
+            allowed = data.get("allowedTools")
+            if isinstance(allowed, list) and tool not in allowed:
+                allowed.append(tool)
+        elif hook_command is not None:
+            matcher = recipe.get("matcher")
+            for hook_list in (data.get("hooks") or {}).values():
+                if not isinstance(hook_list, list):
+                    continue
+                kept = []
+                for entry in hook_list:
+                    cmds = [h.get("command", "") for h in entry.get("hooks", [])]
+                    matches_cmd = hook_command in cmds
+                    matches_matcher = (
+                        matcher is None or str(entry.get("matcher", "")) == matcher
+                    )
+                    if matches_cmd and matches_matcher:
+                        continue
+                    kept.append(entry)
+                hook_list[:] = kept
+        return json.dumps(data, indent=2).encode("utf-8")
+
+    pattern = recipe.get("pattern")
+    if not pattern:
+        raise ValueError("config_conflict adopt: no target (tool/hook_command/pattern)")
+    text = before.decode("utf-8")
+    pat_lower = pattern.lower()
+    kept_lines = [ln for ln in text.splitlines(keepends=True)
+                  if pat_lower not in ln.lower()]
+    return "".join(kept_lines).encode("utf-8")
+
+
+def _resolve_hook_restore_paths(recipe: dict) -> tuple[Path, Path]:
+    """Map a hook_restore target name to its real plugin SOURCE and ~/.claude
+    DEST, per restorable kind. This is the correct mapping the old skill-side
+    ``cp $PLUGIN_DIR/config/{hook}`` got wrong — the scripts ship in the plugin
+    ``hooks/`` dir, the rules in ``rules/``; ``config/`` never holds either.
+
+      - rules ``*.md``              : {plugin}/rules/{name} -> ~/.claude/rules/sweetclaude/{name}
+      - hook script ``*.sh`` / json : {plugin}/hooks/{name} -> ~/.claude/hooks/sweetclaude/{name}
+
+    An explicit ``source``/``dest`` on the recipe overrides the derivation.
+    """
+    name = recipe.get("hook", "")
+    if not name:
+        raise ValueError("hook_restore: no hook/target name in recipe")
+
+    explicit_source = recipe.get("source")
+    explicit_dest = recipe.get("dest")
+    if explicit_source and explicit_dest:
+        return Path(explicit_source), Path(explicit_dest)
+
+    plugin_dir = Path(recipe.get("plugin_dir", ""))
+    home_claude = Path.home() / ".claude"
+
+    if name.endswith(".md"):
+        source = plugin_dir / "rules" / name
+        dest = home_claude / "rules" / "sweetclaude" / name
+    else:
+        # hook scripts (.sh) and the hooks.json / hooks-manifest.json configs
+        source = plugin_dir / "hooks" / name
+        dest = home_claude / "hooks" / "sweetclaude" / name
+    return source, dest
 
 
 def execute_recipe(
@@ -2577,9 +3304,14 @@ def execute_recipe(
                 rows = []
             conn.close()
             child_statuses = [r["status"] for r in rows]
+            before = parent_path.read_bytes()
             from status import sync_parent_status as _sync
             changed = _sync(str(parent_path), child_statuses, "doctor-auto-fix", project_dir=str(project_dir))
-            return RecipeResult("", "", None, None, True, None if changed else "already in sync")
+            if not changed:
+                h = _hash_bytes(before)
+                return RecipeResult("", h, h, None, True, "already in sync")
+            after = parent_path.read_bytes()
+            return _record_mutation(archive_path, parent_path, before, after)
         except Exception as e:
             return RecipeResult("", "", None, None, False, str(e))
 
@@ -2591,11 +3323,214 @@ def execute_recipe(
         if not target_path.exists():
             return RecipeResult("", "", None, None, False, f"File not found: {target_path}")
         try:
+            before = target_path.read_bytes()
             from format_converter import convert_file
             result = convert_file(target_path, dry_run=False, backup=True)
-            return RecipeResult("", "", None, None, result["action"] == "converted")
+            if result["action"] == "converted":
+                after = target_path.read_bytes()
+                return _record_mutation(archive_path, target_path, before, after)
+            h = _hash_bytes(before)
+            return RecipeResult("", h, h, None, False)
         except Exception as e:
             return RecipeResult("", "", None, None, False, str(e))
+
+    if action == "config_conflict":
+        choice = recipe.get("choice", "")
+        # keep = leave SweetClaude's rule aside; both = keep both rules.
+        # Neither mutates the file: no-op success, no backup.
+        if choice != "adopt":
+            return RecipeResult("", "", None, None, True, f"no-op ({choice or 'no choice'})")
+        # adopt = apply SweetClaude's rule: a targeted edit of the offending
+        # file. The recipe carries an explicit real path because the logical
+        # source names ("~/.claude/settings.json") do not resolve under
+        # project_dir.
+        target_path = Path(recipe.get("path") or recipe.get("file", ""))
+        if not target_path.is_absolute():
+            target_path = project_dir / target_path
+        if not target_path.exists():
+            return RecipeResult("", "", None, None, False, f"File not found: {target_path}")
+        try:
+            before = target_path.read_bytes()
+            after = _config_conflict_adopt(before, recipe)
+            if after == before:
+                h = _hash_bytes(before)
+                return RecipeResult("", h, h, None, True, "already resolved")
+            _atomic_write(target_path, after)
+            return _record_mutation(archive_path, target_path, before, after)
+        except Exception as e:
+            return RecipeResult("", "", None, None, False, str(e))
+
+    if action == "yaml_repair":
+        choice = recipe.get("choice", "")
+        target_path = Path(recipe.get("path") or recipe.get("file", ""))
+        if not target_path.is_absolute():
+            target_path = project_dir / target_path
+
+        # manual = the skill shows the file for hand-editing. No-op success,
+        # no backup (nothing changed).
+        if choice == "manual":
+            return RecipeResult("", "", None, None, True, "no-op (manual)")
+
+        # restore = revert to a prior run's archived before-image. Delegate to
+        # the existing restore path against this run's archive.
+        if choice == "restore":
+            res = restore(project_dir, archive_path, file=str(target_path))
+            if res["restored"]:
+                return RecipeResult("", "", None, None, True, f"restored {res['restored']}")
+            return RecipeResult(
+                "", "", None, None, False,
+                "no archived before-image to restore from — choose manual edit",
+            )
+
+        # auto = deterministic delimiter repair, routed through _record_mutation
+        # so it is backed up, diffed, and reversible. The repair refuses to
+        # guess on ambiguous content (raises -> success=False, manual signal).
+        if choice == "auto":
+            if not target_path.exists():
+                return RecipeResult("", "", None, None, False, f"File not found: {target_path}")
+            try:
+                before = target_path.read_bytes()
+                after = _yaml_repair_auto(before)
+            except Exception as e:
+                # Ambiguous / unrecoverable: do not mutate, signal manual edit.
+                return RecipeResult("", "", None, None, False, str(e))
+            if after == before:
+                h = _hash_bytes(before)
+                return RecipeResult("", h, h, None, True, "already valid")
+            _atomic_write(target_path, after)
+            return _record_mutation(archive_path, target_path, before, after)
+
+        return RecipeResult("", "", None, None, False, f"unknown yaml_repair choice: {choice!r}")
+
+    if action == "hook_restore":
+        # Restore a SweetClaude hook script, hooks config, or rules file from
+        # the plugin source to its ~/.claude destination. Resolves the correct
+        # per-kind source/dest (the old skill-side cp used the wrong path), and
+        # routes any overwrite through _record_mutation so a clobbered dest is
+        # backed up, diffed, and reversible via `restore` — important because
+        # these ~/.claude files live outside the project git safety branch.
+        try:
+            source, dest = _resolve_hook_restore_paths(recipe)
+        except Exception as e:
+            return RecipeResult("", "", None, None, False, str(e))
+        if not source.is_file():
+            return RecipeResult(
+                "", "", None, None, False,
+                f"hook_restore source not found: {source}",
+            )
+        try:
+            after = source.read_bytes()
+        except OSError as e:
+            return RecipeResult("", "", None, None, False, str(e))
+        before = dest.read_bytes() if dest.is_file() else b""
+        # Thread the resolved dest back onto the recipe so the auto_fix recorder
+        # logs the real mutated path (it reads recipe["file"]); restore keys on
+        # that path to find this run's before-image.
+        recipe["file"] = str(dest)
+        if before == after:
+            h = _hash_bytes(before)
+            return RecipeResult("", h, h, None, True, "already up to date")
+        _atomic_write(dest, after)
+        return _record_mutation(archive_path, dest, before, after)
+
+    if action == "file_move":
+        # Relocate a misfiled artifact (src -> dest). Emitted by storage-lint
+        # for done-status items in the wrong folder. A move does NOT fit the
+        # content-revert restore model: backing up src and writing it back to
+        # src would leave BOTH src and dest. So the move is recorded as a move —
+        # the recorded file_path is src (its before-image is src's content) and
+        # a `moved_to` marker carries the dest — and `restore` REVERSES it
+        # (delete dest, recreate src from its before-image) rather than
+        # content-reverting.
+        src = Path(recipe.get("src", ""))
+        if not src.is_absolute():
+            src = project_dir / src
+        dest = Path(recipe.get("dest", ""))
+        if not dest.is_absolute():
+            dest = project_dir / dest
+        if not (_resolve_within(src, project_dir) and _resolve_within(dest, project_dir)):
+            return RecipeResult("", "", None, None, False,
+                                f"file_move path outside project: src={src} dest={dest}")
+        if not src.is_file():
+            return RecipeResult("", "", None, None, False, f"file_move source not found: {src}")
+        try:
+            before = src.read_bytes()
+            # Back up src's content (keyed to src) and diff src -> empty so the
+            # move is reversible through the same archive contract.
+            recorded = _record_mutation(archive_path, src, before, b"")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dest))
+        except Exception as e:
+            return RecipeResult("", "", None, None, False, str(e))
+        # Thread the real moved paths back onto the recipe so the auto_fix
+        # recorder logs file_path=src (restore keys its before-image on that)
+        # and moved_to=dest (restore reverses the move using it).
+        recipe["file"] = str(src)
+        recipe["moved_to"] = str(dest)
+        return RecipeResult("", recorded.before_hash, recorded.after_hash,
+                            recorded.backup_path, True)
+
+    if action == "renumber_duplicate":
+        # Resolve a duplicate id: rewrite the chosen file's `id` frontmatter to
+        # new_id AND rename OLD-ID*.md -> NEW-ID*.md so the filename matches.
+        # This is a content edit + rename, so — like file_move — it does NOT fit
+        # the content-revert restore model: the file's path changes, so writing
+        # the before-image back to the new path would leave BOTH names. It is
+        # recorded move-aware: the before-image is keyed to the ORIGINAL path
+        # (and holds the OLD id), and a `moved_to` marker carries the renamed
+        # path. `restore` then reverses BOTH — delete the renamed file, recreate
+        # the original path from its before-image (which restores the old id).
+        target = Path(recipe.get("file", ""))
+        if not target.is_absolute():
+            target = project_dir / target
+        if not _resolve_within(target, project_dir):
+            return RecipeResult("", "", None, None, False,
+                                f"renumber_duplicate path outside project: {target}")
+        old_id = recipe.get("old_id", "")
+        new_id = recipe.get("new_id", "")
+        if not old_id or not new_id:
+            return RecipeResult("", "", None, None, False,
+                                "renumber_duplicate requires old_id and new_id")
+        if old_id == new_id:
+            return RecipeResult("", "", None, None, False,
+                                f"new_id must differ from old_id: {old_id}")
+        if not target.is_file():
+            return RecipeResult("", "", None, None, False,
+                                f"renumber_duplicate file not found: {target}")
+        try:
+            before = target.read_bytes()
+            text = before.decode("utf-8")
+            parts = text.split("---", 2)
+            if len(parts) < 3:
+                return RecipeResult("", "", None, None, False,
+                                    "No frontmatter delimiters found")
+            fm_data = yaml.safe_load(parts[1]) or {}
+            fm_data["id"] = new_id
+            new_fm = yaml.safe_dump(fm_data, default_flow_style=False)
+            after_content = f"---\n{new_fm}---{parts[2]}".encode("utf-8")
+            # Determine the renamed path: swap old_id's PREFIX-N for new_id's in
+            # the filename. If the filename carries no id (no swap), keep it.
+            final_path = target
+            if old_id in target.name:
+                final_path = target.parent / target.name.replace(old_id, new_id, 1)
+            # Back up the ORIGINAL content keyed to the original path, and diff
+            # original -> empty so the rename+rewrite is reversible through the
+            # same archive contract file_move uses.
+            recorded = _record_mutation(archive_path, target, before, b"")
+            _atomic_write(final_path, after_content)
+            if final_path != target:
+                target.unlink()
+        except Exception as e:
+            return RecipeResult("", "", None, None, False, str(e))
+        # Thread the real paths back onto the recipe so the auto_fix recorder
+        # logs file_path=original (restore keys its before-image on that) and
+        # moved_to=renamed (restore reverses the rename using it). When the
+        # filename did not change, moved_to == file and restore degrades to a
+        # plain content revert (which still restores the old id).
+        recipe["file"] = str(target)
+        recipe["moved_to"] = str(final_path)
+        return RecipeResult("", recorded.before_hash, _hash_bytes(after_content),
+                            recorded.backup_path, True)
 
     if action == "run_script":
         cmd = recipe.get("cmd", [])
@@ -2606,35 +3541,59 @@ def execute_recipe(
             raise ValueError(
                 f"Script '{script_name}' not in allowlist: {RUN_SCRIPT_ALLOWLIST}"
             )
+        # The allowlist matches only the basename, so it alone would pass a
+        # traversal path like "../../evil/cache.py". Require the resolved script
+        # to live in a trusted root — the framework scripts dir, ~/.claude (where
+        # the real hook scripts live), or the project tree doctor operates on — so
+        # a crafted cmd[1] cannot escape to run an arbitrary file (e.g. /etc,
+        # ~/.ssh, /tmp) under an allowlisted name.
+        if not _resolve_within(
+            Path(cmd[1]), _SCRIPTS_DIR, Path.home() / ".claude", project_dir
+        ):
+            raise ValueError(f"run_script path outside trusted roots: {cmd[1]}")
+        # `regenerates` names the file(s) the script rewrites. Capture their
+        # bytes BEFORE running so each changed target is routed through
+        # _record_mutation (before/ image + diff) and is reversible by restore.
+        # Absent/empty: fall back to fire-and-forget, honestly reversible:false.
+        targets: list[Path] = []
+        before_map: dict[Path, bytes] = {}
+        for rel in (recipe.get("regenerates") or []):
+            tp = Path(rel)
+            if not tp.is_absolute():
+                tp = project_dir / tp
+            targets.append(tp)
+            before_map[tp] = tp.read_bytes() if tp.exists() else b""
         result = subprocess.run(
             cmd + recipe.get("args", []),
             cwd=project_dir, capture_output=True, timeout=30,
         )
-        return RecipeResult(
-            finding_id="",
-            before_hash="",
-            after_hash=None,
-            backup_path=None,
-            success=result.returncode == 0,
-            error=result.stderr.decode() if result.returncode != 0 else None,
-        )
+        if result.returncode != 0:
+            return RecipeResult(
+                finding_id="", before_hash="", after_hash=None,
+                backup_path=None, success=False, error=result.stderr.decode(),
+            )
+        return _record_subprocess_mutations(archive_path, recipe, targets, before_map)
 
     if action == "rebuild_cache":
         cache_script = _SCRIPTS_DIR / "cache.py"
         if not cache_script.exists():
             raise DependencyMissing("cache.py not found")
+        # Capture the cache file's bytes before the rebuild so it is backed up,
+        # diffed, and reverted byte-identically by restore. A missing cache
+        # pre-rebuild is a create (before = b""): restore reverts to empty.
+        cache_path = project_dir / ".sweetclaude" / "cache" / "roadmap.db"
+        before = cache_path.read_bytes() if cache_path.exists() else b""
         result = subprocess.run(
             [sys.executable, str(cache_script), "--project-dir", str(project_dir), "--rebuild"],
             cwd=project_dir, capture_output=True, timeout=30,
         )
-        return RecipeResult(
-            finding_id="",
-            before_hash="",
-            after_hash=None,
-            backup_path=None,
-            success=result.returncode == 0,
-            error=result.stderr.decode() if result.returncode != 0 else None,
-        )
+        if result.returncode != 0:
+            return RecipeResult(
+                finding_id="", before_hash="", after_hash=None,
+                backup_path=None, success=False, error=result.stderr.decode(),
+            )
+        return _record_subprocess_mutations(
+            archive_path, recipe, [cache_path], {cache_path: before})
 
     if action == "create_dir":
         target = Path(recipe["path"])
@@ -2657,25 +3616,14 @@ def execute_recipe(
         h = _hash_bytes(content)
         return RecipeResult("", h, h, None, True)
 
-    before_hash = backup_content(archive_path, file_path, content)
-
     if action == "delete_file":
         if file_path.exists():
             file_path.unlink()
-        write_diff(archive_path, file_path, content, b"")
-        return RecipeResult(
-            "", before_hash, _hash_bytes(b""),
-            archive_path / "before" / _sanitize_path(str(file_path)), True,
-        )
+        return _record_mutation(archive_path, file_path, content, b"")
 
     new_content = _apply_transform(content, recipe, project_dir)
     _atomic_write(file_path, new_content)
-    after_hash = _hash_bytes(new_content)
-    write_diff(archive_path, file_path, content, new_content)
-    return RecipeResult(
-        "", before_hash, after_hash,
-        archive_path / "before" / _sanitize_path(str(file_path)), True,
-    )
+    return _record_mutation(archive_path, file_path, content, new_content)
 
 
 # ---------------------------------------------------------------------------
@@ -2704,7 +3652,7 @@ def auto_fix(
             result.finding_id = f["id"]
             if result.before_hash != result.after_hash:
                 fixed_categories.add(f["category"])
-            actions.append({
+            entry = {
                 "action": "auto-fix",
                 "finding_id": f["id"],
                 "category": f["category"],
@@ -2713,7 +3661,31 @@ def auto_fix(
                 "before_hash": result.before_hash,
                 "after_hash": result.after_hash,
                 "timestamp": _now_iso(),
-            })
+            }
+            # file_move threads a moved_to marker onto the recipe; carry it into
+            # the recorded action so `restore` can reverse the move (delete the
+            # dest, recreate src from its before-image) instead of content-
+            # reverting it. Plain actions never set this.
+            if recipe.get("moved_to"):
+                entry["moved_to"] = recipe["moved_to"]
+            actions.append(entry)
+            # Subprocess actions (run_script/rebuild_cache) may regenerate more
+            # than one file. The primary changed target is recorded above via
+            # recipe["file"]; each additional changed target is threaded onto
+            # recipe["extra_files"] by _record_subprocess_mutations. Emit one
+            # extra action entry per file so `restore` reverses every backed-up
+            # target, not just the first.
+            for extra_file in recipe.get("extra_files", []):
+                actions.append({
+                    "action": "auto-fix",
+                    "finding_id": f["id"],
+                    "category": f["category"],
+                    "description": f["summary"],
+                    "file_path": extra_file,
+                    "before_hash": "",
+                    "after_hash": None,
+                    "timestamp": _now_iso(),
+                })
         except Exception as e:
             actions.append({
                 "action": "auto-fix-failed",
@@ -2733,6 +3705,104 @@ def auto_fix(
         "actions": actions,
         "post_fix_categories": sorted(fixed_categories),
     }
+
+
+# ---------------------------------------------------------------------------
+# Restore — reverse mutations from a run archive's before/ images
+# ---------------------------------------------------------------------------
+
+def restore(
+    project_dir: Path, archive_path: Path,
+    file: str | None = None, restore_all: bool = False,
+) -> dict:
+    """Reconstruct files from a doctor run's archived before/ images.
+
+    The inverse of ``_record_mutation``: reads the run's recorded actions
+    (manifest.json, falling back to actions.json), and for the requested
+    target(s) writes the archived before-image back over the live file. A
+    single file (``file=``) or the whole run (``restore_all=True``) can be
+    restored. Actions with no archived before-image (e.g. cache/derived
+    ``reversible:false`` mutations) are reported as skipped rather than failing.
+    """
+    project_dir = Path(project_dir)
+    archive_path = Path(archive_path)
+
+    actions: list[dict] = []
+    manifest = archive_path / "manifest.json"
+    actions_file = archive_path / "actions.json"
+    if manifest.exists():
+        try:
+            actions = json.loads(manifest.read_text()).get("actions", [])
+        except (json.JSONDecodeError, OSError):
+            actions = []
+    if not actions and actions_file.exists():
+        try:
+            actions = json.loads(actions_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            actions = []
+
+    target = None
+    if file is not None:
+        target = Path(file)
+        if not target.is_absolute():
+            target = project_dir / target
+
+    restored: list[str] = []
+    skipped: list[dict] = []
+    seen: set[str] = set()
+    for a in actions:
+        fp = a.get("file_path", "")
+        if not fp:
+            continue
+        resolved = Path(fp)
+        if not resolved.is_absolute():
+            resolved = project_dir / resolved
+        if target is not None:
+            if resolved != target:
+                continue
+        elif not restore_all:
+            continue
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        # Containment: restore only writes inside the project tree or the user's
+        # ~/.claude install (hook_restore legitimately targets the latter). A
+        # crafted archive with file_path/moved_to escaping those roots is refused
+        # rather than allowed to delete/overwrite an arbitrary path.
+        roots = (project_dir, Path.home() / ".claude")
+        moved_to = a.get("moved_to", "")
+        dest = None
+        if moved_to:
+            dest = Path(moved_to)
+            if not dest.is_absolute():
+                dest = project_dir / dest
+        if not _resolve_within(resolved, *roots) or (
+            dest is not None and not _resolve_within(dest, *roots)
+        ):
+            skipped.append({"file": str(resolved), "reason": "outside allowed roots"})
+            continue
+        backup = archive_path / "before" / _sanitize_path(str(resolved))
+        if backup.exists():
+            data = backup.read_bytes()
+            # Move-aware rollback: a file_move action records file_path=src (its
+            # before-image is src's content) plus a moved_to=dest marker. A move
+            # cannot be content-reverted — rewriting src alone would leave BOTH
+            # src and dest. Reverse it: remove dest first, then recreate src
+            # from its before-image. Plain (non-move) actions have no marker and
+            # keep the existing content-revert behavior.
+            if dest is not None and dest.exists():
+                dest.unlink()
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write(resolved, data)
+            restored.append(str(resolved))
+        else:
+            skipped.append({
+                "file": str(resolved),
+                "reason": "no archived before-image (reversible:false)",
+            })
+
+    return {"restored": restored, "skipped": skipped}
 
 
 # ---------------------------------------------------------------------------
@@ -2847,6 +3917,24 @@ def persist(
     auto_fixed = sum(1 for a in all_actions if a.get("action") == "auto-fix")
     user_fixed = sum(1 for a in all_actions if a.get("action") == "prompted-fix")
     skipped = sum(1 for a in all_actions if a.get("action") == "skip")
+    # Deferred, backed-up suppression prune (P2/P4): scan computes the resolved
+    # set read-only; the actual ledger write happens here, in the execute phase,
+    # routed through the archive. Only when the current finding set is known
+    # (scan_findings passed) — otherwise pruning could clobber live entries.
+    # Record it as an action so the before-image is restore-reversible (S6).
+    suppressions_pruned: list[str] = []
+    if scan_findings is not None:
+        current_finding_ids = {f.get("id") for f in scan_findings if f.get("id")}
+        suppressions_pruned = sorted(
+            prune_resolved_suppressions(project_dir, archive_path, current_finding_ids)
+        )
+        if suppressions_pruned:
+            all_actions.append({
+                "action": "suppression-prune",
+                "file_path": str(_suppressions_path(project_dir)),
+                "pruned": suppressions_pruned,
+            })
+
     scan_findings = scan_findings or []
     severity_counts = {
         "errors": sum(1 for f in scan_findings if f.get("severity") == "error"),
@@ -2860,6 +3948,7 @@ def persist(
         "version": _resolve_installed_version() or "unknown",
         "safety_branch": safety_branch,
         "actions": all_actions,
+        "suppressions_pruned": suppressions_pruned,
         "post_fix_findings": [],
         "summary": {
             "auto_fixed": auto_fixed,
@@ -3032,12 +4121,21 @@ def main(argv: list[str] | None = None) -> int:
     p_record = sub.add_parser("record-action")
     p_record.add_argument("--archive-dir", required=True, type=Path)
 
+    p_suppress = _add("suppress")
+    p_suppress.add_argument("--finding-id", required=True)
+    p_suppress.add_argument("--reason", default=None)
+
     _add("dry-run")
 
     p_persist = _add("persist")
     p_persist.add_argument("--archive-dir", required=True, type=Path)
     p_persist.add_argument("--menu-preference", default=None)
     p_persist.add_argument("--safety-branch", default=None)
+
+    p_restore = _add("restore")
+    p_restore.add_argument("--archive-dir", required=True, type=Path)
+    p_restore.add_argument("--file", default=None)
+    p_restore.add_argument("--all", action="store_true", default=False)
 
     _add("prune-archives")
     _add("session-check")
@@ -3098,6 +4196,13 @@ def main(argv: list[str] | None = None) -> int:
             action = json.loads(sys.stdin.read())
             _emit(record_action(args.archive_dir.resolve(), action))
 
+        elif args.cmd == "suppress":
+            _emit(suppress_finding(
+                args.project_dir.resolve(),
+                args.finding_id,
+                reason=args.reason,
+            ))
+
         elif args.cmd == "dry-run":
             findings = json.loads(sys.stdin.read())
             if isinstance(findings, dict):
@@ -3118,6 +4223,14 @@ def main(argv: list[str] | None = None) -> int:
                 safety_branch=args.safety_branch,
             )
             _emit(result)
+
+        elif args.cmd == "restore":
+            _emit(restore(
+                args.project_dir.resolve(),
+                args.archive_dir.resolve(),
+                file=args.file,
+                restore_all=args.all,
+            ))
 
         elif args.cmd == "prune-archives":
             pruned = prune_archives(args.project_dir.resolve())

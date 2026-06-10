@@ -1,0 +1,62 @@
+name: Release on tag
+
+# Publish a GitHub release whenever a version tag is pushed, so the releases
+# page never drifts behind the tags again. Notes come from CHANGELOG.md (the
+# section for the tag's version), falling back to GitHub's auto-generated notes.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Least privilege: read by default, escalate only the release job to write.
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # required to create the release for the pushed tag
+    steps:
+      - name: Checkout (full history for CHANGELOG)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Create release from tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+
+          # Idempotent: never clobber an existing release.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release already exists for $TAG — nothing to do."
+            exit 0
+          fi
+
+          # Pull this version's CHANGELOG section: lines between its "## [x.y.z]"
+          # header and the next "## " header.
+          notes="$(awk -v v="[$version]" '
+            $0 ~ "^## " && index($0, v) { grab=1; next }
+            grab && /^## / { exit }
+            grab { print }
+          ' CHANGELOG.md)"
+
+          # Pre-release for any tag carrying a -beta / -rc / -alpha suffix.
+          prerelease=()
+          case "$TAG" in
+            *-beta*|*-rc*|*-alpha*) prerelease=(--prerelease) ;;
+          esac
+
+          if [ -n "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
+            printf '%s\n' "$notes" > "$RUNNER_TEMP/notes.md"
+            gh release create "$TAG" --title "$TAG" \
+              --notes-file "$RUNNER_TEMP/notes.md" --verify-tag "${prerelease[@]}"
+          else
+            # No CHANGELOG section — fall back to auto-generated notes.
+            gh release create "$TAG" --title "$TAG" \
+              --generate-notes --verify-tag "${prerelease[@]}"
+          fi
