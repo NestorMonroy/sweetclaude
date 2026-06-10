@@ -4,6 +4,29 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.7-beta] — 2026-06-10 (4.x beta channel)
+
+### Fixed — doctor dead-end resolution paths
+
+- **Schema drift auto-fix.** Doctor now auto-fixes v1→v2 schema drift via the
+  migration runner instead of marking it report-only and sending the user in
+  circles between `/sweetclaude:doctor`, `/sweetclaude:update`, and
+  `/sweetclaude:recover` (none of which could actually fix it).
+- **skills.yaml v1 schema auto-fix.** Skills file schema upgrades now route
+  through the migration runner instead of referencing a non-existent bootstrap
+  script that silently failed.
+- **skills.yaml missing finding corrected.** Missing skills.yaml is now
+  report-only with actionable guidance instead of offering a prompted fix that
+  called the wrong script and silently did nothing.
+- **Broken migration chains stay report-only.** Schema drift with broken
+  migration chains (out-of-support-window) correctly falls back to report-only
+  instead of offering an auto-fix that would fail.
+- **`runner.py` added to executor allowlist.** The migration runner can now
+  execute through Doctor's backup pipeline (before-image + diff, reversible
+  via restore).
+
+---
+
 ## [4.2.6-beta] — 2026-06-10 (4.x beta channel)
 
 ### Added — compatibility mode graduation

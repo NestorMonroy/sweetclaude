@@ -124,6 +124,7 @@ _DATETIME_FIELDS = frozenset({
 RUN_SCRIPT_ALLOWLIST = {
     "cache.py",
     "generate-session-state.sh",
+    "runner.py",
 }
 
 # Actions execute_recipe can actually perform. Any finding presented as
@@ -502,16 +503,33 @@ def check_state_integrity(state: ProjectState) -> list[Finding]:
     if state.sweetclaude_yaml:
         schema_v = state.sweetclaude_yaml.get("phase_schema_version")
         if schema_v is not None and schema_v != 2:
-            findings.append(Finding(
-                id="state-integrity:schema-version:sweetclaude.yaml",
-                category="state_integrity",
-                severity="warning",
-                summary="Config file is on an old schema version",
-                detail=f"phase_schema_version={schema_v}, expected 2",
-                file_paths=[str(sc_yaml_path)],
-                fix_type="report-only",
-                fix_recipe={},
-            ))
+            if state.migration_runner_path:
+                findings.append(Finding(
+                    id="state-integrity:schema-version:sweetclaude.yaml",
+                    category="state_integrity",
+                    severity="warning",
+                    summary="Config file is on an old schema version",
+                    detail=f"phase_schema_version={schema_v}, expected 2",
+                    file_paths=[str(sc_yaml_path)],
+                    fix_type="auto",
+                    fix_recipe={"action": "run_script",
+                                "cmd": [sys.executable, str(state.migration_runner_path),
+                                        "--project-dir", str(state.project_dir),
+                                        "--file", "sweetclaude.yaml"],
+                                "args": [],
+                                "regenerates": [str(sc_yaml_path)]},
+                ))
+            else:
+                findings.append(Finding(
+                    id="state-integrity:schema-version:sweetclaude.yaml",
+                    category="state_integrity",
+                    severity="warning",
+                    summary="Config file is on an old schema version",
+                    detail=f"phase_schema_version={schema_v}, expected 2",
+                    file_paths=[str(sc_yaml_path)],
+                    fix_type="report-only",
+                    fix_recipe={},
+                ))
 
         fw = state.sweetclaude_yaml.get("framework", {})
         stored_version = fw.get("installed_version")
@@ -847,6 +865,7 @@ def check_migration_currency(state: ProjectState) -> list[Finding]:
             if r.returncode == 0:
                 for line in r.stdout.splitlines():
                     line = line.strip()
+                    chain = ""
                     if line.startswith("FINDING|"):
                         parts = line.split("|")
                         file_key = parts[1] if len(parts) > 1 else "unknown"
@@ -861,17 +880,36 @@ def check_migration_currency(state: ProjectState) -> list[Finding]:
                         detail = f"Schema drift: {file_key} is missing and cannot be migrated"
                     else:
                         continue
-                    findings.append(Finding(
-                        id=f"migration-currency:schema-drift:{file_key}",
-                        category="migration_currency",
-                        severity="warning",
-                        summary="A state file needs to be upgraded to the current schema",
-                        detail=detail,
-                        file_paths=[file_key],
-                        fix_type="prompted",
-                        fix_recipe={"action": "prompt", "type": "migration",
-                                    "script": "runner.py", "args": []},
-                    ))
+                    chain_ok = chain.endswith("ok") if chain else False
+                    if chain_ok and not line.startswith("MISSING|"):
+                        runner_path = str(state.migration_runner_path)
+                        state_file = str(state.project_dir / ".sweetclaude" / "state" / file_key)
+                        findings.append(Finding(
+                            id=f"migration-currency:schema-drift:{file_key}",
+                            category="migration_currency",
+                            severity="warning",
+                            summary="A state file needs to be upgraded to the current schema",
+                            detail=detail,
+                            file_paths=[file_key],
+                            fix_type="auto",
+                            fix_recipe={"action": "run_script",
+                                        "cmd": [sys.executable, runner_path,
+                                                "--project-dir", str(state.project_dir),
+                                                "--file", file_key],
+                                        "args": [],
+                                        "regenerates": [state_file]},
+                        ))
+                    else:
+                        findings.append(Finding(
+                            id=f"migration-currency:schema-drift:{file_key}",
+                            category="migration_currency",
+                            severity="warning",
+                            summary="A state file needs to be upgraded to the current schema",
+                            detail=detail,
+                            file_paths=[file_key],
+                            fix_type="report-only",
+                            fix_recipe={},
+                        ))
         except (subprocess.TimeoutExpired, OSError):
             pass
 
@@ -1440,26 +1478,41 @@ def check_onboarding_state(state: ProjectState) -> list[Finding]:
                 category="onboarding_state",
                 severity="info",
                 summary="Skills configuration hasn't been set up yet",
-                detail=f"skills.yaml missing at {skills_path}",
+                detail=f"skills.yaml missing at {skills_path}; run /sweetclaude to bootstrap",
                 file_paths=[str(skills_path)],
-                fix_type="prompted",
-                fix_recipe={"action": "prompt", "type": "bootstrap",
-                            "script": "generate-session-state.sh"},
+                fix_type="report-only",
+                fix_recipe={},
             ))
     elif state.skills_yaml:
         schema = state.skills_yaml.get("schema_version")
         if schema is not None and schema < 2:
-            findings.append(Finding(
-                id="onboarding-state:schema-v1:skills.yaml",
-                category="onboarding_state",
-                severity="warning",
-                summary="Skills file needs upgrading to the current format",
-                detail=f"skills.yaml schema_version={schema}, expected >=2",
-                file_paths=[str(skills_path)],
-                fix_type="prompted",
-                fix_recipe={"action": "prompt", "type": "bootstrap",
-                            "script": "generate-session-state.sh"},
-            ))
+            if state.migration_runner_path:
+                findings.append(Finding(
+                    id="onboarding-state:schema-v1:skills.yaml",
+                    category="onboarding_state",
+                    severity="warning",
+                    summary="Skills file needs upgrading to the current format",
+                    detail=f"skills.yaml schema_version={schema}, expected >=2",
+                    file_paths=[str(skills_path)],
+                    fix_type="auto",
+                    fix_recipe={"action": "run_script",
+                                "cmd": [sys.executable, str(state.migration_runner_path),
+                                        "--project-dir", str(state.project_dir),
+                                        "--file", "skills.yaml"],
+                                "args": [],
+                                "regenerates": [str(skills_path)]},
+                ))
+            else:
+                findings.append(Finding(
+                    id="onboarding-state:schema-v1:skills.yaml",
+                    category="onboarding_state",
+                    severity="warning",
+                    summary="Skills file needs upgrading to the current format",
+                    detail=f"skills.yaml schema_version={schema}, expected >=2",
+                    file_paths=[str(skills_path)],
+                    fix_type="report-only",
+                    fix_recipe={},
+                ))
 
     return findings
 

@@ -395,7 +395,10 @@ class TestStateIntegrity:
         f = findings[0]
         assert f.id == "state-integrity:schema-version:sweetclaude.yaml"
         assert f.severity == "warning"
-        assert f.fix_type == "report-only"
+        assert f.fix_type in ("auto", "report-only")
+        if f.fix_type == "auto":
+            assert f.fix_recipe["action"] == "run_script"
+            assert "runner.py" in f.fix_recipe["cmd"][1]
 
     # ------------------------------------------------------------------
     # Scenario: installed_version drifts from installed_plugins.json
@@ -1935,7 +1938,9 @@ class TestMigrationCurrency:
         first = schema_findings[0]
         assert first.id == "migration-currency:schema-drift:sweetclaude.yaml"
         assert first.severity == "warning"
-        assert first.fix_type == "prompted"
+        assert first.fix_type == "auto"
+        assert first.fix_recipe["action"] == "run_script"
+        assert "runner.py" in first.fix_recipe["cmd"][1]
 
     # Scenario: Migration runner reports zero drift (DRIFT_COUNT=0)
     def test_migration_runner_reports_zero_drift_produces_no_finding(
@@ -3339,14 +3344,8 @@ class TestOnboardingState:
         assert f.severity == "info", (
             f"Expected severity 'info', got: {f.severity}"
         )
-        assert f.fix_type == "prompted", (
-            f"Expected fix_type 'prompted', got: {f.fix_type}"
-        )
-        assert f.fix_recipe["action"] == "prompt", (
-            f"Expected fix_recipe action 'prompt', got: {f.fix_recipe.get('action')}"
-        )
-        assert f.fix_recipe["type"] == "bootstrap", (
-            f"Expected fix_recipe type 'bootstrap', got: {f.fix_recipe.get('type')}"
+        assert f.fix_type == "report-only", (
+            f"Expected fix_type 'report-only', got: {f.fix_type}"
         )
 
     # ------------------------------------------------------------------
@@ -3392,9 +3391,12 @@ class TestOnboardingState:
         assert f.severity == "warning", (
             f"Expected severity 'warning', got: {f.severity}"
         )
-        assert f.fix_type == "prompted", (
-            f"Expected fix_type 'prompted', got: {f.fix_type}"
+        assert f.fix_type in ("auto", "report-only"), (
+            f"Expected fix_type 'auto' or 'report-only', got: {f.fix_type}"
         )
+        if f.fix_type == "auto":
+            assert f.fix_recipe["action"] == "run_script"
+            assert "runner.py" in f.fix_recipe["cmd"][1]
 
     # ------------------------------------------------------------------
     # Scenario: skills.yaml with schema_version 2 produces no finding
