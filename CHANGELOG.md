@@ -4,6 +4,75 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.8-beta] — 2026-06-10 (4.x beta channel)
+
+### Fixed — maintenance dead ends closed end-to-end
+
+This release closes the class of bug where Doctor, Update, Recover, and
+Bootstrap detected maintenance issues but never connected the user to a
+resolution — the "Doctor says run Recover, Recover says nothing to do" loop.
+Every fix was driven by failing end-to-end tests derived from three real
+projects, and acceptance was verified by those projects' session starts
+coming up clean, not by the unit suite alone.
+
+- **Guard names graduation blockers.** New `graduation-blocked` guard status:
+  when a compatibility-mode project fails graduation validation on fixable
+  blockers only (duplicate IDs, legacy type aliases, missing fields,
+  frontmatter parse errors), the guard lists each blocker with its resolution
+  instead of collapsing everything into the generic compatibility-mode
+  message. Structural blockers (old taxonomy prefixes, non-standard layout)
+  keep the project honestly in compatibility mode — those genuinely require a
+  layout-specific migration plan.
+- **`resolve-graduation-blocker` CLI** (recover_project.py): resolves
+  duplicate-ID blockers through Doctor's executor — archived, backed up,
+  reversible via `doctor restore`. It distinguishes *misnamed files* (the
+  filename id and frontmatter id disagree → rename the file to match its
+  frontmatter) from *true duplicates* (two files share a frontmatter id →
+  renumber the non-canonical copy). Renumbering a misnamed file would have
+  clobbered a valid id other artifacts reference.
+- **The no-op compatibility exit is gone.** Doctor's
+  `exit_compatibility_mode` prompt wrote a flag the guard never read for
+  status, so "exiting" changed nothing and the prompt re-offered itself every
+  scan, forever. Graduation is now the single exit from compatibility mode.
+- **Cross-location duplicate findings carry their fix.**
+  `storage-lint:cross-location-duplicate-id` supersedes the file-diagnostics
+  duplicate finding in scan dedup but was report-only with an empty recipe —
+  the dedup kept the dead end and dropped the resolution. It now carries the
+  full renumber recipe.
+- **Bootstrap routes every guard status.** Step 5b is now a two-mode
+  maintenance guard. The v3 hard-stop is unchanged; a new *advisory* mode
+  runs the guard at session start for v4 projects in compatibility/recovery
+  states — previously the guard never ran for them, so graduation
+  opportunities were invisible. Advisory mode also triggers when legacy
+  taxonomy files (`STORY-`/`BUG-`/`DEBT-`/`CHORE-`) exist despite state
+  claiming migration complete. Every status maps to an action or an honest
+  explanation; migrate is never recommended except for
+  `migration-may-be-needed`.
+- **Recover acknowledges schema drift.** `diagnose` now reports a
+  `state-schema-drift` failure class (informational — it never flips the
+  recovery route) instead of answering "no recovery needed" while state files
+  sit behind the registry schema. The next-step text names the drifted files
+  and points at the migration runner path that actually fixes them.
+- **Update's referral circle closed.** The PARTIAL-update halt told users to
+  run Doctor "or Recover" for drift; Recover correctly reports drift as
+  informational-only, so that referral looped. The halt now routes to Doctor
+  alone, which auto-fixes drift through the migration runner.
+
+### Added — dead-end totality test corpus
+
+- `tests/test_dead_end_totality.py`: 14 end-to-end tests locking the
+  detection-to-resolution contracts, built from the observed states of three
+  real projects (graduation-blocked with a hidden blocker, recovery-required
+  with legacy artifacts, healthy control). Includes a totality lint: every
+  guard status the capability manifest can emit must be handled in the
+  bootstrap skill.
+- Totality matrix audit: all 59 Doctor finding constructors classified
+  (auto/prompted findings all carry executable archived recipes; every
+  report-only finding verified as policy block, broken-chain fallback,
+  human-content, or owned by a reachable route).
+
+---
+
 ## [4.2.7-beta] — 2026-06-10 (4.x beta channel)
 
 ### Fixed — doctor dead-end resolution paths
