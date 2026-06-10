@@ -107,6 +107,24 @@ def _make_recovery_required_project(tmp_path: Path) -> Path:
     return project
 
 
+def _make_compat_mode_project(tmp_path: Path) -> Path:
+    """Typed legacy layout, stabilized without migration: structural blockers
+    (old prefixes) keep this honestly in compatibility mode."""
+    project = tmp_path / "project"
+    shutil.copytree(SYNCOG_FIXTURE, project)
+    (project / ".sweetclaude").mkdir(parents=True, exist_ok=True)
+    (project / ".sweetclaude" / "artifact-privacy.yaml").write_text(
+        "schema_version: 1\n"
+        "categories:\n"
+        "  product:\n"
+        "    privacy: private\n"
+        "    base_path: docs/product\n",
+        encoding="utf-8",
+    )
+    _write_state(project)
+    return project
+
+
 def _make_healthy_project(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     shutil.copytree(V4_COMPAT_FIXTURE, project)
@@ -182,16 +200,25 @@ def test_guard_reports_graduation_available_when_unblocked(tmp_path):
 # --- Step 2 contract: no fake exits, scan and route agree ---
 
 
-def test_scan_does_not_reoffer_exit_after_exit_applied(tmp_path):
-    project = _make_graduation_blocked_project(tmp_path)
+@pytest.mark.parametrize("make_project", [
+    _make_graduation_blocked_project,
+    _make_compat_mode_project,
+])
+def test_scan_never_offers_the_flag_write_exit(tmp_path, make_project):
+    project = make_project(tmp_path)
     scan = _scan(project)
 
     for finding in scan["findings"]:
         recipe = finding.get("fix_recipe") or {}
         key_path = recipe.get("key_path") or []
         assert "compatibility_exited" not in key_path, (
-            "scan re-offers the compatibility_exited flag write even though "
-            "the flag is already set and the guard never reads it for status"
+            "scan offers the compatibility_exited flag write, but the guard "
+            "never reads that flag for status — the only real exit is "
+            "graduation"
+        )
+        assert recipe.get("type") != "exit_compatibility_mode", (
+            "scan offers exit_compatibility_mode, a no-op exit; the only "
+            "real exit is graduation"
         )
 
 
@@ -296,6 +323,53 @@ def test_blocked_graduation_resolves_end_to_end(tmp_path):
     final_guard = _guard(project)
     assert final_guard["status"] == "ok"
     assert final_guard["project_shape"] == "current_layout"
+
+
+def test_misnamed_file_resolves_by_rename_not_renumber(tmp_path):
+    """Syncog's real case: the 'duplicate' is a filename collision where the
+    file's frontmatter id is a DIFFERENT, valid id. The fix is renaming the
+    file to match its frontmatter — renumbering would clobber a valid id that
+    other artifacts may reference."""
+    project = _make_graduation_ready_project(tmp_path)
+    misnamed = (
+        project / "docs" / "product" / "roadmap" / "issues" / "done"
+        / "ISSUE-003-misnamed.md"
+    )
+    misnamed.parent.mkdir(parents=True, exist_ok=True)
+    misnamed.write_text(
+        "---\nid: ISSUE-777\ntitle: Misnamed\ntype: bug-fix\nstatus: done\n"
+        "created: '2026-05-25T00:00:00+00:00'\n---\n\nMisnamed file.\n",
+        encoding="utf-8",
+    )
+
+    guard = _guard(project)
+    assert guard["status"] == "graduation-blocked"
+    blockers = {b["code"]: b for b in guard["graduation_blockers"]}
+    assert "duplicate-ids" in blockers
+
+    command = blockers["duplicate-ids"]["resolution"]["command"].replace(
+        "<project>", str(project),
+    )
+    result = subprocess.run(
+        command, shell=True, capture_output=True, text=True, cwd=str(REPO_ROOT),
+    )
+    assert result.returncode == 0, f"resolution failed: {result.stderr}"
+
+    renamed = misnamed.parent / "ISSUE-777-misnamed.md"
+    assert renamed.is_file(), "misnamed file must be renamed to its frontmatter id"
+    assert not misnamed.exists()
+    fm = yaml.safe_load(renamed.read_text().split("---", 2)[1])
+    assert fm["id"] == "ISSUE-777", "frontmatter id must be preserved, not renumbered"
+
+    keeper = project / "docs" / "product" / "backlog" / "done" / "ISSUE-003-completed-item.md"
+    keeper_fm = yaml.safe_load(keeper.read_text().split("---", 2)[1])
+    assert keeper_fm["id"] == "ISSUE-003", "the canonical copy must be untouched"
+
+    check = _run_json(RECOVER, "graduation-check", "--project-dir", str(project))
+    assert check["graduation_allowed"] is True
+
+    _run_json(RECOVER, "graduate", "--project-dir", str(project))
+    assert _guard(project)["status"] == "ok"
 
 
 # --- characterization locks: paths that already work must keep working ---

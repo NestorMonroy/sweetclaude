@@ -192,13 +192,47 @@ full scan — Doctor's prompted fixes may resolve them.
 
 On **Stay in compatibility mode**: continue to Step 1b.
 
+If `maintenance_route.status` is `graduation-blocked`, the project could
+graduate from compatibility mode but fixable validation blockers stand in the
+way. `maintenance_route.graduation_blockers` lists each blocker with `code`,
+`detail`, and a `resolution` (capability, and a `command` when a deterministic
+fix exists). Present **AskUserQuestion** before running the full scan:
+
+> Doctor found this project could graduate from compatibility mode, but
+> {N} blocker(s) must be fixed first:
+> {for each blocker: "- {code}: {detail}"}
+> Fixes run through Doctor's executor — archived and reversible.
+
+Options:
+- **Fix blockers, then graduate** — "Resolve each blocker, re-check, and graduate"
+- **Stay in compatibility mode** — "Continue as-is without fixing"
+
+On **Fix blockers, then graduate**: for each blocker with a
+`resolution.command`, substitute `<project>` with the project directory and run
+it. For `duplicate-ids`, the command renumbers the non-canonical copy by
+default; if the user should choose which copy is renumbered, ask via
+AskUserQuestion first and pass `--choose {file}`. For blockers without a
+command, fall through to the full scan — the matching findings carry prompted
+fixes (Step 6). After resolutions:
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py graduation-check --project-dir .
+```
+
+If `graduation_allowed` is true, execute graduation and report as in the
+`graduation-available` flow above. If blockers remain, report them and
+continue to Step 1b.
+
+On **Stay in compatibility mode**: continue to Step 1b.
+
 If `maintenance_route.status` is `compatibility-mode`, print a visible
 maintenance route block before the full scan:
 
 > Maintenance route: {message}
 > No migration is recommended for this project. Migration stays blocked while
-> compatibility mode is active — the scan will surface an
-> `exit_compatibility_mode` prompt (Step 6) if you want to unlock it.
+> compatibility mode is active: this project's blockers are structural (old
+> taxonomy prefixes or non-standard layout), which only a layout-specific
+> migration plan can clear. There is no flag or prompt that unlocks it.
 
 Then continue to Step 1b.
 
@@ -581,7 +615,6 @@ For fix types that require further user input or skill delegation:
   ```
   If the chosen file is genuinely absent the executor returns failure with a clear error — surface that, never a silent skip. Report the new-id assignment ("{old_id} → {new_id} in {file}"). Then record the prompted-fix action.
 
-- `exit_compatibility_mode`: The project is locked in compatibility mode (`maintenance_route.status == "compatibility-mode"`), so migration is blocked. The prompt recipe carries the `sweetclaude.yaml` path in `fix_recipe.file` and the nested `fix_recipe.key_path` (`["recovery", "taxonomy", "compatibility_exited"]`) plus `fix_recipe.value` (`true`). Confirm via AskUserQuestion (**Exit compatibility mode** = clear the lock so migration can proceed, **Stay in compatibility mode** = keep the current state, plus a "Something else" escape). On exit, apply through the executor by **reusing the `write_field` action** (no new transform — V7 tripwire) with that nested `key_path` and `value`, which sets `recovery.taxonomy.compatibility_exited: true` — the flag `recover_project` reads to unlock migration. Do not write the file directly; the reuse routes through the backup/diff pipeline (reversible via `restore`).
   ```bash
   echo '[{"id": "{finding_id}", "category": "compatibility_mode", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "write_field", "file": "{fix_recipe.file}", "key_path": ["recovery", "taxonomy", "compatibility_exited"], "value": true}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
   ```
@@ -705,8 +738,7 @@ Silent — do not report pruning results to the user.
   - File fixes (auto and prompted) → `auto-fix` / `auto-fix --include-prompted`, which
     routes through `execute_recipe` for backup + diff recording per FR-2.4. This covers
     every prompted recipe — `config_conflict`, `yaml_repair`, `hook_restore`, `file_move`,
-    `renumber_duplicate`, and `exit_compatibility_mode` (the last via the reused
-    `write_field` action).
+    and `renumber_duplicate`.
   - Suppressions → `suppress` (Steps 6 and 8), which owns the write to
     `doctor-suppressions.json` via `save_suppressions`.
   - Skip / suppress bookkeeping and migration outcomes → `record-action`.

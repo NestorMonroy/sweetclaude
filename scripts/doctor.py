@@ -667,28 +667,45 @@ def check_storage_lint(state: ProjectState) -> list[Finding]:
     roadmap_dir = state.product_base / "roadmap"
 
     if backlog_dir.is_dir() and roadmap_dir.is_dir():
-        backlog_ids: set[str] = set()
+        backlog_files: dict[str, Path] = {}
         for p in backlog_dir.rglob("*.md"):
             if p.name in ("INDEX.md", "MIGRATION-MAP.md"):
                 continue
             fm = _read_frontmatter(p)
             if fm and fm.get("id"):
-                backlog_ids.add(fm["id"])
-        roadmap_ids: set[str] = set()
+                backlog_files.setdefault(str(fm["id"]), p)
+        roadmap_files: dict[str, Path] = {}
         for p in roadmap_dir.rglob("*.md"):
             fm = _read_frontmatter(p)
             if fm and fm.get("id"):
-                roadmap_ids.add(fm["id"])
-        for dup_id in sorted(backlog_ids & roadmap_ids):
+                roadmap_files.setdefault(str(fm["id"]), p)
+        all_known_ids = set(backlog_files) | set(roadmap_files)
+        for dup_id in sorted(set(backlog_files) & set(roadmap_files)):
+            file_a = backlog_files[dup_id]
+            file_b = roadmap_files[dup_id]
+            proposed = _propose_next_id(dup_id, all_known_ids)
+            # Same resolution contract as file-diagnostics:duplicate-id —
+            # this finding supersedes that one in scan dedup (F5.1.4), so it
+            # must carry the renumber fix, not strand the user report-only.
             findings.append(Finding(
                 id=f"storage-lint:cross-location-duplicate-id:{dup_id}",
                 category="storage_lint",
                 severity="error",
                 summary=f"Item {dup_id} exists in both backlog and roadmap",
-                detail=f"ID {dup_id} found in both {backlog_dir} and {roadmap_dir}",
-                file_paths=[str(backlog_dir), str(roadmap_dir)],
-                fix_type="report-only",
-                fix_recipe={},
+                detail=f"ID {dup_id} found in both {file_a} and {file_b}",
+                file_paths=[str(file_a), str(file_b)],
+                fix_type="prompted",
+                fix_recipe={
+                    "action": "prompt",
+                    "type": "renumber_duplicate",
+                    "duplicate_id": dup_id,
+                    "files": [str(file_a), str(file_b)],
+                    "labels": [
+                        str(file_a.parent.relative_to(state.product_base)),
+                        str(file_b.parent.relative_to(state.product_base)),
+                    ],
+                    "proposed_new_id": proposed,
+                },
             ))
 
     if backlog_dir.is_dir():
@@ -2683,37 +2700,11 @@ def _apply_compatibility_mode_policy(
             },
         ))
 
-    # Surface a Tier-2 exit prompt so the user can unlock migration. Migration
-    # stays blocked while compatibility mode is active; exiting clears the lock
-    # by setting recovery.taxonomy.compatibility_exited (the flag recover_project
-    # reads). The prompt is the UX surface; the SKILL's apply step emits a
-    # write_field reuse recipe with that nested key_path (no new transform —
-    # V7 tripwire). The recipe carries the sweetclaude.yaml path and key_path so
-    # the handler has everything it needs.
-    project_dir = (maintenance_route.get("guard") or {}).get("project_dir", "")
-    sc_yaml_path = (
-        str(Path(project_dir) / ".sweetclaude" / "state" / "sweetclaude.yaml")
-        if project_dir else ""
-    )
-    visible.append(Finding(
-        id="compatibility-mode:exit-available",
-        category="compatibility_mode",
-        severity="warning",
-        summary="Compatibility mode is active — migration is blocked until you exit it",
-        detail=(
-            "The project was previously stabilized without migration. Exiting "
-            "compatibility mode clears the lock and allows migration."
-        ),
-        file_paths=[sc_yaml_path] if sc_yaml_path else [],
-        fix_type="prompted",
-        fix_recipe={
-            "action": "prompt",
-            "type": "exit_compatibility_mode",
-            "file": sc_yaml_path,
-            "key_path": ["recovery", "taxonomy", "compatibility_exited"],
-            "value": True,
-        },
-    ))
+    # No exit prompt is surfaced here. The compatibility_exited flag write was
+    # a no-op exit: the guard never read it for status, so the prompt re-offered
+    # itself forever while changing nothing the user could see. The only real
+    # exit from compatibility mode is graduation, which the guard routes via
+    # graduation-available / graduation-blocked.
 
     return visible, {
         "applied": True,

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import tarfile
@@ -1617,22 +1618,30 @@ def _with_blocker_resolution(blocker: dict[str, Any]) -> dict[str, Any]:
     return {**blocker, "resolution": resolution}
 
 
+def _frontmatter_id(path: Path) -> str | None:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return None
+    for line in parts[1].splitlines():
+        if line.startswith("id:"):
+            value = line.split(":", 1)[1].strip().strip("'\"")
+            return value or None
+    return None
+
+
+_WORK_ITEM_ID_RE = re.compile(r"^[A-Z]+-\d+$")
+
+
 def _collect_known_ids(product_base: Path) -> set[str]:
     ids: set[str] = set()
     for path in product_base.rglob("*.md"):
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        parts = text.split("---", 2)
-        if len(parts) < 3:
-            continue
-        for line in parts[1].splitlines():
-            if line.startswith("id:"):
-                value = line.split(":", 1)[1].strip().strip("'\"")
-                if value:
-                    ids.add(value)
-                break
+        value = _frontmatter_id(path)
+        if value:
+            ids.add(value)
     return ids
 
 
@@ -1717,13 +1726,47 @@ def resolve_graduation_blocker(
 
     findings: list[dict[str, Any]] = []
     renumbered: list[dict[str, Any]] = []
+    renamed: list[dict[str, Any]] = []
     for group in duplicates:
         dup_id = str(group.get("id", ""))
         files = [
             (product_base / f) if not Path(f).is_absolute() else Path(f)
             for f in group.get("files", [])
         ]
-        targets = _pick_renumber_targets(files, product_base, choose)
+        # The duplicate groups key on FILENAME ids (characterize_project).
+        # A file whose frontmatter carries a different valid id is misnamed,
+        # not duplicated: rename it to match its frontmatter. Renumbering it
+        # would clobber a valid id other artifacts may reference.
+        colliding: list[Path] = []
+        for path in files:
+            fm_id = _frontmatter_id(path)
+            if fm_id and fm_id != dup_id and _WORK_ITEM_ID_RE.match(fm_id):
+                dest = path.parent / path.name.replace(dup_id, fm_id, 1)
+                findings.append({
+                    "id": f"graduation-blocker:misnamed-file:{path.name}",
+                    "category": "file_diagnostics",
+                    "summary": (
+                        f"Rename {path.name} to match its frontmatter id {fm_id}"
+                    ),
+                    "fix_type": "prompted",
+                    "fix_recipe": {
+                        "action": "file_move",
+                        "src": str(path),
+                        "dest": str(dest),
+                        "file": str(path),
+                    },
+                })
+                renamed.append({
+                    "id": fm_id,
+                    "from": str(path),
+                    "to": str(dest),
+                })
+            else:
+                colliding.append(path)
+
+        if len(colliding) < 2:
+            continue
+        targets = _pick_renumber_targets(colliding, product_base, choose)
         for target in targets:
             new_id = _next_available_id(dup_id, known_ids)
             known_ids.add(new_id)
@@ -1776,6 +1819,7 @@ def resolve_graduation_blocker(
         "status": "resolved",
         "code": code,
         "renumbered": renumbered,
+        "renamed": renamed,
         "archive_dir": archive_dir,
         "restore_hint": (
             f"python3 {doctor_script} restore --project-dir {project} "

@@ -1160,7 +1160,14 @@ class TestStorageLint:
 
         f = next(x for x in findings if x.id == "storage-lint:cross-location-duplicate-id:ISSUE-001")
         assert f.severity == "error"
-        assert f.fix_type == "report-only"
+        # Carries the renumber resolution: this finding supersedes
+        # file-diagnostics:duplicate-id in scan dedup (F5.1.4), so leaving it
+        # report-only would strand the user with no fix path.
+        assert f.fix_type == "prompted"
+        assert f.fix_recipe.get("type") == "renumber_duplicate"
+        assert f.fix_recipe.get("duplicate_id") == "ISSUE-001"
+        assert len(f.fix_recipe.get("files", [])) == 2
+        assert f.fix_recipe.get("proposed_new_id")
 
     # Scenario: Different IDs in backlog and roadmap produce no duplicate finding
     def test_different_ids_in_backlog_and_roadmap_no_duplicate_finding(
@@ -9215,15 +9222,17 @@ def test_renumber_duplicate_is_a_supported_action():
 
 
 class TestP1ExitCompat:
-    """P1 / T2f: exit_compatibility_mode surfaced and made functional.
+    """T2f revisited: the flag-write exit was removed as a no-op dead end.
 
-    When the maintenance route reports ``compatibility-mode``, doctor surfaces a
-    Tier-2 ``exit_compatibility_mode`` prompt so the user can unlock migration.
-    Applying it sets ``recovery.taxonomy.compatibility_exited: true`` in
-    sweetclaude.yaml — the flag recover_project reads. Per the V7 tripwire, the
-    apply step REUSES the write_field executor action (extended with a nested
-    key_path) rather than introducing a new transform. The write routes through
-    _record_mutation, so it is backed up and restore-reversible. NO MOCKS.
+    The original T2f surfaced an ``exit_compatibility_mode`` prompt that set
+    ``recovery.taxonomy.compatibility_exited: true`` — but the guard never read
+    that flag for status, so the prompt re-offered itself every scan while
+    changing nothing the user could see. The only real exit from compatibility
+    mode is graduation (graduation-available / graduation-blocked routes).
+    The scan must therefore NOT surface the flag-write prompt. The nested
+    key_path write_field reuse (the V7-tripwire mechanism T2f introduced) stays
+    a supported executor capability and remains backed up and
+    restore-reversible. NO MOCKS.
     """
 
     @staticmethod
@@ -9243,19 +9252,19 @@ class TestP1ExitCompat:
             },
         })
 
-    def test_compatibility_mode_surfaces_exit_fix(self, tmp_path, fake_home):
+    def test_compatibility_mode_does_not_surface_flag_write_exit(
+        self, tmp_path, fake_home
+    ):
         project_dir = self._compat_project(tmp_path)
         result = _scan(build_project_state(project_dir))
-        assert result["maintenance_route"]["status"] == "compatibility-mode", (
-            "fixture must land in compatibility-mode")
         exit_findings = [
             f for f in result["findings"]
             if f.get("fix_recipe", {}).get("type") == "exit_compatibility_mode"
+            or "compatibility_exited" in (f.get("fix_recipe", {}).get("key_path") or [])
         ]
-        assert exit_findings, (
-            "compatibility-mode must surface an exit_compatibility_mode prompt")
-        recipe = exit_findings[0]["fix_recipe"]
-        assert recipe.get("action") == "prompt"
+        assert not exit_findings, (
+            "the flag-write exit is a no-op (guard never reads the flag for "
+            "status) — the only real exit is graduation")
 
     def test_exit_compat_apply_sets_flag_via_write_field_reuse(
         self, tmp_path, fake_home
