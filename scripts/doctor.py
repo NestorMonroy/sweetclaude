@@ -2490,6 +2490,35 @@ def build_maintenance_route(state: ProjectState) -> dict:
         })
         return route
 
+    if status == "graduation-blocked":
+        blockers = list(guard.get("graduation_blockers") or [])
+        blocker_lines = "; ".join(
+            f"{b.get('code')}: {b.get('detail')}" for b in blockers
+        )
+        route.update({
+            "status": "graduation-blocked",
+            "graduation_blockers": blockers,
+            "message": (
+                "This project could graduate from compatibility mode, but "
+                f"validation blockers must be fixed first — {blocker_lines}. "
+                "Each blocker carries its resolution; fixes are archived and "
+                "reversible."
+            ),
+            "primary_action": _capability_action(
+                str(shape_config.get("blocker_fix_capability", "doctor.fix_graduation_blockers")),
+                "fix-graduation-blockers",
+                "Fix graduation blockers, then graduate",
+            ),
+            "secondary_actions": [
+                {
+                    "id": "continue-compatibility-mode",
+                    "label": "Stay in compatibility mode",
+                    "mutates_project": False,
+                },
+            ],
+        })
+        return route
+
     if status == "compatibility-mode":
         route.update({
             "status": "compatibility-mode",

@@ -196,6 +196,45 @@ capabilities:
     mutates_project: false
     requires_approval: false
 
+  doctor.fix_graduation_blockers:
+    title: Fix graduation blockers
+    supported: true
+    delegate_skill: sweetclaude:doctor
+    command_entrypoint:
+      slash_command: /sweetclaude:doctor
+      script: scripts/recovery/recover_project.py
+      module: recovery.recover_project
+    supports_project_shapes:
+      - graduation_blocked
+    mutation_class: planned_write
+    mutates_project: true
+    requires_approval: true
+    required_preconditions:
+      - project is in compatibility mode or accepted legacy taxonomy
+      - graduation-check reports validation-failures with resolvable blockers
+    snapshot_scope_hints:
+      - product work-item files named in each blocker resolution
+    postconditions:
+      - id: graduation-unblocked
+        check: graduation-check reports graduation_allowed true
+    rollback_support:
+      supported: true
+      command: "python3 scripts/doctor.py restore --project-dir <project> --archive-dir <archive>"
+      limitations: []
+    version_metadata:
+      introduced_in: 4.2.8-beta
+      deprecated_in: null
+    safety_contract:
+      - diagnose
+      - validate
+      - snapshot
+      - approve
+      - execute
+      - verify-postconditions
+      - rollback
+    verification_commands:
+      - "python3 scripts/recovery/recover_project.py graduation-check --project-dir <project>"
+
   doctor.manual_review:
     title: Manual maintenance review
     supports_project_shapes:
@@ -245,6 +284,15 @@ project_shapes:
     migrate_allowed: false
     message: "This project is v4-compliant and can graduate from compatibility mode."
     graduation_capability: recover.graduate_from_compatibility
+
+  graduation_blocked:
+    guard_status: graduation-blocked
+    migrate_allowed: false
+    message: "This project could graduate from compatibility mode, but validation blockers must be fixed first. Each blocker carries its resolution."
+    blocker_fix_capability: doctor.fix_graduation_blockers
+    graduation_capability: recover.graduate_from_compatibility
+    blocked_capabilities:
+      - migrate.typed_legacy_backlog
 
   flat_bl_backlog:
     migration: flat_bl_to_issue
