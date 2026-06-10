@@ -63,7 +63,8 @@ from doctor import (
     persist,
     load_suppressions,
     save_suppressions,
-    auto_cleanup_suppressions,
+    compute_resolved_suppressions,
+    prune_resolved_suppressions,
     main,
     _apply_transform,
     _atomic_write,
@@ -6017,7 +6018,7 @@ class TestSuppression:
     # Scenario: Resolved finding has its suppression entry auto-removed
     # ------------------------------------------------------------------
 
-    def test_resolved_suppression_auto_removed_and_reported(self, tmp_path, fake_home):
+    def test_resolved_suppression_reported_but_not_pruned_during_scan(self, tmp_path, fake_home):
         # Suppress "env-wiring:missing:plans-directory" but don't actually remove plans dir
         # (so the finding resolves — the plans dir exists → finding won't appear)
         project_dir = build_fixture(tmp_path, overrides={
@@ -6034,18 +6035,19 @@ class TestSuppression:
             f"Resolved suppression should appear in suppressions_resolved, "
             f"got: {result['suppressions_resolved']}"
         )
-        # Suppression file should no longer contain that entry
+        # P4/P2: scan is read-only — the resolved entry is REPORTED but NOT pruned
+        # during scan. The prune is deferred to the execute phase (see TestP5).
         remaining = load_suppressions(project_dir)
         remaining_ids = [e.get("finding_id") for e in remaining]
-        assert "env-wiring:missing:plans-directory" not in remaining_ids, (
-            f"Suppression file should no longer contain resolved entry, got: {remaining_ids}"
+        assert "env-wiring:missing:plans-directory" in remaining_ids, (
+            f"scan must not prune the ledger (read-only); entry should remain, got: {remaining_ids}"
         )
 
     # ------------------------------------------------------------------
     # Scenario: Auto-removed suppression ID appears in auto_cleanup result
     # ------------------------------------------------------------------
 
-    def test_auto_cleanup_removes_stale_suppression_and_retains_active(self, tmp_path, fake_home):
+    def test_prune_removes_stale_suppression_retains_active_and_backs_up(self, tmp_path, fake_home):
         project_dir = build_fixture(tmp_path, overrides={
             "suppressions": [
                 {"finding_id": "finding-A"},
@@ -6053,7 +6055,8 @@ class TestSuppression:
             ],
         })
 
-        resolved = auto_cleanup_suppressions(project_dir, {"finding-B"})
+        archive = create_archive(project_dir)
+        resolved = prune_resolved_suppressions(project_dir, archive, {"finding-B"})
 
         assert "finding-A" in resolved, (
             f"finding-A should be in resolved set, got: {resolved}"
@@ -6065,6 +6068,13 @@ class TestSuppression:
         )
         assert "finding-A" not in remaining_ids, (
             f"finding-A should be removed from suppression file, got: {remaining_ids}"
+        )
+        # P2: the prune is backed up through the archive (restore-reversible).
+        before_text = "\n".join(
+            p.read_text() for p in (archive / "before").rglob("*") if p.is_file()
+        )
+        assert "finding-A" in before_text, (
+            "prune must back up the pre-prune ledger under the archive's before/"
         )
 
     # ------------------------------------------------------------------
@@ -6141,6 +6151,119 @@ class TestSuppression:
         data = json.loads(suppression_path.read_text())
         assert data == entries, (
             f"Written entries should match input, got: {data}"
+        )
+
+
+class TestP5ScanReadOnlySuppression:
+    """P5: the read-only scan phase must not mutate the suppression ledger.
+
+    Closes the FINAL-audit residual (P2 + P4): scan formerly pruned stale
+    suppressions via auto_cleanup_suppressions -> save_suppressions, writing
+    doctor-suppressions.json during the read-only scan and bypassing the
+    executor backup pipeline. Scan now only computes the resolved set
+    (read-only); the prune is deferred to the execute phase (persist) and
+    routed through the archive so it is backed up + diffed + restore-reversible.
+    """
+
+    def test_scan_leaves_suppression_ledger_byte_identical(self, tmp_path, fake_home):
+        # A resolved suppression (its finding no longer fires) must still be
+        # REPORTED by scan, but the ledger file must be untouched (P4).
+        project_dir = build_fixture(tmp_path, overrides={
+            "suppressions": [
+                {"finding_id": "env-wiring:missing:plans-directory"},
+            ],
+        })
+        supp_path = project_dir / ".sweetclaude" / "state" / "doctor-suppressions.json"
+        before_bytes = supp_path.read_bytes()
+
+        state = build_project_state(project_dir)
+        result = _scan(state)
+
+        assert "env-wiring:missing:plans-directory" in result["suppressions_resolved"], (
+            "scan must still report the resolved suppression read-only, "
+            f"got: {result['suppressions_resolved']}"
+        )
+        assert supp_path.read_bytes() == before_bytes, (
+            "scan must not write doctor-suppressions.json (P4 read-only / P2 backup)"
+        )
+
+    def test_execute_phase_prunes_and_backs_up_resolved_suppression(self, tmp_path, fake_home):
+        # The deferred prune happens in the execute phase (persist) and is
+        # routed through the archive backup pipeline (P2).
+        project_dir = build_fixture(tmp_path, overrides={
+            "suppressions": [
+                {"finding_id": "env-wiring:missing:plans-directory"},
+            ],
+        })
+        state = build_project_state(project_dir)
+        scan_result = _scan(state)
+
+        archive = create_archive(project_dir)
+        persist(project_dir, archive, scan_findings=scan_result["findings"])
+
+        remaining_ids = [e.get("finding_id") for e in load_suppressions(project_dir)]
+        assert "env-wiring:missing:plans-directory" not in remaining_ids, (
+            f"execute phase must prune the resolved suppression, got: {remaining_ids}"
+        )
+
+        before_text = "\n".join(
+            p.read_text() for p in (archive / "before").rglob("*") if p.is_file()
+        )
+        assert "env-wiring:missing:plans-directory" in before_text, (
+            "the pre-prune ledger must be backed up under the archive's before/"
+        )
+        diff_text = "\n".join(
+            p.read_text() for p in (archive / "diffs").rglob("*.diff")
+        )
+        assert "env-wiring:missing:plans-directory" in diff_text, (
+            "the prune must record a diff under the archive's diffs/"
+        )
+
+    def test_pruned_suppression_is_restore_reversible(self, tmp_path, fake_home):
+        # S6: the execute-phase prune registers an action, so `restore` reverts
+        # the ledger to its pre-prune state from the archived before-image.
+        project_dir = build_fixture(tmp_path, overrides={
+            "suppressions": [
+                {"finding_id": "env-wiring:missing:plans-directory"},
+            ],
+        })
+        state = build_project_state(project_dir)
+        scan_result = _scan(state)
+
+        archive = create_archive(project_dir)
+        persist(project_dir, archive, scan_findings=scan_result["findings"])
+
+        # Pruned away:
+        assert "env-wiring:missing:plans-directory" not in [
+            e.get("finding_id") for e in load_suppressions(project_dir)
+        ]
+
+        result = _doctor_module.restore(project_dir, archive, restore_all=True)
+
+        supp_path = project_dir / ".sweetclaude" / "state" / "doctor-suppressions.json"
+        assert str(supp_path) in result["restored"], (
+            f"restore must revert the suppression ledger, got: {result}"
+        )
+        assert "env-wiring:missing:plans-directory" in [
+            e.get("finding_id") for e in load_suppressions(project_dir)
+        ], "restore must bring the pruned entry back"
+
+    def test_execute_phase_no_prune_when_findings_not_passed(self, tmp_path, fake_home):
+        # When persist is called without scan_findings the current finding set
+        # is unknown, so no entry may be pruned (avoid clobbering live entries).
+        project_dir = build_fixture(tmp_path, overrides={
+            "suppressions": [
+                {"finding_id": "env-wiring:missing:plans-directory"},
+            ],
+        })
+        supp_path = project_dir / ".sweetclaude" / "state" / "doctor-suppressions.json"
+        before_bytes = supp_path.read_bytes()
+
+        archive = create_archive(project_dir)
+        persist(project_dir, archive)
+
+        assert supp_path.read_bytes() == before_bytes, (
+            "persist without scan_findings must not prune (findings unknown)"
         )
 
 

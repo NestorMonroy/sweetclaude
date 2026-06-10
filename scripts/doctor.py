@@ -2145,17 +2145,54 @@ def save_suppressions(project_dir: Path, entries: list[dict]) -> None:
     os.replace(tmp, path)
 
 
-def auto_cleanup_suppressions(
+def compute_resolved_suppressions(
     project_dir: Path, current_finding_ids: set[str]
 ) -> set[str]:
+    """Read-only: which suppression entries are stale (their finding resolved).
+
+    Used during the read-only scan phase to flag previously_suppressed findings
+    and populate suppressions_resolved WITHOUT mutating the ledger. The actual
+    prune is deferred to the execute phase (``prune_resolved_suppressions``),
+    where it is backed up through the archive — keeping scan strictly read-only
+    (P4) and every mutation on the executor backup pipeline (P2).
+    """
+    entries = load_suppressions(project_dir)
+    return {
+        e["finding_id"]
+        for e in entries
+        if e.get("finding_id") and e["finding_id"] not in current_finding_ids
+    }
+
+
+def prune_resolved_suppressions(
+    project_dir: Path, archive_path: Path, current_finding_ids: set[str]
+) -> set[str]:
+    """Execute-phase prune of stale suppression entries, backed up via the archive.
+
+    Computes the same resolved set as ``compute_resolved_suppressions``; if any
+    entries are stale, backs up the ledger through ``_record_mutation``
+    (before-image + diff, ``restore``-reversible) before writing the pruned
+    file. This is the executor-routed mutation that replaces the former
+    scan-time write, satisfying the "every mutation goes through the backup
+    pipeline" invariant (P2) while leaving scan read-only (P4).
+    """
     entries = load_suppressions(project_dir)
     if not entries:
         return set()
-    resolved = [e for e in entries if e.get("finding_id") not in current_finding_ids]
+    resolved = {
+        e["finding_id"]
+        for e in entries
+        if e.get("finding_id") and e["finding_id"] not in current_finding_ids
+    }
+    if not resolved:
+        return set()
     remaining = [e for e in entries if e.get("finding_id") in current_finding_ids]
-    if resolved:
-        save_suppressions(project_dir, remaining)
-    return {e["finding_id"] for e in resolved}
+    path = _suppressions_path(project_dir)
+    before = path.read_bytes() if path.exists() else b""
+    after = json.dumps(remaining, indent=2).encode()
+    _record_mutation(archive_path, path, before, after)
+    save_suppressions(project_dir, remaining)
+    return resolved
 
 
 def suppress_finding(
@@ -2697,7 +2734,7 @@ def _scan(
     suppressed_ids = {s.get("finding_id") for s in project_state.suppressions if s.get("finding_id")}
 
     if not categories:
-        resolved_ids = auto_cleanup_suppressions(
+        resolved_ids = compute_resolved_suppressions(
             project_state.project_dir, all_finding_ids
         )
     else:
@@ -3828,6 +3865,24 @@ def persist(
     auto_fixed = sum(1 for a in all_actions if a.get("action") == "auto-fix")
     user_fixed = sum(1 for a in all_actions if a.get("action") == "prompted-fix")
     skipped = sum(1 for a in all_actions if a.get("action") == "skip")
+    # Deferred, backed-up suppression prune (P2/P4): scan computes the resolved
+    # set read-only; the actual ledger write happens here, in the execute phase,
+    # routed through the archive. Only when the current finding set is known
+    # (scan_findings passed) — otherwise pruning could clobber live entries.
+    # Record it as an action so the before-image is restore-reversible (S6).
+    suppressions_pruned: list[str] = []
+    if scan_findings is not None:
+        current_finding_ids = {f.get("id") for f in scan_findings if f.get("id")}
+        suppressions_pruned = sorted(
+            prune_resolved_suppressions(project_dir, archive_path, current_finding_ids)
+        )
+        if suppressions_pruned:
+            all_actions.append({
+                "action": "suppression-prune",
+                "file_path": str(_suppressions_path(project_dir)),
+                "pruned": suppressions_pruned,
+            })
+
     scan_findings = scan_findings or []
     severity_counts = {
         "errors": sum(1 for f in scan_findings if f.get("severity") == "error"),
@@ -3841,6 +3896,7 @@ def persist(
         "version": _resolve_installed_version() or "unknown",
         "safety_branch": safety_branch,
         "actions": all_actions,
+        "suppressions_pruned": suppressions_pruned,
         "post_fix_findings": [],
         "summary": {
             "auto_fixed": auto_fixed,
