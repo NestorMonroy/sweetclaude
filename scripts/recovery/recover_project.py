@@ -257,6 +257,37 @@ def _has_failure(diagnosis: dict[str, Any], code: str) -> bool:
     return code in diagnosis.get("failure_class_codes", [])
 
 
+def _state_schema_drift_findings(project: Path) -> list[dict[str, Any]]:
+    """Read-only drift report from the migration runner's registry.
+
+    Drift is resolved by the runner (bootstrap Step 5c offers it; doctor
+    auto-fixes through it), not by recovery — so callers report these as
+    informational, never as route-driving failure classes.
+    """
+    runner = SCRIPTS_DIR / "migrations" / "runner.py"
+    if not runner.is_file():
+        return []
+    completed = subprocess.run(
+        [sys.executable, str(runner), "--project-dir", str(project),
+         "--report-drift-for-skill"],
+        capture_output=True, text=True, check=False,
+    )
+    if completed.returncode != 0:
+        return []
+    findings: list[dict[str, Any]] = []
+    for line in completed.stdout.splitlines():
+        if not line.startswith("FINDING|"):
+            continue
+        parts = line.split("|")
+        findings.append({
+            "file": parts[1] if len(parts) > 1 else "",
+            "migration": parts[2] if len(parts) > 2 else "",
+            "chain": (parts[3].removeprefix("chain=")
+                      if len(parts) > 3 else ""),
+        })
+    return findings
+
+
 def _taxonomy_recovery_accepts_legacy_layout(state: dict[str, Any]) -> bool:
     return (
         state.get("migration_status") == "deferred"
@@ -1416,13 +1447,40 @@ def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
             "detail": sweetclaude_state["parse_error"],
         })
 
+    drift_findings = _state_schema_drift_findings(project)
+    if drift_findings:
+        _add_failure_class(
+            failure_classes,
+            code="state-schema-drift",
+            severity="informational",
+            title="State files are behind the registry schema",
+            evidence={"findings": drift_findings},
+            recovery_strategy="run-migration-runner",
+        )
+
     failure_codes = [entry["code"] for entry in failure_classes]
     cannot_plan = any(factor["severity"] == "cannot-plan" for factor in blocking_factors)
-    has_recoverable_state = bool(failure_classes) and not cannot_plan
+    # Informational classes are reported but never drive the route: schema
+    # drift belongs to the migration runner (bootstrap Step 5c / doctor
+    # auto-fix), not to recovery planning.
+    route_driving_classes = [
+        entry for entry in failure_classes
+        if entry.get("severity") != "informational"
+    ]
+    has_recoverable_state = bool(route_driving_classes) and not cannot_plan
 
-    if not failure_classes and not blocking_factors:
+    if not route_driving_classes and not blocking_factors:
         recovery_route = "no-recovery-needed"
-        next_step = "No recovery action is currently indicated by read-only diagnosis."
+        if drift_findings:
+            drifted = ", ".join(f["file"] for f in drift_findings)
+            next_step = (
+                f"No recovery action is needed, but state schema drift was "
+                f"detected ({drifted}). The migration runner resolves it — "
+                "bootstrap offers this at session start, or run "
+                "/sweetclaude:doctor to auto-fix."
+            )
+        else:
+            next_step = "No recovery action is currently indicated by read-only diagnosis."
     elif has_recoverable_state:
         recovery_route = "stabilize-without-migration"
         next_step = "Run recovery plan generation after creating a project snapshot."
