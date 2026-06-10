@@ -4,6 +4,32 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.6-beta] — 2026-06-10 (4.x beta channel)
+
+### Added — compatibility mode graduation
+
+- **Compatibility mode graduation capability.** Projects stuck in compatibility
+  mode (`stabilized-without-migration`) can now graduate when they are already
+  v4-compliant. Doctor detects graduation candidates at the maintenance route
+  prompt and offers a one-click exit — a state-only write to `sweetclaude.yaml`
+  with one-file blast radius, fully reversible via Doctor's restore flow.
+- **v4 compliance detection** in `characterize_project.py`: new `v4_compliance`
+  output block reports old-prefix count, v4-prefix count, required-field coverage,
+  canonical-type compliance, duplicate-ID status, and standard structure.
+- **`graduation-check` and `graduate` CLI subcommands** on `recover_project.py`
+  for read-only validation and state-only graduation execution.
+- **`graduation_candidate` project shape** and `recover.graduate_from_compatibility`
+  capability in the manifest, with full safety contract (diagnose → validate →
+  snapshot → approve → execute → verify → rollback).
+- **Doctor routes `graduation-available`** before falling through to
+  `compatibility-mode`, so compliant projects see the exit rather than the dead end.
+- **17 new tests** covering graduation-check happy path, blocker detection
+  (old prefixes, duplicates, legacy types, parse errors), guard routing,
+  doctor maintenance route, graduate execution, idempotency, and read-only
+  guarantees.
+
+---
+
 ## [4.2.5-beta] — 2026-06-10 (4.x beta channel)
 
 ### Fixed — doctor conformance, safety hardening

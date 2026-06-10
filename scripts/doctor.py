@@ -2414,6 +2414,29 @@ def build_maintenance_route(state: ProjectState) -> dict:
         })
         return route
 
+    if status == "graduation-available":
+        route.update({
+            "status": "graduation-available",
+            "message": (
+                "This project is v4-compliant and can graduate from compatibility "
+                "mode. Graduating clears the compatibility lock and marks "
+                "migration complete."
+            ),
+            "primary_action": _capability_action(
+                str(shape_config.get("graduation_capability", "recover.graduate_from_compatibility")),
+                "graduate-from-compatibility",
+                "Graduate from compatibility mode",
+            ),
+            "secondary_actions": [
+                {
+                    "id": "continue-compatibility-mode",
+                    "label": "Stay in compatibility mode",
+                    "mutates_project": False,
+                },
+            ],
+        })
+        return route
+
     if status == "compatibility-mode":
         route.update({
             "status": "compatibility-mode",
