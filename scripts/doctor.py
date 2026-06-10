@@ -124,6 +124,7 @@ _DATETIME_FIELDS = frozenset({
 RUN_SCRIPT_ALLOWLIST = {
     "cache.py",
     "generate-session-state.sh",
+    "generate-skills-state.py",
     "runner.py",
 }
 
@@ -1490,15 +1491,30 @@ def check_onboarding_state(state: ProjectState) -> list[Finding]:
 
     if not state.skills_yaml:
         if skills_path.parent.is_dir():
+            generator = (
+                Path(__file__).resolve().parent
+                / "maintenance" / "generate-skills-state.py"
+            )
             findings.append(Finding(
                 id="onboarding-state:missing:skills.yaml",
                 category="onboarding_state",
                 severity="info",
-                summary="Skills configuration hasn't been set up yet",
-                detail=f"skills.yaml missing at {skills_path}; run /sweetclaude to bootstrap",
+                summary=(
+                    "Optional-feature state file is missing (skills all work; "
+                    "this ledger only tracks feature onboarding)"
+                ),
+                detail=(
+                    f"skills.yaml missing at {skills_path}. Feature skills "
+                    "tolerate its absence; the auto-fix creates the v2 stub "
+                    "init normally writes."
+                ),
                 file_paths=[str(skills_path)],
-                fix_type="report-only",
-                fix_recipe={},
+                fix_type="auto",
+                fix_recipe={"action": "run_script",
+                            "cmd": [sys.executable, str(generator),
+                                    "--project-dir", str(state.project_dir)],
+                            "args": [],
+                            "regenerates": [str(skills_path)]},
             ))
     elif state.skills_yaml:
         schema = state.skills_yaml.get("schema_version")
