@@ -160,9 +160,11 @@ run, in one of two modes:
   yet (project `installed_version` below 4.x, or v3 `BL-*.md` files present).
   Unsafe to continue; the session stops after routing.
 - **advisory** — the project is v4 but sits in a compatibility/recovery state
-  (`recovery.taxonomy.status: stabilized-without-migration`). Graduation
-  opportunities and blockers are only visible through the guard, so it runs at
-  session start, routes to an action, and the session continues.
+  (`recovery.taxonomy.status: stabilized-without-migration`), or its product
+  tree still holds old-taxonomy files (`STORY-`/`BUG-`/`DEBT-`/`CHORE-`)
+  despite the state claiming migration is complete. Graduation opportunities,
+  blockers, and recoverable states are only visible through the guard, so it
+  runs at session start, routes to an action, and the session continues.
 
 Every status the guard can emit has a route below. There are no unrouted
 statuses: bootstrap either offers the resolving action or explains honestly
@@ -219,10 +221,12 @@ taxonomy = (d.get('recovery') or {}).get('taxonomy') or {}
 print('yes' if taxonomy.get('status') == 'stabilized-without-migration' else 'no')
 " 2>/dev/null || echo no)
 
+LEGACY_FILES=$(find "${PRODUCT_BASE}" \( -name 'STORY-*.md' -o -name 'BUG-*.md' -o -name 'DEBT-*.md' -o -name 'CHORE-*.md' \) 2>/dev/null | wc -l | tr -d ' ')
+
 GUARD_MODE=none
 if $PLUGIN_IS_V4 && ( $PROJECT_NOT_V4 || [ "$V3_FILES" -gt 0 ] ); then
   GUARD_MODE=hard-stop
-elif [ "$COMPAT_STATE" = "yes" ]; then
+elif [ "$COMPAT_STATE" = "yes" ] || [ "$LEGACY_FILES" -gt 0 ]; then
   GUARD_MODE=advisory
 fi
 

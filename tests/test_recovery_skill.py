@@ -78,6 +78,10 @@ def test_bootstrap_v4_hard_stop_classifies_before_recommending_migrate():
     assert "graduation-blocked" in skill, (
         "bootstrap must route blocked graduation, not dead-end it"
     )
+    assert "LEGACY_FILES" in skill, (
+        "advisory mode must also trigger on legacy-taxonomy files when state "
+        "claims migration is complete (state/artifact disagreement)"
+    )
 
 
 def test_migrate_skill_runs_preflight_before_lock_and_backup():
