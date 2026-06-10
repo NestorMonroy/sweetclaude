@@ -3351,8 +3351,15 @@ class TestOnboardingState:
         assert f.severity == "info", (
             f"Expected severity 'info', got: {f.severity}"
         )
-        assert f.fix_type == "report-only", (
-            f"Expected fix_type 'report-only', got: {f.fix_type}"
+        # Auto-fix via generate-skills-state.py — report-only with guidance
+        # pointing at a nonexistent generator was a user-facing dead end.
+        assert f.fix_type == "auto", (
+            f"Expected fix_type 'auto', got: {f.fix_type}"
+        )
+        assert f.fix_recipe.get("action") == "run_script"
+        assert "generate-skills-state.py" in f.fix_recipe["cmd"][1]
+        assert "hasn't been set up" not in f.summary, (
+            "summary must not imply plugin skills are broken"
         )
 
     # ------------------------------------------------------------------
