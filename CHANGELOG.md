@@ -4,6 +4,38 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.9-beta] — 2026-06-10 (4.x beta channel)
+
+### Fixed — missing skills.yaml was still a dead end (and said something scary)
+
+The 4.2.8 totality audit misclassified one finding as cosmetic, and a user
+hit it within hours: after updating, doctor reported **"Skills configuration
+hasn't been set up yet"** — wording that reads as if plugin skills are
+broken, with guidance pointing at a bootstrap path that never creates the
+file. Plugin skills were always fine: `.sweetclaude/state/skills.yaml` is
+the optional-feature onboarding ledger (parking lot, milestones, usage
+tracking activation state), not the skill registry, and every feature skill
+tolerates its absence.
+
+- **New generator:** `scripts/maintenance/generate-skills-state.py` creates
+  the v2 stub that init normally writes. Idempotent — an existing file is
+  never touched; uninitialized projects (no state directory) are refused
+  with a pointer to `/sweetclaude:init`.
+- **The finding now auto-fixes.** `onboarding-state:missing:skills.yaml`
+  runs the generator through doctor's executor — archived, backed up,
+  reversible via `doctor restore` — instead of being report-only with
+  guidance that led nowhere.
+- **Honest wording.** Summary is now "Optional-feature state file is missing
+  (skills all work; this ledger only tracks feature onboarding)."
+- **End-to-end test** locks the contract: scan → auto-fix → file created
+  with `schema_version: 2` → rescan clears the finding.
+
+Process note, recorded in the totality matrix: a finding every user sees
+with no working resolution path is never "cosmetic" — this one is now in the
+test corpus so the class stays closed.
+
+---
+
 ## [4.2.8-beta] — 2026-06-10 (4.x beta channel)
 
 ### Fixed — maintenance dead ends closed end-to-end
