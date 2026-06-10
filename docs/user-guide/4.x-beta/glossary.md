@@ -35,7 +35,7 @@ A Claude Code hook that physically blocks edits to test files during the IMPLEME
 A Claude Code hook that runs the test suite automatically after every source file edit during IMPLEMENT. Gives instant feedback on whether the change moved the tests from RED to GREEN.
 
 **Version stage**
-Where the project is in its lifecycle: IDEA → PRE-ALPHA → PROTOTYPE → ALPHA → BETA → GA → SCALED → MAINTAINED. Controls which work types and phase gates are visible. A PROTOTYPE-stage project doesn't see compliance work types; a GA project gets them surfaced automatically. New projects start at IDEA or PRE-ALPHA depending on how they were initialized.
+Where the project is in its lifecycle. The stages that control which work types and phase gates are visible are PROTOTYPE → ALPHA → BETA → GA → SCALED → MAINTAINED (the six stages the rest of this guide enumerates). Brand-new projects may carry an earlier informal label — IDEA or PRE-ALPHA — before reaching PROTOTYPE. A PROTOTYPE-stage project doesn't see compliance work types; a GA project gets them surfaced automatically.
 
 **Betting table**
 A Shape Up concept (does not exist in Kanban or Agile modes). A decision artifact produced during the DEFINE phase that records: the core outcome if this ships, the rabbit holes (likely scope explosions), and what is explicitly out of scope. Implementation is hard-blocked until the betting table is approved.

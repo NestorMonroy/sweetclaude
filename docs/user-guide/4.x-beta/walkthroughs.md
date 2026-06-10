@@ -1,9 +1,9 @@
 # Walkthroughs
 
-**Version:** 1.1
-**Date:** 2026-05-05
+**Version:** 1.2
+**Date:** 2026-06-10
 
-Six concrete scenarios end-to-end. Each one shows what you run, what comes back, and what you have when you are done. The interactions are simulated but representative — actual prompts vary slightly with the model and your project state.
+Seven concrete scenarios end-to-end. Each one shows what you run, what comes back, and what you have when you are done. The interactions are simulated but representative — actual prompts vary slightly with the model and your project state.
 
 ---
 
@@ -292,6 +292,58 @@ Adversarial review by the code-reviewer agent — logic errors, edge cases, miss
 A feature that does what the spec says, verified by tests that were written before the implementation, reviewed by a second context that could not see those tests' rationale, and reviewed adversarially. A traceability map from user story to test to commit. Mutation-tested if you ran step 4.
 
 This is the most rigorous version of the SweetClaude code workflow. It is appropriate for net-new features in a project that has reached BETA or beyond. For earlier-stage work, TDD Levels 1 or 2 are usually enough — see [tdd.md](tdd.md).
+
+---
+
+## 7. A Big Feature Through the Large-Story Workflow
+
+### Setup
+
+You describe a substantial, risky piece of work to `/sweetclaude:go` — something
+too big for a single bounded pass. SweetClaude classifies it as high-rigor and
+routes into the internal **large-story** workflow. You don't invoke it directly;
+you just notice the work now moves one gated step at a time.
+
+### Define — lock the criteria
+
+Before any design or code, you and SweetClaude agree the objective, outcomes, and
+non-goals, then it writes and **freezes** a success-criteria contract. Each
+criterion is binary and measurable — vague ones ("looks good", "production-ready")
+are rejected and routed to backlog. Freezing computes a hash; from here, every
+downstream artifact is bound to it.
+
+### Design and Plan — bound to the contract
+
+Design and plan artifacts are written and bound to the frozen contract. The
+controller won't let Plan start until the design is bound, or Implement start
+until the plan is bound. Try to jump ahead and you get a block with the reason.
+
+### Enforcement check
+
+Right before Implement, the controller arms a probe to confirm the evidence gate
+is actually live — it allows one expected write and blocks one forbidden one. If
+enforcement can't be verified, the workflow stops rather than run unprotected.
+
+### Implement — evidence is recorded, not claimed
+
+Only now can project files change. As you work, an evidence hook records the files
+touched and commands run — automatically, from observed activity. You can't
+fabricate it, and you can't skip it.
+
+### Verify — fails closed
+
+The controller regenerates the implementation record and writes the canonical
+ledger. If any criterion lacks evidence — or no implementation evidence was
+observed at all — verify **does not pass**. "It works on my screen" is not
+completion; the ledger is.
+
+### What you have at the end
+
+A feature whose completion is provable: a frozen contract, an evidence trail the
+harness observed, and a ledger that evaluated every criterion. "Done" was granted
+by the controller against evidence, not asserted from how the output looked. For
+the full mechanics see [Large-Story and Small-Story Workflows](large-story-workflow.md)
+and [Evidence and Success-Criteria Contracts](evidence-and-contracts.md).
 
 ---
 

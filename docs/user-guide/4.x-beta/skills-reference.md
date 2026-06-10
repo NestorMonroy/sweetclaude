@@ -1,9 +1,11 @@
 # SweetClaude Skills Reference
 
-**Version:** 1.8
-**Date:** 2026-05-25
+**Version:** 1.9
+**Date:** 2026-06-10
 
-The repo currently contains 113 skill directories, organized by domain. The list changes as framework maintenance skills are promoted or retired; use this page as the user-facing reference, not as a generated manifest. Internal framework skills are referenced only when they affect user-visible routing. For narrative explanations of how skills fit together, read [Walkthroughs](walkthroughs.md) and [How It Works](how-it-works.md).
+The repo currently contains 116 skill directories, organized by domain. The list changes as framework maintenance skills are promoted or retired; use this page as the user-facing reference, not as a generated manifest. Internal framework skills are referenced only when they affect user-visible routing. For narrative explanations of how skills fit together, read [Walkthroughs](walkthroughs.md) and [How It Works](how-it-works.md).
+
+Two internal work-execution workflows — **large-story** and **small-story** — are routed into by `/sweetclaude:go` based on the size and rigor of the work, rather than invoked directly. See [Large-Story and Small-Story Workflows](large-story-workflow.md).
 
 You rarely need to memorize commands. `/sweetclaude:go` is the single entry point — it routes automatically based on project state and what you describe in plain English. The list below is for when you know exactly what you want.
 
@@ -38,7 +40,7 @@ Session navigation and automatic routing. Most of these fire without being invok
 
 ---
 
-## System (20 skills)
+## System (21 skills)
 
 Framework management — setup, teardown, updates, audits, and guards. Always available regardless of version stage.
 
@@ -50,11 +52,12 @@ Framework management — setup, teardown, updates, audits, and guards. Always av
 | **Update** | `/sweetclaude:update` | Sync SweetClaude framework files inside the installed plugin channel. In 4.x beta it reports project drift but does not run project-state or taxonomy migrations inline. Update the Claude Code plugin package and restart Claude Code before running it. |
 | **Migrate** | `/sweetclaude:migrate` | 4.x beta taxonomy migration for supported flat v3 `BL-NNN` backlog layouts. Runs read-only preflight before locks or backups. Unsafe typed legacy layouts and duplicate IDs route to `/sweetclaude:recover` instead of blind migration. |
 | **Migrate Diagnose** | _(internal)_ | Diagnoses old `BL-NNN` migration input problems such as missing fields, unknown statuses, and duplicate IDs. Used by migration/recovery flows, not normally invoked directly. |
-| **Doctor** | `/sweetclaude:doctor` | Diagnostic scan and maintenance front door. Routes project repair, recovery, and supported migration through deterministic safety checks. |
+| **Doctor** | `/sweetclaude:doctor` | The maintenance front door. Runs a read-only scan across 15 check categories, then — only with approval — applies safe auto-fixes and bounded prompted fixes through a backed-up, fully reversible pipeline; surfaces a terminal re-onboard/purge fallback when in-place repair won't work; and routes recovery and supported migration to their owning flows. Every run is archived and can be rolled back. See [Doctor](doctor.md). |
 | **Recover** | `/sweetclaude:recover` | Recover or unblock projects left in bad update, doctor, repair, or unsafe migration states. Diagnoses first, plans, snapshots, asks before execution, verifies, and reports rollback instructions. |
 | **Fix SweetClaude** | `/sweetclaude:fix-sweetclaude` | Deprecated compatibility entry point. Redirects to `/sweetclaude:doctor`. |
 | **Purge** | `/sweetclaude:purge` | Delete all SweetClaude artifacts. Recommends a backup branch first. Requires typed confirmation. |
 | **Assess Mode** | `/sweetclaude:project-assess-shape` | Five-question interview to recommend and configure a project mode (Flow, Kanban, Shape Up, or Agile). Writes mode to `sweetclaude.yaml` and compiles `effective-gates.yaml`. Runs automatically at init; available on demand to re-assess. |
+| **Work-Item Artifacts** | `/sweetclaude:work-item-artifacts` | Manage the opt-in per-work-item artifact directories (`.sweetclaude/work/<ID>/`). Onboard the feature, backfill existing items (symlinks, non-destructive), scan a single item, or report status. See [Work-Item Artifacts](work-item-artifacts.md). |
 | **Behavioral Regression** | `/sweetclaude:behavioral-regression` | Run the 15-contract behavioral test suite against the current model version. Tests phase dwelling, propose-not-ask, TDD enforcement claims, deference levels, detour recovery, improvement register triggers, and more. Run after any Claude model upgrade to detect silent behavioral drift. |
 | **Mode Regression** | `/sweetclaude:sweetclaude-behavioral-regression` | Validate that mode enforcement is working correctly across all four modes. Tests all three enforcement layers: `effective-gates.yaml`, `wip-limit.sh` hook, and MODE_CHECK blocks. Run after any change to the modes system. |
 | **Guardian On** | `/sweetclaude:guardian-on` | Enable Protocol Guardian. Enforces skill invocations, TDD discipline, and artifact saves for the rest of the session. |
