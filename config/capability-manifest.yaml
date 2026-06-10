@@ -139,6 +139,55 @@ capabilities:
     mutates_project: false
     requires_approval: true
     block_reason: "Typed legacy backlog layouts remain compatibility/recovery-only until a layout-specific migration manifest passes dry-run, rollback, and verification drills."
+    graduation_path: recover.graduate_from_compatibility
+
+  recover.graduate_from_compatibility:
+    title: Graduate from compatibility mode
+    supported: true
+    delegate_skill: sweetclaude:recover
+    command_entrypoint:
+      slash_command: /sweetclaude:doctor
+      script: scripts/recovery/recover_project.py
+      module: recovery.recover_project
+    supports_project_shapes:
+      - accepted_legacy_taxonomy
+      - typed_legacy_backlog
+      - graduation_candidate
+    mutation_class: planned_write
+    mutates_project: true
+    requires_approval: true
+    required_preconditions:
+      - project is in compatibility mode or accepted legacy taxonomy
+      - graduation-check passes (v4-compliant)
+    snapshot_scope_hints:
+      - .sweetclaude/state/sweetclaude.yaml
+    postconditions:
+      - id: graduation-state-written
+        check: recovery.taxonomy.status is graduated and framework.migration_status is complete
+    rollback_support:
+      supported: true
+      command: "python3 scripts/recovery/recover_project.py rollback-graduation --project-dir <project>"
+      limitations: []
+    unsupported_states:
+      - condition: old_prefix_files_remain
+        behavior: block
+      - condition: duplicate_ids
+        behavior: block
+      - condition: frontmatter_parse_errors
+        behavior: block
+    version_metadata:
+      introduced_in: 4.2.6-beta
+      deprecated_in: null
+    safety_contract:
+      - diagnose
+      - validate
+      - snapshot
+      - approve
+      - execute
+      - verify-postconditions
+      - rollback
+    verification_commands:
+      - "python3 scripts/recovery/recover_project.py graduation-check --project-dir <project>"
 
   doctor.compatibility_mode:
     title: Continue in compatibility mode
@@ -187,8 +236,15 @@ project_shapes:
     migrate_allowed: false
     message: "This project has an accepted legacy taxonomy layout. Do not run /sweetclaude:migrate unless a future layout-specific migration plan explicitly allows it."
     doctor_capability: doctor.compatibility_mode
+    graduation_capability: recover.graduate_from_compatibility
     blocked_capabilities:
       - migrate.typed_legacy_backlog
+
+  graduation_candidate:
+    guard_status: graduation-available
+    migrate_allowed: false
+    message: "This project is v4-compliant and can graduate from compatibility mode."
+    graduation_capability: recover.graduate_from_compatibility
 
   flat_bl_backlog:
     migration: flat_bl_to_issue

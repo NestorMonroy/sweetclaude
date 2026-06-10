@@ -151,6 +151,47 @@ On **Start supported migration**: invoke `sweetclaude:migrate`. Do not invoke
 `migrate_taxonomy.py` or any migration script directly from Doctor. After the
 migration flow completes, run the full scan and continue with fresh findings.
 
+If `maintenance_route.status` is `graduation-available`, present
+**AskUserQuestion** before running the full scan:
+
+> Doctor found this project is v4-compliant and can graduate from compatibility
+> mode. Graduating clears the compatibility lock and marks migration complete.
+> This is a state-only change — no work-item files are modified.
+
+Options:
+- **Graduate from compatibility mode** — "Validate v4 compliance and exit compatibility mode"
+- **Stay in compatibility mode** — "Continue as-is without graduating"
+
+On **Graduate from compatibility mode**: run the graduation check to confirm,
+then execute graduation through the recovery script. The graduation is a
+state-only write to `sweetclaude.yaml` — no file renames, no content changes.
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/doctor.py create-archive --project-dir .
+```
+
+Store the `archive_dir`. Then snapshot `sweetclaude.yaml` before graduating:
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py graduation-check --project-dir .
+```
+
+If `graduation_allowed` is true, execute:
+
+```bash
+python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py graduate --project-dir .
+```
+
+Report the result. If `status` is `graduated`, confirm success:
+> Graduated from compatibility mode. Migration is now complete.
+
+Then run the full scan and continue with fresh findings.
+
+If `graduation_allowed` is false, report the blockers and fall through to the
+full scan — Doctor's prompted fixes may resolve them.
+
+On **Stay in compatibility mode**: continue to Step 1b.
+
 If `maintenance_route.status` is `compatibility-mode`, print a visible
 maintenance route block before the full scan:
 

@@ -31,7 +31,13 @@ WORK_ITEM_RE = re.compile(
     r"(?:-|\.md$)"
 )
 OLD_TAXONOMY_PREFIXES = {"STORY", "BUG", "DEBT", "CHORE", "BL"}
+V4_TAXONOMY_PREFIXES = {"ISSUE", "EP", "MS", "RM", "I"}
 TYPED_BACKLOG_DIRS = ("stories", "bugs", "debt", "chores")
+CANONICAL_TYPES = frozenset({
+    "bug-fix", "cycle", "enhancement", "epic", "goal", "milestone",
+    "net-new-feature", "pitch", "release", "roadmap_item", "spike",
+    "sprint", "story", "tech-debt", "theme",
+})
 
 
 def _safe_load_yaml(path: Path) -> tuple[Any | None, str | None]:
@@ -168,6 +174,15 @@ def characterize_project(project_dir: Path | str) -> dict[str, Any]:
             "taxonomy_candidate_count": 0,
             "reasons": [],
         },
+        "v4_compliance": {
+            "old_prefix_count": 0,
+            "v4_prefix_count": 0,
+            "is_v4_only": False,
+            "has_required_fields": True,
+            "canonical_types_only": True,
+            "no_duplicates": True,
+            "standard_structure": False,
+        },
     }
 
     if not product_base or not product_base.exists():
@@ -182,7 +197,11 @@ def characterize_project(project_dir: Path | str) -> dict[str, Any]:
     typed_dir_counts: Counter[str] = Counter()
     id_to_files: dict[str, list[str]] = defaultdict(list)
     taxonomy_candidate_count = 0
+    v4_prefix_count = 0
     flat_backlog_items = 0
+    has_all_required_fields = True
+    has_canonical_types_only = True
+    required_fields_checked = False
 
     backlog_dir = product_base / "backlog"
     result["layout"]["has_backlog"] = backlog_dir.is_dir()
@@ -205,15 +224,26 @@ def characterize_project(project_dir: Path | str) -> dict[str, Any]:
             id_to_files[item_id].append(rel_path)
             if prefix in OLD_TAXONOMY_PREFIXES:
                 taxonomy_candidate_count += 1
+            if prefix in V4_TAXONOMY_PREFIXES:
+                v4_prefix_count += 1
             if path.parent == backlog_dir:
                 flat_backlog_items += 1
 
         if len(parts) >= 3 and parts[0] == "backlog" and parts[1] in TYPED_BACKLOG_DIRS:
             typed_dir_counts[parts[1]] += 1
 
-        fm_status, _, fm_error = _frontmatter_status(path)
+        fm_status, fm_data, fm_error = _frontmatter_status(path)
         if fm_status == "present":
             result["frontmatter"]["present"] += 1
+            if match and fm_data:
+                required_fields_checked = True
+                for req in ("id", "type", "title", "status"):
+                    if fm_data.get(req) is None:
+                        has_all_required_fields = False
+                        break
+                item_type = fm_data.get("type")
+                if isinstance(item_type, str) and item_type not in CANONICAL_TYPES:
+                    has_canonical_types_only = False
         elif fm_status == "missing":
             result["frontmatter"]["missing"] += 1
             if len(result["frontmatter"]["missing_files_sample"]) < 20:
@@ -243,6 +273,23 @@ def characterize_project(project_dir: Path | str) -> dict[str, Any]:
     result["layout"]["has_flat_backlog_items"] = flat_backlog_items > 0
     result["layout"]["has_typed_backlog_dirs"] = bool(typed_dir_counts)
     result["migration_risk"]["taxonomy_candidate_count"] = taxonomy_candidate_count
+
+    no_duplicates = len(duplicate_ids) == 0
+    is_v4_only = taxonomy_candidate_count == 0 and v4_prefix_count > 0
+    standard_structure = (
+        result["layout"]["has_backlog"]
+        and not bool(typed_dir_counts)
+        and result["frontmatter"]["parse_errors"] == 0
+    )
+    result["v4_compliance"] = {
+        "old_prefix_count": taxonomy_candidate_count,
+        "v4_prefix_count": v4_prefix_count,
+        "is_v4_only": is_v4_only,
+        "has_required_fields": has_all_required_fields if required_fields_checked else False,
+        "canonical_types_only": has_canonical_types_only,
+        "no_duplicates": no_duplicates,
+        "standard_structure": standard_structure,
+    }
 
     if typed_dir_counts:
         result["layout"]["unsupported_patterns"].append({

@@ -1470,6 +1470,124 @@ def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
     }
 
 
+def graduation_check(project_dir: Path | str) -> dict[str, Any]:
+    """Read-only validation: is this project v4-compliant and ready to exit compatibility mode?"""
+    project = Path(project_dir).expanduser().resolve()
+    characterization = characterize_project(project)
+    state = _read_sweetclaude_state(project)
+
+    taxonomy_status = state.get("taxonomy_recovery_status")
+    if taxonomy_status not in ("stabilized-without-migration", None):
+        if taxonomy_status == "graduated":
+            return {
+                "graduation_allowed": False,
+                "reason": "already-graduated",
+                "detail": "This project has already graduated from compatibility mode.",
+            }
+
+    accepted = _taxonomy_recovery_accepts_legacy_layout(state)
+    if not accepted and taxonomy_status != "stabilized-without-migration":
+        return {
+            "graduation_allowed": False,
+            "reason": "not-in-compatibility-mode",
+            "detail": "Project is not in compatibility mode or accepted legacy taxonomy state.",
+        }
+
+    v4c = characterization.get("v4_compliance", {})
+    blockers: list[dict[str, Any]] = []
+
+    if not v4c.get("is_v4_only"):
+        blockers.append({
+            "code": "old-prefix-files-remain",
+            "detail": f"{v4c.get('old_prefix_count', 0)} files with old taxonomy prefixes remain.",
+        })
+
+    if not v4c.get("no_duplicates"):
+        dup_count = characterization.get("ids", {}).get("duplicate_count", 0)
+        blockers.append({
+            "code": "duplicate-ids",
+            "detail": f"{dup_count} duplicate work-item IDs found.",
+        })
+
+    if not v4c.get("has_required_fields"):
+        blockers.append({
+            "code": "missing-required-fields",
+            "detail": "One or more work items are missing required fields (id, type, title, status).",
+        })
+
+    if not v4c.get("canonical_types_only"):
+        blockers.append({
+            "code": "legacy-type-aliases",
+            "detail": "One or more work items use legacy type aliases (bug, feature, debt, chore).",
+        })
+
+    if characterization.get("frontmatter", {}).get("parse_errors", 0) > 0:
+        blockers.append({
+            "code": "frontmatter-parse-errors",
+            "detail": f"{characterization['frontmatter']['parse_errors']} files have unparseable frontmatter.",
+        })
+
+    if not v4c.get("standard_structure"):
+        blockers.append({
+            "code": "non-standard-structure",
+            "detail": "Project layout does not match standard v4 structure.",
+        })
+
+    if blockers:
+        return {
+            "graduation_allowed": False,
+            "reason": "validation-failures",
+            "blockers": blockers,
+            "v4_compliance": v4c,
+        }
+
+    return {
+        "graduation_allowed": True,
+        "reason": "v4-compliant",
+        "v4_compliance": v4c,
+    }
+
+
+def graduate(project_dir: Path | str) -> dict[str, Any]:
+    """Execute graduation: write state marking project as graduated from compatibility mode.
+
+    Precondition: graduation_check must pass. This function re-validates before writing.
+    """
+    project = Path(project_dir).expanduser().resolve()
+    check = graduation_check(project)
+    if not check.get("graduation_allowed"):
+        return {
+            "status": "blocked",
+            "reason": check.get("reason", "unknown"),
+            "detail": check.get("blockers", check.get("detail", "")),
+        }
+
+    sc_path = project / ".sweetclaude" / "state" / "sweetclaude.yaml"
+    if not sc_path.exists():
+        return {"status": "error", "reason": "sweetclaude-yaml-missing"}
+
+    data = _load_yaml_mapping(sc_path)
+    now = datetime.now(timezone.utc).isoformat()
+
+    recovery = data.setdefault("recovery", {})
+    taxonomy = recovery.setdefault("taxonomy", {})
+    taxonomy["status"] = "graduated"
+    taxonomy["compatibility_exited"] = True
+    taxonomy["migration_required"] = False
+    taxonomy["graduated_at"] = now
+
+    framework = data.setdefault("framework", {})
+    framework["migration_status"] = "complete"
+
+    _write_yaml_mapping(sc_path, data)
+
+    return {
+        "status": "graduated",
+        "graduated_at": now,
+        "sweetclaude_yaml_path": str(sc_path),
+    }
+
+
 def guard_project(project_dir: Path | str) -> dict[str, Any]:
     """Return a concise read-only routing decision for migration guards."""
     project = Path(project_dir).expanduser().resolve()
@@ -1494,7 +1612,11 @@ def guard_project(project_dir: Path | str) -> dict[str, Any]:
     elif route == "manual-escalation":
         project_shape = "manual_escalation"
     elif accepted_legacy_layout:
-        project_shape = "accepted_legacy_taxonomy"
+        grad_check = graduation_check(project)
+        if grad_check.get("graduation_allowed"):
+            project_shape = "graduation_candidate"
+        else:
+            project_shape = "accepted_legacy_taxonomy"
     elif old_prefix_count and flat_bl_count and not has_typed_backlog_dirs:
         project_shape = "flat_bl_backlog"
     elif old_prefix_count:
@@ -1593,6 +1715,20 @@ def main(argv: list[str] | None = None) -> int:
     resume_parser.add_argument("--run-dir", required=True, help="Recovery run directory")
     resume_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
 
+    grad_check_parser = subparsers.add_parser(
+        "graduation-check",
+        help="Read-only check: is this project ready to graduate from compatibility mode?",
+    )
+    grad_check_parser.add_argument("--project-dir", default=".", help="Project directory")
+    grad_check_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
+
+    grad_parser = subparsers.add_parser(
+        "graduate",
+        help="Graduate project from compatibility mode (state-only write)",
+    )
+    grad_parser.add_argument("--project-dir", default=".", help="Project directory")
+    grad_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
+
     args = parser.parse_args(argv)
 
     try:
@@ -1615,6 +1751,10 @@ def main(argv: list[str] | None = None) -> int:
             result = rollback_project(Path(args.run_dir))
         elif args.command == "resume":
             result = resume_project(Path(args.run_dir))
+        elif args.command == "graduation-check":
+            result = graduation_check(Path(args.project_dir))
+        elif args.command == "graduate":
+            result = graduate(Path(args.project_dir))
         else:
             parser.error(f"unsupported command: {args.command}")
     except Exception as exc:
