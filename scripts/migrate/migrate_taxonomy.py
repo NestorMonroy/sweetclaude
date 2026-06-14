@@ -1740,6 +1740,547 @@ def _parse_dest_file(path: Path) -> dict:
 # CLI
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# S2 dry-run plan engine
+# ---------------------------------------------------------------------------
+
+# IDs that are already v4 — do not remap
+_V4_ID_RE = re.compile(r"^(ISSUE|EP|MS|SP|RM|I)-\d+$")
+
+# Prefixes that must NOT appear in id_map (pass-through, no remap)
+_PASSTHROUGH_PREFIXES = {"MS", "SP", "RM", "I"}
+
+# Canonical type map (supplement WORKFLOW_TYPE_MAP with already-canonical values)
+_CANONICAL_TYPE_MAP = dict(WORKFLOW_TYPE_MAP)
+_CANONICAL_TYPE_MAP["tech-debt"] = "tech-debt"
+_CANONICAL_TYPE_MAP["bug-fix"] = "bug-fix"
+_CANONICAL_TYPE_MAP["enhancement"] = "enhancement"
+_CANONICAL_TYPE_MAP["spike"] = "spike"
+
+
+def _scan_product_tree_s2(product_base: Path, project_dir: Path) -> list:
+    """Walk the product base and return candidate work-item dicts.
+
+    Each dict has: path, kind, epic_dir (optional), epic_num (optional),
+    paired_story (for bespoke-feature entries).
+
+    Kinds: typed-backlog | bespoke-epic | bespoke-story | bespoke-feature |
+           top-level-old | spike
+    """
+    from recovery.characterize_project import is_derived_file  # noqa: PLC0415
+
+    candidates = []
+
+    # 1. Typed backlog subdirs: backlog/{stories,bugs,debt,chores}/<PREFIX>-NNN*.md
+    typed_backlog_root = product_base / "backlog"
+    typed_subdir_names = {"stories", "bugs", "debt", "chores"}
+    typed_prefix_re = re.compile(r"^(STORY|BUG|CHORE|DEBT|BL)-(\d+)")
+    if typed_backlog_root.exists():
+        for subdir_name in sorted(typed_subdir_names):
+            subdir = typed_backlog_root / subdir_name
+            if not subdir.exists():
+                continue
+            for f in sorted(subdir.iterdir()):
+                if not f.is_file() or not f.name.endswith(".md"):
+                    continue
+                rel = str(f.relative_to(project_dir))
+                if is_derived_file(rel):
+                    continue
+                if typed_prefix_re.match(f.name):
+                    candidates.append({
+                        "path": f,
+                        "kind": "typed-backlog",
+                        "epic_dir": None,
+                    })
+
+    # 2. Spike reports: backlog/spike-reports/spike-BL-NNN*.md
+    spike_dir = product_base / "backlog" / "spike-reports"
+    spike_prefix_re = re.compile(r"^spike-BL-(\d+)")
+    if spike_dir.exists():
+        for f in sorted(spike_dir.iterdir()):
+            if not f.is_file() or not f.name.endswith(".md"):
+                continue
+            rel = str(f.relative_to(project_dir))
+            if is_derived_file(rel):
+                continue
+            if spike_prefix_re.match(f.name):
+                candidates.append({
+                    "path": f,
+                    "kind": "spike",
+                    "epic_dir": None,
+                })
+
+    # 3. Top-level old-prefix files at product_base root
+    top_prefix_re = re.compile(r"^(BL|STORY|BUG|CHORE|DEBT)-(\d+)")
+    if product_base.exists():
+        for f in sorted(product_base.iterdir()):
+            if not f.is_file() or not f.name.endswith(".md"):
+                continue
+            rel = str(f.relative_to(project_dir))
+            if is_derived_file(rel):
+                continue
+            if top_prefix_re.match(f.name):
+                candidates.append({
+                    "path": f,
+                    "kind": "top-level-old",
+                    "epic_dir": None,
+                })
+
+    # 4. Old-prefix files in flat backlog/ dir (not in typed subdir)
+    if typed_backlog_root.exists():
+        for f in sorted(typed_backlog_root.iterdir()):
+            if not f.is_file() or not f.name.endswith(".md"):
+                continue
+            rel = str(f.relative_to(project_dir))
+            if is_derived_file(rel):
+                continue
+            if top_prefix_re.match(f.name):
+                candidates.append({
+                    "path": f,
+                    "kind": "top-level-old",
+                    "epic_dir": None,
+                })
+
+    # 5. Bespoke epic dirs: stories/EPIC-NNN/ containing EPIC-NNN.md + US-*.md
+    bespoke_epic_re = re.compile(r"^(EPIC)-(\d+)$")
+    bespoke_epic_file_re = re.compile(r"^(EPIC-\d+)\.md$")
+    stories_dir = product_base / "stories"
+    if stories_dir.exists():
+        for epic_dir_path in sorted(stories_dir.iterdir()):
+            if not epic_dir_path.is_dir():
+                continue
+            em = bespoke_epic_re.match(epic_dir_path.name)
+            if not em:
+                continue
+            epic_num_str = em.group(2)
+            # Add the epic file (EPIC-NNN.md)
+            epic_md = epic_dir_path / f"{epic_dir_path.name}.md"
+            if epic_md.exists():
+                rel = str(epic_md.relative_to(project_dir))
+                if not is_derived_file(rel):
+                    candidates.append({
+                        "path": epic_md,
+                        "kind": "bespoke-epic",
+                        "epic_dir": epic_dir_path.name,
+                        "epic_num": epic_num_str,
+                    })
+            # Add US-*.md bespoke story files (skip index/supporting files and backups)
+            for f in sorted(epic_dir_path.iterdir()):
+                if not f.is_file():
+                    continue
+                # Skip EPIC-NNN.md (handled above)
+                if bespoke_epic_file_re.match(f.name):
+                    continue
+                # Skip EPIC-NNN-index.md and other EPIC-NNN-*.md supporting files
+                if re.match(r"^EPIC-\d+-", f.name):
+                    continue
+                rel = str(f.relative_to(project_dir))
+                if is_derived_file(rel):
+                    continue
+                if f.suffix == ".md" and f.name.startswith("US-"):
+                    candidates.append({
+                        "path": f,
+                        "kind": "bespoke-story",
+                        "epic_dir": epic_dir_path.name,
+                        "epic_num": epic_num_str,
+                    })
+                    # Check for paired .feature file
+                    feature_path = f.with_suffix(".feature")
+                    if feature_path.exists():
+                        candidates.append({
+                            "path": feature_path,
+                            "kind": "bespoke-feature",
+                            "epic_dir": epic_dir_path.name,
+                            "epic_num": epic_num_str,
+                            "paired_story": f.stem,
+                        })
+                elif f.suffix == ".feature" and f.name.startswith("US-"):
+                    # .feature file without a paired md (or md already collected above)
+                    # Will be handled when processing paired story
+                    pass
+
+    return candidates
+
+
+def _extract_legacy_id_s2(cand: dict) -> str:
+    """Derive a legacy id string from a candidate dict."""
+    path = cand["path"]
+    kind = cand["kind"]
+
+    if kind == "bespoke-epic":
+        m = re.match(r"^(EPIC-\d+)\.md$", path.name)
+        if m:
+            return m.group(1)
+        return cand.get("epic_dir", path.stem)
+
+    if kind in ("bespoke-story", "bespoke-feature"):
+        return path.stem
+
+    # typed-backlog, top-level-old, spike: try frontmatter id first
+    try:
+        raw = path.read_bytes()
+        text = raw.decode("utf-8", errors="replace")
+        if text.startswith("---"):
+            parts = text.split("---", 2)
+            if len(parts) >= 3 and parts[1].strip():
+                fm = yaml.safe_load(parts[1])
+                if isinstance(fm, dict) and fm.get("id"):
+                    return str(fm["id"])
+    except Exception:
+        pass
+
+    # Fallback: extract from filename
+    m = re.match(r"^(spike-BL-\d+|[A-Za-z]+-[A-Za-z]+-\d+|[A-Za-z]+-\d+)", path.stem)
+    if m:
+        return m.group(1)
+    return path.stem
+
+
+def _find_existing_issue_max_s2(product_base: Path) -> int:
+    """Scan the product tree for existing ISSUE-NNN files and return the max number."""
+    issue_re = re.compile(r"^ISSUE-(\d+)")
+    max_num = 0
+    if not product_base.exists():
+        return 0
+    for f in product_base.rglob("*.md"):
+        if not f.is_file():
+            continue
+        m = issue_re.match(f.name)
+        if m:
+            max_num = max(max_num, int(m.group(1)))
+        # Also check frontmatter id
+        try:
+            raw = f.read_bytes()
+            text = raw.decode("utf-8", errors="replace")
+            if text.startswith("---"):
+                parts = text.split("---", 2)
+                if len(parts) >= 3 and parts[1].strip():
+                    fm = yaml.safe_load(parts[1])
+                    if isinstance(fm, dict):
+                        fid = fm.get("id", "")
+                        if isinstance(fid, str):
+                            m2 = issue_re.match(fid)
+                            if m2:
+                                max_num = max(max_num, int(m2.group(1)))
+        except Exception:
+            pass
+    return max_num
+
+
+def _parse_frontmatter_and_body(path: Path) -> tuple:
+    """Return (frontmatter_dict_or_None, full_text)."""
+    try:
+        raw = path.read_bytes()
+        text = raw.decode("utf-8", errors="replace")
+    except Exception:
+        return None, ""
+
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3 and parts[1].strip():
+            try:
+                fm = yaml.safe_load(parts[1])
+                if isinstance(fm, dict) and fm:
+                    return fm, text
+            except yaml.YAMLError:
+                pass
+    return None, text
+
+
+def _tier_and_flag(fm, full_text: str) -> tuple:
+    """Return (tier, should_flag)."""
+    if fm is not None:
+        return "A", False
+    has_h1 = bool(re.search(r"^#\s+\S", full_text, re.MULTILINE))
+    return "B", not has_h1
+
+
+def _build_dry_run_plan(project_dir: str) -> dict:
+    """Build the S2 dry-run plan — new schema with moves/id_map/reference_edits/conflicts/flags.
+    Does NOT write any product file. Only writes migration-plan.yaml to .sweetclaude/state/.
+    """
+    pd = Path(project_dir)
+
+    try:
+        product_base = _get_product_base(pd)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        resolved_base = product_base.resolve()
+        resolved_proj = pd.resolve()
+        if not str(resolved_base).startswith(str(resolved_proj)):
+            return {"ok": False, "error": "product base_path escapes project root"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+    # Import here to avoid circular at module load
+    from recovery.characterize_project import is_derived_file  # noqa: PLC0415
+
+    candidates = _scan_product_tree_s2(product_base, pd)
+
+    # Max existing ISSUE number (for global counter seed)
+    issue_max = _find_existing_issue_max_s2(product_base)
+    issue_counter = issue_max
+
+    # Assign legacy_ids; group by (legacy_id, epic_dir) for duplicate detection.
+    # Two US-*.md files with the same name in DIFFERENT epic dirs are distinct items.
+    # Two files with the same name in the SAME location are true duplicates.
+    for cand in candidates:
+        if cand["kind"] == "bespoke-feature":
+            continue
+        legacy_id = _extract_legacy_id_s2(cand)
+        cand["legacy_id"] = legacy_id
+
+    # Group by (legacy_id, epic_dir or None) to detect true duplicates
+    group_key_to_cands: dict[tuple, list] = {}
+    for cand in candidates:
+        if cand["kind"] == "bespoke-feature":
+            continue
+        key = (cand["legacy_id"], cand.get("epic_dir"))
+        group_key_to_cands.setdefault(key, []).append(cand)
+
+    # Separate into epics and issue items
+    epic_cands = []
+    issue_cands = []
+    conflicts = []
+    conflict_ids: set[str] = set()
+
+    for (legacy_id, epic_dir_key), cand_list in sorted(group_key_to_cands.items()):
+        real_cands = [c for c in cand_list if c["kind"] != "bespoke-feature"]
+        if len(real_cands) > 1:
+            # True duplicate: same id in same context
+            conflicts.append({
+                "id": legacy_id,
+                "files": sorted(str(c["path"].relative_to(pd)) for c in real_cands),
+                "status": "decision required",
+            })
+            conflict_ids.add(legacy_id)
+            real_cands = real_cands[:1]
+        cand = real_cands[0]
+        cand["legacy_id"] = legacy_id
+        if cand["kind"] == "bespoke-epic":
+            epic_cands.append(cand)
+        else:
+            issue_cands.append(cand)
+
+    epic_cands.sort(key=lambda c: c["legacy_id"])
+    issue_cands.sort(key=lambda c: str(c["path"]))
+
+    # id_map: legacy_id -> {new_id, source}
+    id_map: dict[str, dict] = {}
+    epic_dir_to_new_id: dict[str, str] = {}  # epic_dir_name -> EP-NNN
+
+    # Assign EP-NNN ids (number preserved)
+    for cand in epic_cands:
+        legacy_id = cand["legacy_id"]
+        if _V4_ID_RE.match(legacy_id):
+            continue
+        m = re.match(r"^EPIC-(\d+)$", legacy_id)
+        if m:
+            num = int(m.group(1))
+            new_id = f"EP-{num:03d}"
+        else:
+            new_id = f"EP-{legacy_id}"
+        source_rel = str(cand["path"].relative_to(pd))
+        id_map[legacy_id] = {"new_id": new_id, "source": source_rel}
+        cand["new_id"] = new_id
+        epic_dir_name = cand.get("epic_dir", legacy_id)
+        epic_dir_to_new_id[epic_dir_name] = new_id
+
+    # Assign ISSUE-NNN ids (global counter, deterministic by path sort)
+    # Track how many times a legacy_id has been seen so far for path-qualified keys
+    legacy_id_seen: dict[str, int] = {}
+    for cand in issue_cands:
+        legacy_id = cand["legacy_id"]
+        if _V4_ID_RE.match(legacy_id):
+            continue
+        prefix_m = re.match(r"^([A-Za-z][A-Za-z0-9]*)-", legacy_id)
+        if prefix_m and prefix_m.group(1) in _PASSTHROUGH_PREFIXES:
+            continue
+        issue_counter += 1
+        new_id = f"ISSUE-{issue_counter:03d}"
+        source_rel = str(cand["path"].relative_to(pd))
+        seen_count = legacy_id_seen.get(legacy_id, 0)
+        if seen_count == 0:
+            id_map[legacy_id] = {"new_id": new_id, "source": source_rel}
+        else:
+            # Second or subsequent file with same legacy_id (different epic dir)
+            # Use path-qualified key so id_map stays consistent for reference_edits
+            path_key = f"{legacy_id}#{source_rel}"
+            id_map[path_key] = {"new_id": new_id, "source": source_rel}
+        legacy_id_seen[legacy_id] = seen_count + 1
+        cand["new_id"] = new_id
+
+    # Check for v4-collision: EPIC-NNN -> EP-NNN when backlog/EP-NNN*.md already exists
+    for cand in epic_cands:
+        new_id = cand.get("new_id")
+        if not new_id:
+            continue
+        ep_file_re = re.compile(rf"^{re.escape(new_id)}(?:-|\.md$)")
+        for f in product_base.rglob("*.md"):
+            if not f.is_file() or not ep_file_re.match(f.name):
+                continue
+            try:
+                raw = f.read_bytes()
+                text = raw.decode("utf-8", errors="replace")
+                if text.startswith("---"):
+                    parts = text.split("---", 2)
+                    if len(parts) >= 3 and parts[1].strip():
+                        fm = yaml.safe_load(parts[1])
+                        if isinstance(fm, dict) and fm.get("id") == new_id:
+                            if not any(c["id"] == new_id for c in conflicts):
+                                conflicts.append({
+                                    "id": new_id,
+                                    "files": [
+                                        str(cand["path"].relative_to(pd)),
+                                        str(f.relative_to(pd)),
+                                    ],
+                                    "status": "decision required",
+                                })
+                            break
+            except Exception:
+                pass
+
+    # Build moves list
+    moves = []
+    flags = []
+    pb_rel = str(product_base.relative_to(pd))
+
+    for cand in epic_cands + issue_cands:
+        legacy_id = cand.get("legacy_id", "")
+        new_id = cand.get("new_id")
+        if not new_id:
+            continue
+
+        path = cand["path"]
+        source_rel = str(path.relative_to(pd))
+        fm, full_text = _parse_frontmatter_and_body(path)
+        tier, should_flag = _tier_and_flag(fm, full_text)
+
+        if cand["kind"] == "bespoke-epic":
+            dest_rel = f"{pb_rel}/roadmap/epics/{new_id}/{new_id}.md"
+        else:
+            dest_rel = f"{pb_rel}/backlog/{new_id}.md"
+
+        move_dict = {
+            "legacy_id": legacy_id,
+            "new_id": new_id,
+            "source": source_rel,
+            "dest": dest_rel,
+            "action": "migrate",
+            "tier": tier,
+        }
+
+        # planned_type
+        if fm:
+            raw_type = fm.get("type", "")
+            if raw_type:
+                lower = str(raw_type).lower()
+                move_dict["planned_type"] = _CANONICAL_TYPE_MAP.get(lower, lower)
+
+        # planned_status
+        if fm:
+            raw_status = fm.get("status", "")
+            if raw_status:
+                lower = str(raw_status).lower()
+                if lower in CANONICAL_STATUSES:
+                    move_dict["planned_status"] = lower
+                elif lower in STATUS_REMAP:
+                    move_dict["planned_status"] = STATUS_REMAP[lower]
+                else:
+                    move_dict["planned_status"] = lower
+
+        # epic link for bespoke stories
+        if cand["kind"] == "bespoke-story":
+            epic_dir = cand.get("epic_dir")
+            if epic_dir and epic_dir in epic_dir_to_new_id:
+                move_dict["epic"] = epic_dir_to_new_id[epic_dir]
+
+        moves.append(move_dict)
+
+        if should_flag:
+            flags.append({
+                "id": legacy_id,
+                "reason": "no frontmatter and no H1 heading — low confidence",
+                "tier": "B",
+            })
+
+    # Handle .feature files paired with bespoke stories
+    for cand in candidates:
+        if cand["kind"] != "bespoke-feature":
+            continue
+        paired_story_id = cand.get("paired_story")
+        if not paired_story_id:
+            continue
+        story_new_id = id_map.get(paired_story_id, {}).get("new_id")
+        if not story_new_id:
+            continue
+        path = cand["path"]
+        source_rel = str(path.relative_to(pd))
+        dest_rel = f"{pb_rel}/backlog/{story_new_id}.feature"
+        moves.append({
+            "legacy_id": paired_story_id,
+            "new_id": story_new_id,
+            "source": source_rel,
+            "dest": dest_rel,
+            "action": "migrate",
+            "tier": "A",
+        })
+
+    # Build reference_edits: scan all .md/.feature files for id_map key mentions
+    reference_edits = []
+    all_old_ids = sorted(id_map.keys(), key=lambda x: -len(x))
+
+    if all_old_ids and product_base.exists():
+        files_to_scan = []
+        for f in product_base.rglob("*"):
+            if not f.is_file() or f.suffix not in (".md", ".feature"):
+                continue
+            rel = str(f.relative_to(pd))
+            if is_derived_file(rel):
+                continue
+            files_to_scan.append(f)
+
+        for f in sorted(files_to_scan):
+            file_rel = str(f.relative_to(pd))
+            try:
+                text = f.read_bytes().decode("utf-8", errors="replace")
+            except Exception:
+                continue
+            for old_id in all_old_ids:
+                new_id_for_ref = id_map[old_id]["new_id"]
+                # Word-boundary: no alphanumeric or hyphen immediately adjacent
+                pattern = (
+                    r"(?<![A-Za-z0-9\-])"
+                    + re.escape(old_id)
+                    + r"(?![A-Za-z0-9\-])"
+                )
+                if re.search(pattern, text):
+                    reference_edits.append({
+                        "file": file_rel,
+                        "old_id": old_id,
+                        "new_id": new_id_for_ref,
+                    })
+
+    # Write migration-plan.yaml
+    state_dir = pd / ".sweetclaude" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    plan_path = state_dir / "migration-plan.yaml"
+    plan_data = {
+        "ok": True,
+        "dry_run": True,
+        "moves": moves,
+        "id_map": id_map,
+        "reference_edits": reference_edits,
+        "conflicts": conflicts,
+        "flags": flags,
+    }
+    _atomic_write_yaml(plan_path, plan_data)
+
+    return plan_data
+
+
 def run_migration(
     project_dir: str,
     dry_run: bool = False,
@@ -1753,6 +2294,12 @@ def run_migration(
     here.
     """
     pd = Path(project_dir)
+
+    if dry_run:
+        try:
+            return _build_dry_run_plan(project_dir)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     sources = scan_sources(str(pd))
     if not sources:
@@ -1768,14 +2315,6 @@ def run_migration(
         return {"ok": False, "dry_run": dry_run, "errors": errors}
 
     plan = build_plan(str(pd))
-
-    if dry_run:
-        return {
-            "ok": True,
-            "dry_run": True,
-            "planned_moves": len(plan.moves),
-            "collision_map": plan.collision_map,
-        }
 
     snapshot_path = create_snapshot(str(pd), [str(_get_product_base(pd))])
     result = execute(
