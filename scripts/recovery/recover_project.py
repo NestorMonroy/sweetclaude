@@ -38,9 +38,9 @@ from mutation_safety import (
 )
 
 try:
-    from recovery.characterize_project import characterize_project
+    from recovery.characterize_project import characterize_project, is_derived_file
 except ModuleNotFoundError:  # Allows direct script execution.
-    from characterize_project import characterize_project
+    from characterize_project import characterize_project, is_derived_file
 
 
 SCHEMA_VERSION = 1
@@ -1691,12 +1691,20 @@ def _frontmatter_id(path: Path) -> str | None:
     return None
 
 
-_WORK_ITEM_ID_RE = re.compile(r"^[A-Z]+-\d+$")
+_WORK_ITEM_ID_RE = re.compile(r"^[A-Z]+(?:-[A-Z0-9]+)*-\d+$")
 
 
 def _collect_known_ids(product_base: Path) -> set[str]:
     ids: set[str] = set()
-    for path in product_base.rglob("*.md"):
+    for path in product_base.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            rel = path.relative_to(product_base).as_posix()
+        except ValueError:
+            continue
+        if is_derived_file(rel):
+            continue
         value = _frontmatter_id(path)
         if value:
             ids.add(value)
