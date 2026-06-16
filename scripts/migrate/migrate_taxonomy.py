@@ -21,6 +21,13 @@ from typing import Dict, List, Optional, Tuple
 
 import yaml
 
+# Ensure the scripts/ directory is importable so `recovery.characterize_project`
+# resolves both as a package import (under tests, via conftest) and when this
+# file is executed directly as a CLI (how sweetclaude:migrate invokes it).
+_SCRIPTS_DIR = str(Path(__file__).resolve().parents[1])
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
 
 # ---------------------------------------------------------------------------
 # Constants
