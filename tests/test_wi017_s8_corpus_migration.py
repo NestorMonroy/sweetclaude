@@ -88,6 +88,35 @@ def test_versioned_draft_doc_with_work_item_prefix_is_document(tmp_path):
     assert result["counts"]["prefixes"].get("ISSUE", 0) == 1
 
 
+def test_no_project_shape_is_a_dead_end():
+    """Every project shape the guard can classify must route to an offered
+    action (migrate / recover / graduate / fix-blockers / manual-review) or be a
+    clean terminal state. A shape with no routed action is the dead-end WI-017
+    exists to eliminate."""
+    import yaml
+
+    manifest = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / "config" / "capability-manifest.yaml")
+        .read_text(encoding="utf-8")
+    )
+    shapes = manifest["project_shapes"]
+    action_keys = (
+        "migration_capability",
+        "recovery_capability",
+        "graduation_capability",
+        "blocker_fix_capability",
+        "doctor_capability",
+    )
+    terminal_ok_statuses = {"ok"}
+    dead_ends = []
+    for name, cfg in shapes.items():
+        has_action = any(cfg.get(k) for k in action_keys)
+        is_terminal = cfg.get("guard_status") in terminal_ok_statuses
+        if not (has_action or is_terminal):
+            dead_ends.append(name)
+    assert dead_ends == [], f"project shapes with no routed action (dead-ends): {dead_ends}"
+
+
 def test_migrating_done_subdir_leaves_no_typed_backlog(tmp_path):
     project = _make_project(tmp_path, {
         "backlog/stories/STORY-001-active.md": _story("STORY-001"),
