@@ -2322,8 +2322,19 @@ def _build_migration_recommendations(
     if maintenance_route.get("status") != "supported-migration-available":
         return []
     allowed_capability = (maintenance_route.get("primary_action") or {}).get("capability_id")
-    if allowed_capability != "migrate.flat_bl_to_issue":
+    # S7: also handle typed-legacy migration capability
+    if allowed_capability not in ("migrate.flat_bl_to_issue", "migrate.typed_legacy_backlog"):
         return []
+    if allowed_capability == "migrate.typed_legacy_backlog":
+        return [{
+            "script": "migrate_taxonomy.py",
+            "finding_id": "typed-legacy-migration",
+            "summary": "Typed legacy backlog can be migrated to ISSUE-NNN taxonomy",
+            "estimated_resolvable": 1,
+            "total_findings": max(1, len(findings)),
+            "pct": 100,
+            "capability_id": "migrate.typed_legacy_backlog",
+        }]
 
     recs: list[dict] = []
 
@@ -2546,6 +2557,30 @@ def build_maintenance_route(state: ProjectState) -> dict:
                 {
                     "id": "continue-compatibility-mode",
                     "label": "Stay in compatibility mode",
+                    "mutates_project": False,
+                },
+            ],
+        })
+        return route
+
+    if status == "supported-migration-available":
+        # S7: typed-legacy projects now route here directly (not through migration-may-be-needed)
+        capability_id = str(shape_config.get("migration_capability", "migrate.typed_legacy_backlog"))
+        route.update({
+            "status": "supported-migration-available",
+            "message": (
+                "Doctor found a typed legacy backlog layout. "
+                "Run /sweetclaude:migrate to migrate to the unified ISSUE-NNN taxonomy."
+            ),
+            "primary_action": _capability_action(
+                capability_id,
+                "start-typed-legacy-migration",
+                "Migrate typed legacy backlog",
+            ),
+            "secondary_actions": [
+                {
+                    "id": "continue-without-migration",
+                    "label": "Continue without migration",
                     "mutates_project": False,
                 },
             ],

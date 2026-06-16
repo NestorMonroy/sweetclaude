@@ -239,12 +239,12 @@ def test_guard_routes_v4_compat_project_to_graduation_candidate(tmp_path):
     assert result["status"] == "graduation-available"
 
 
-def test_guard_routes_typed_legacy_to_accepted_legacy(tmp_path):
+def test_guard_routes_typed_legacy_to_migration(tmp_path):
     project = _make_typed_legacy_project(tmp_path)
 
     result = _run_cmd(RECOVER, "guard", "--project-dir", str(project))
-    assert result["project_shape"] == "accepted_legacy_taxonomy"
-    assert result["status"] == "compatibility-mode"
+    assert result["project_shape"] == "typed_legacy_backlog"
+    assert result["status"] == "supported-migration-available"
 
 
 # --- doctor maintenance route ---
@@ -262,15 +262,15 @@ def test_doctor_route_graduation_available_for_v4_compat(tmp_path):
     assert route["primary_action"]["mutates_project"] is True
 
 
-def test_doctor_route_compat_mode_for_typed_legacy(tmp_path):
+def test_doctor_route_migration_for_typed_legacy(tmp_path):
     project = _make_typed_legacy_project(tmp_path)
 
     result = _run_cmd(
         DOCTOR, "maintenance-route", "--project-dir", str(project),
     )
     route = result["maintenance_route"]
-    assert route["status"] == "compatibility-mode"
-    assert route["primary_action"]["capability_id"] == "doctor.compatibility_mode"
+    assert route["status"] == "supported-migration-available"
+    assert route["primary_action"]["capability_id"] == "migrate.typed_legacy_backlog"
 
 
 # --- read-only guarantees ---

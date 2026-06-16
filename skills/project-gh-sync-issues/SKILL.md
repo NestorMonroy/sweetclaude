@@ -40,6 +40,10 @@ If the guard output has `status` `run-recover`, `manual-review`,
 guard `message`, tell the user to run `/sweetclaude:recover` when recovery is
 available, and stop. Do not recommend migration.
 
+If the guard output has `status` `supported-migration-available`: print
+"This project has a typed legacy backlog layout that can be migrated. Run
+`/sweetclaude:migrate` to convert to the unified ISSUE-NNN taxonomy." Then stop.
+
 If the guard output has `status` `migration-may-be-needed`: print the guard
 `message`, then stop and tell the user to review `/sweetclaude:migrate` before
 running it. Do not invoke migration from this skill.

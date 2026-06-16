@@ -34,7 +34,10 @@ def _copy_syncog_fixture(tmp_path: Path) -> Path:
         "\n".join([
             "framework:",
             "  installed_version: 4.1.1-beta",
-            "  migration_status: complete",
+            # incomplete -> recovery_required (stabilize-without-migration), the
+            # flow these recovery-lifecycle tests exercise. Post-S7 a "complete"
+            # syncog routes to typed-legacy-migrate instead.
+            "  migration_status: incomplete",
             "paths:",
             "  product_base: docs/product",
             "",
@@ -130,7 +133,7 @@ def test_execute_rejects_approval_when_operation_value_changes_before_writes(tmp
     def changed_state_operations(project_arg, diagnosis):
         operations = original_state_operations(project_arg, diagnosis)
         for operation in operations:
-            if operation["id"] == "set-migration-status-deferred":
+            if operation["id"] == "record-taxonomy-recovery-state":
                 operation["planned_value"] = "changed-after-approval"
         return operations
 
@@ -166,7 +169,7 @@ def test_execute_snapshots_applies_manifest_and_verifies_without_product_changes
     assert Path(result["report_path"]).is_file()
     report = Path(result["report_path"]).read_text(encoding="utf-8")
     assert "SweetClaude Recovery Report" in report
-    assert "set-migration-status-deferred" in report
+    assert "record-taxonomy-recovery-state" in report
     assert "doctor-migration-scan-safe" in report
     assert "Rollback command" in report
     assert ".sweetclaude/state/recovery-runs/" in report
@@ -184,7 +187,10 @@ def test_execute_snapshots_applies_manifest_and_verifies_without_product_changes
     assert not pending.exists()
 
     state = _state(project)
-    assert state["framework"]["migration_status"] == "deferred"
+    # Stabilizing an incomplete project records the taxonomy recovery state but
+    # does not itself normalize migration_status (the set-migration-status op
+    # only fires for the stale-complete case, which now routes to migration).
+    assert state["framework"]["migration_status"] == "incomplete"
     assert state["recovery"]["taxonomy"]["status"] == "stabilized-without-migration"
     assert state["recovery"]["taxonomy"]["blind_taxonomy_migration_allowed"] is False
 
@@ -234,7 +240,7 @@ def test_resume_continues_interrupted_run_from_manifest(tmp_path):
     ))
     assert manifest["status"] == "failed"
     assert [operation["id"] for operation in manifest["operations"]] == [
-        "set-migration-status-deferred"
+        "record-taxonomy-recovery-state"
     ]
 
     resumed = resume_project(run_dirs[0])
@@ -244,7 +250,6 @@ def test_resume_continues_interrupted_run_from_manifest(tmp_path):
     assert Path(resumed["report_path"]).is_file()
     assert resumed["resume_count"] == 1
     assert [operation["id"] for operation in resumed["operations"]] == [
-        "set-migration-status-deferred",
         "record-taxonomy-recovery-state",
         "delete-pending-doctor-prompt-1",
     ]

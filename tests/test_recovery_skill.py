@@ -68,7 +68,7 @@ def test_bootstrap_v4_hard_stop_classifies_before_recommending_migrate():
 
     guard_idx = skill.index("guard --project-dir .")
     migrate_idx = skill.index(
-        "Never recommend `/sweetclaude:migrate` for any status except"
+        "Recommend `/sweetclaude:migrate` for statuses"
     )
     assert guard_idx < migrate_idx, (
         "the guard must classify the project before any migrate recommendation"

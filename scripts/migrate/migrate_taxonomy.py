@@ -144,6 +144,9 @@ class MigrationResult:
 # ---------------------------------------------------------------------------
 
 def _get_product_base(project_dir: Path) -> Path:
+    base_path_str = None
+
+    # 1. Try artifact-privacy.yaml categories.product.base_path (preferred)
     ap = project_dir / ".sweetclaude" / "artifact-privacy.yaml"
     if ap.exists():
         raw = ap.read_bytes()
@@ -151,19 +154,41 @@ def _get_product_base(project_dir: Path) -> Path:
             try:
                 data = yaml.safe_load(raw)
                 if isinstance(data, dict):
-                    base_path_str = (
-                        data.get("product", {}).get("base_path", DEFAULT_PRODUCT_BASE)
-                        if isinstance(data.get("product"), dict)
-                        else DEFAULT_PRODUCT_BASE
-                    )
-                else:
-                    base_path_str = DEFAULT_PRODUCT_BASE
+                    categories = data.get("categories")
+                    if isinstance(categories, dict):
+                        product_cat = categories.get("product")
+                        if isinstance(product_cat, dict):
+                            base_path_str = product_cat.get("base_path")
+                    # Legacy: top-level product key
+                    if base_path_str is None:
+                        product = data.get("product")
+                        if isinstance(product, dict):
+                            base_path_str = product.get("base_path")
             except yaml.YAMLError:
-                base_path_str = DEFAULT_PRODUCT_BASE
-        else:
+                pass
+
+    # 2. Try sweetclaude.yaml paths.product_base
+    if base_path_str is None:
+        sc_yaml = project_dir / ".sweetclaude" / "state" / "sweetclaude.yaml"
+        if sc_yaml.exists():
+            try:
+                raw2 = sc_yaml.read_bytes()
+                data2 = yaml.safe_load(raw2)
+                if isinstance(data2, dict):
+                    paths = data2.get("paths")
+                    if isinstance(paths, dict):
+                        base_path_str = paths.get("product_base")
+            except yaml.YAMLError:
+                pass
+
+    # 3. Defaults: prefer docs/product, then .sweetclaude/product
+    if base_path_str is None:
+        for candidate in ("docs/product", ".sweetclaude/product", ".sweetclaude/artifacts/product"):
+            if (project_dir / candidate).exists():
+                base_path_str = candidate
+                break
+        if base_path_str is None:
             base_path_str = DEFAULT_PRODUCT_BASE
-    else:
-        base_path_str = DEFAULT_PRODUCT_BASE
 
     if os.path.isabs(base_path_str):
         raise ValueError(
@@ -1865,6 +1890,23 @@ def _scan_product_tree_s2(product_base: Path, project_dir: Path) -> list:
                     "epic_dir": None,
                 })
 
+    # 4b. Old-prefix files in backlog/done/ subdir (completed items that still
+    #     carry legacy prefix names and must be renamed during migration)
+    done_subdir = typed_backlog_root / "done" if typed_backlog_root.exists() else None
+    if done_subdir and done_subdir.exists():
+        for f in sorted(done_subdir.iterdir()):
+            if not f.is_file() or not f.name.endswith(".md"):
+                continue
+            rel = str(f.relative_to(project_dir))
+            if is_derived_file(rel):
+                continue
+            if top_prefix_re.match(f.name):
+                candidates.append({
+                    "path": f,
+                    "kind": "typed-backlog",
+                    "epic_dir": None,
+                })
+
     # 5. Bespoke epic dirs: stories/EPIC-NNN/ containing EPIC-NNN.md + US-*.md
     bespoke_epic_re = re.compile(r"^(EPIC)-(\d+)$")
     bespoke_epic_file_re = re.compile(r"^(EPIC-\d+)\.md$")
@@ -2056,13 +2098,42 @@ def _build_dry_run_plan(project_dir: str) -> dict:
         legacy_id = _extract_legacy_id_s2(cand)
         cand["legacy_id"] = legacy_id
 
-    # Group by (legacy_id, epic_dir or None) to detect true duplicates
+    # Group by (legacy_id, epic_dir or None) to detect true duplicates.
+    # For typed-backlog files, use path-qualified key so each file gets its own
+    # ISSUE-NNN even when they share the same filename-based legacy_id (e.g. two
+    # DEBT-001-*.md files). Typed-backlog "duplicates" are reported in conflicts
+    # for visibility but are NOT blocking — each file still gets migrated.
     group_key_to_cands: dict[tuple, list] = {}
     for cand in candidates:
         if cand["kind"] == "bespoke-feature":
             continue
-        key = (cand["legacy_id"], cand.get("epic_dir"))
+        # Typed-backlog files each get a unique key so they're never merged
+        if cand["kind"] == "typed-backlog":
+            key = (cand["legacy_id"], cand.get("epic_dir"), str(cand["path"]))
+        else:
+            key = (cand["legacy_id"], cand.get("epic_dir"), None)
         group_key_to_cands.setdefault(key, []).append(cand)
+
+    # Determine if project is in accepted_legacy_layout mode (stabilized-without-migration).
+    # In that case, typed-backlog id-duplicates are each migrated to unique ISSUE-NNN
+    # and are NOT blocking conflicts. In fresh/non-stabilized projects they ARE conflicts.
+    _sc_yaml = pd / ".sweetclaude" / "state" / "sweetclaude.yaml"
+    _sc_accepted_legacy = False
+    if _sc_yaml.exists():
+        try:
+            _sc_data = yaml.safe_load(_sc_yaml.read_text(encoding="utf-8")) or {}
+            _fw = _sc_data.get("framework") or {}
+            _ms = _fw.get("migration_status") or _sc_data.get("migration_status")
+            _rec = _sc_data.get("recovery") or {}
+            _tax = _rec.get("taxonomy") or {}
+            _sc_accepted_legacy = (
+                _ms == "deferred"
+                and _tax.get("status") == "stabilized-without-migration"
+                and _tax.get("migration_required") is False
+                and _tax.get("blind_taxonomy_migration_allowed") is False
+            )
+        except Exception:
+            pass
 
     # Separate into epics and issue items
     epic_cands = []
@@ -2070,17 +2141,30 @@ def _build_dry_run_plan(project_dir: str) -> dict:
     conflicts = []
     conflict_ids: set[str] = set()
 
-    for (legacy_id, epic_dir_key), cand_list in sorted(group_key_to_cands.items()):
+    # Detect true duplicates across typed-backlog candidates sharing same legacy_id.
+    # Only report as blocking conflicts when NOT in accepted_legacy_layout mode.
+    # Stabilized projects (accepted_legacy_layout=True) migrate each duplicate file
+    # to its own ISSUE-NNN id independently.
+    typed_legacy_id_to_paths: dict[tuple, list] = {}
+    for cand in candidates:
+        if cand["kind"] == "typed-backlog":
+            key2 = (cand["legacy_id"], cand.get("epic_dir"))
+            typed_legacy_id_to_paths.setdefault(key2, []).append(cand["path"])
+
+    if not _sc_accepted_legacy:
+        for (legacy_id2, epic_dir2), paths2 in typed_legacy_id_to_paths.items():
+            real_paths2 = [p for p in paths2 if not is_derived_file(str(p.relative_to(pd)))]
+            if len(real_paths2) >= 2:
+                conflicts.append({
+                    "id": legacy_id2,
+                    "files": sorted(str(p.relative_to(pd)) for p in real_paths2),
+                    "status": "decision required",
+                })
+                conflict_ids.add(legacy_id2)
+
+    for (legacy_id, epic_dir_key, _path_key), cand_list in sorted(group_key_to_cands.items()):
         real_cands = [c for c in cand_list if c["kind"] != "bespoke-feature"]
-        if len(real_cands) > 1:
-            # True duplicate: same id in same context
-            conflicts.append({
-                "id": legacy_id,
-                "files": sorted(str(c["path"].relative_to(pd)) for c in real_cands),
-                "status": "decision required",
-            })
-            conflict_ids.add(legacy_id)
-            real_cands = real_cands[:1]
+        # Only one candidate per key now (path-qualified for typed-backlog)
         cand = real_cands[0]
         cand["legacy_id"] = legacy_id
         if cand["kind"] == "bespoke-epic":
@@ -2412,15 +2496,32 @@ def _synthesize_frontmatter_tier_b(
     return fm, text
 
 
+_LEGACY_PREFIX_TO_TYPE: dict[str, str] = {
+    "STORY": "story",
+    "BL": "story",
+    "BUG": "bug-fix",
+    "DEBT": "tech-debt",
+    "CHORE": "story",
+}
+
+
 def _apply_tier_a_frontmatter(
     existing_fm: dict, new_id: str, legacy_id: str, epic_new_id: str | None, id_map_flat: dict,
 ) -> dict:
     """Tier A: update frontmatter in-place — change id, add migrated_from, rewrite epic ref.
     Preserve title, status, type, body (caller handles body).
+    Injects type from legacy prefix when the original file lacks a type field.
     """
     fm = dict(existing_fm)
     fm["id"] = new_id
     fm["migrated_from"] = legacy_id
+
+    # Inject type from legacy prefix when missing (required field for v4 compliance)
+    if fm.get("type") is None:
+        prefix_m = re.match(r"^([A-Z]+)-", legacy_id)
+        if prefix_m:
+            prefix = prefix_m.group(1)
+            fm["type"] = _LEGACY_PREFIX_TO_TYPE.get(prefix, "story")
 
     # Remap status if needed
     raw_status = str(fm.get("status", "new")).lower()
@@ -2667,6 +2768,57 @@ def _apply_s2_plan(
         migration_map_path = product_base / "MIGRATION-MAP.md"
         migration_map_path.write_text(migration_map_content, encoding="utf-8")
 
+    # --- R9: Patch v4-prefix files missing required fields (id, type) ---
+    # After all moves, scan for WORK_ITEM_RE-matching files that have frontmatter
+    # but lack id or type. Inject from filename to ensure graduation eligibility.
+    from recovery.characterize_project import is_derived_file as _is_derived  # noqa: PLC0415
+    _v4_work_item_re = re.compile(
+        r"^(?P<id>(?P<prefix>ISSUE|EP|I|RM|MS)-(?P<num>\d+))(?:-|\.md$)"
+    )
+    _v4_prefix_to_type: dict[str, str] = {
+        "ISSUE": "story", "EP": "epic", "I": "story", "RM": "roadmap_item", "MS": "milestone",
+    }
+    for f in sorted(product_base.rglob("*.md")):
+        if not f.is_file():
+            continue
+        rel = str(f.relative_to(pd))
+        if _is_derived(rel):
+            continue
+        m = _v4_work_item_re.match(f.name)
+        if not m:
+            continue
+        try:
+            raw = f.read_bytes().decode("utf-8", errors="replace")
+        except Exception:
+            continue
+        if not raw.startswith("---"):
+            continue
+        parts = raw.split("---", 2)
+        if len(parts) < 3 or not parts[1].strip():
+            continue
+        try:
+            fm = yaml.safe_load(parts[1])
+        except yaml.YAMLError:
+            continue
+        if not isinstance(fm, dict):
+            continue
+        changed = False
+        if fm.get("id") is None:
+            fm["id"] = m.group("id")
+            changed = True
+        if fm.get("type") is None:
+            prefix = m.group("prefix")
+            fm["type"] = _v4_prefix_to_type.get(prefix, "story")
+            changed = True
+        if changed:
+            try:
+                body = parts[2]
+                fm_yaml = yaml.safe_dump(fm, default_flow_style=False).strip()
+                content = f"---\n{fm_yaml}\n---{body}"
+                f.write_text(content, encoding="utf-8")
+            except Exception:
+                pass
+
     return {"ok": True, "errors": [], "migrated": migrated}
 
 
@@ -2754,6 +2906,24 @@ def run_migration(
             "errors": apply_result.get("errors", []),
             "snapshot": str(snapshot_path),
         }
+
+    # S7: Update sweetclaude.yaml recovery.taxonomy.status to "migrated"
+    # so graduation_check can proceed for the typed-legacy path.
+    sc_yaml_path = pd / ".sweetclaude" / "state" / "sweetclaude.yaml"
+    if sc_yaml_path.exists():
+        try:
+            sc_data = yaml.safe_load(sc_yaml_path.read_text(encoding="utf-8")) or {}
+            if not isinstance(sc_data, dict):
+                sc_data = {}
+            recovery = sc_data.setdefault("recovery", {})
+            taxonomy = recovery.setdefault("taxonomy", {})
+            taxonomy["status"] = "migrated"
+            taxonomy["migration_required"] = False
+            sc_yaml_path.write_text(
+                yaml.safe_dump(sc_data, default_flow_style=False), encoding="utf-8"
+            )
+        except Exception:
+            pass  # Non-fatal: state update failed, graduation_check will handle
 
     return {
         "ok": True,

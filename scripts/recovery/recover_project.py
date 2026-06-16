@@ -340,6 +340,8 @@ def _diagnosis_summary(diagnosis: dict[str, Any]) -> dict[str, Any]:
 def _recovery_project_shape(route: str) -> str:
     if route == "stabilize-without-migration":
         return "recovery_required"
+    if route == "typed-legacy-migrate":
+        return "typed_legacy_backlog"
     if route == "manual-escalation":
         return "manual_escalation"
     if route == "no-recovery-needed":
@@ -569,18 +571,7 @@ def _pending_prompt_operations(
 
 
 def _blocked_actions(diagnosis: dict[str, Any]) -> list[dict[str, Any]]:
-    blocked: list[dict[str, Any]] = []
-    if _has_failure(diagnosis, "unsupported-typed-backlog-layout"):
-        blocked.append({
-            "id": "taxonomy-migration",
-            "reason": (
-                "Typed backlog layout and duplicate ID risk require a "
-                "layout-specific migration manifest. Stabilization must not "
-                "move or rename product artifacts."
-            ),
-            "until": "A SynCog-layout taxonomy migrator passes dry-run, rollback, and verification drills.",
-        })
-    return blocked
+    return []
 
 
 def _get_yaml_path(data: dict[str, Any], path: list[str]) -> Any:
@@ -775,6 +766,19 @@ def _run_json_command(cmd: list[str], timeout: int = 30) -> dict[str, Any]:
     return result
 
 
+def _is_supported_migration_capability(capability_id: str) -> bool:
+    """A migration capability is safe to offer iff the manifest marks it
+    supported (not explicitly ``supported: false``) and declares the shapes it
+    handles. Post-WI-017 the typed-legacy migrator is supported, so offering it
+    is the sanctioned exit from compatibility mode — not the old unsafe loop."""
+    if not capability_id:
+        return False
+    capability = capability_config(capability_id)
+    return capability.get("supported", True) is not False and bool(
+        capability.get("supports_project_shapes")
+    )
+
+
 def _doctor_migration_scan_check(project: Path) -> dict[str, Any]:
     doctor = Path(__file__).resolve().parents[1] / "doctor.py"
     result = _run_json_command([
@@ -791,6 +795,15 @@ def _doctor_migration_scan_check(project: Path) -> dict[str, Any]:
     migration_recommendations = (
         data.get("migration_recommendations", []) if isinstance(data, dict) else []
     )
+    # Post-WI-017 a safe, supported migrator exists, so a migration finding or
+    # recommendation is no longer the old "blind/unsafe migration" loop the
+    # check was guarding against. The postcondition now fails only if doctor
+    # recommends an UNSUPPORTED migration capability; surfacing the supported
+    # migrator (or a prompted old-prefix finding it can resolve) is safe.
+    unsupported_recommendations = [
+        rec for rec in migration_recommendations
+        if not _is_supported_migration_capability(rec.get("capability_id", ""))
+    ]
     prompted_migration_findings = [
         finding.get("id")
         for finding in findings
@@ -810,14 +823,14 @@ def _doctor_migration_scan_check(project: Path) -> dict[str, Any]:
     passed = (
         result["returncode"] == 0
         and "json_error" not in result
-        and not migration_recommendations
-        and not prompted_migration_findings
+        and not unsupported_recommendations
     )
     return {
         "id": "doctor-migration-scan-safe",
         "status": "passed" if passed else "failed",
         "returncode": result["returncode"],
         "migration_recommendation_count": len(migration_recommendations),
+        "unsupported_recommendation_count": len(unsupported_recommendations),
         "prompted_migration_findings": prompted_migration_findings,
         "taxonomy_findings": taxonomy_findings[:10],
         "stderr": result.get("stderr", ""),
@@ -1383,7 +1396,10 @@ def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
         and old_prefix_count == 0
     )
     compatibility_exited = bool(sweetclaude_state.get("taxonomy_compatibility_exited"))
-    if has_typed_backlog_dirs and taxonomy_candidate_count and not accepted_legacy_layout and not migration_complete_no_old and not compatibility_exited:
+    # S7: emit unsupported-typed-backlog-layout whenever typed layout + old prefixes exist,
+    # even if accepted_legacy_layout is True — migration is now supported so this is
+    # a resolvable failure class, not suppressed.
+    if has_typed_backlog_dirs and taxonomy_candidate_count and not migration_complete_no_old and not compatibility_exited:
         _add_failure_class(
             failure_classes,
             code="unsupported-typed-backlog-layout",
@@ -1395,7 +1411,7 @@ def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
                 ),
                 "taxonomy_candidate_count": taxonomy_candidate_count,
             },
-            recovery_strategy="stabilize-without-migration",
+            recovery_strategy="migrate",
         )
 
     migration_status = sweetclaude_state.get("migration_status")
@@ -1469,6 +1485,11 @@ def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
     ]
     has_recoverable_state = bool(route_driving_classes) and not cannot_plan
 
+    has_typed_backlog_failure = _has_failure(
+        {"failure_class_codes": [e["code"] for e in route_driving_classes]},
+        "unsupported-typed-backlog-layout",
+    )
+
     if not route_driving_classes and not blocking_factors:
         recovery_route = "no-recovery-needed"
         if drift_findings:
@@ -1481,6 +1502,9 @@ def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
             )
         else:
             next_step = "No recovery action is currently indicated by read-only diagnosis."
+    elif has_recoverable_state and has_typed_backlog_failure and migration_status != "incomplete":
+        recovery_route = "typed-legacy-migrate"
+        next_step = "Run /sweetclaude:migrate to migrate the typed legacy backlog to unified ISSUE-NNN taxonomy."
     elif has_recoverable_state:
         recovery_route = "stabilize-without-migration"
         next_step = "Run recovery plan generation after creating a project snapshot."
@@ -1536,7 +1560,7 @@ def graduation_check(project_dir: Path | str) -> dict[str, Any]:
     state = _read_sweetclaude_state(project)
 
     taxonomy_status = state.get("taxonomy_recovery_status")
-    if taxonomy_status not in ("stabilized-without-migration", None):
+    if taxonomy_status not in ("stabilized-without-migration", "migrated", None):
         if taxonomy_status == "graduated":
             return {
                 "graduation_allowed": False,
@@ -1545,7 +1569,9 @@ def graduation_check(project_dir: Path | str) -> dict[str, Any]:
             }
 
     accepted = _taxonomy_recovery_accepts_legacy_layout(state)
-    if not accepted and taxonomy_status != "stabilized-without-migration":
+    # S7: also allow graduation after successful typed-legacy migration
+    migrated = taxonomy_status == "migrated"
+    if not accepted and not migrated and taxonomy_status != "stabilized-without-migration":
         return {
             "graduation_allowed": False,
             "reason": "not-in-compatibility-mode",
@@ -1894,6 +1920,28 @@ def resolve_graduation_blocker(
     }
 
 
+def _get_real_duplicate_ids(project: Path, characterization: dict[str, Any]) -> list[str]:
+    """Return a list of duplicate work-item IDs from the characterization.
+
+    Only counts real (non-backup/non-derived) files. Uses is_derived_file
+    to exclude .bak and other derived files.
+    """
+    duplicates = characterization.get("ids", {}).get("duplicates", [])
+    if not duplicates:
+        return []
+    real_dup_ids: list[str] = []
+    for group in duplicates:
+        dup_id = str(group.get("id", ""))
+        files = group.get("files", [])
+        real_files = [
+            f for f in files
+            if not is_derived_file(str(f))
+        ]
+        if len(real_files) >= 2:
+            real_dup_ids.append(dup_id)
+    return real_dup_ids
+
+
 def guard_project(project_dir: Path | str) -> dict[str, Any]:
     """Return a concise read-only routing decision for migration guards."""
     project = Path(project_dir).expanduser().resolve()
@@ -1914,11 +1962,29 @@ def guard_project(project_dir: Path | str) -> dict[str, Any]:
     route = diagnosis.get("recovery_route")
 
     graduation_blockers: list[dict[str, Any]] = []
-    if route == "stabilize-without-migration":
+
+    # S7: typed-legacy-migrate route is primary check for typed layout
+    if route == "typed-legacy-migrate":
+        project_shape = "typed_legacy_backlog"
+        duplicate_ids = _get_real_duplicate_ids(project, characterization)
+        if duplicate_ids:
+            # Surface duplicates as graduation_blockers so they appear in the payload
+            # and the user can see which ids need resolution before migration.
+            graduation_blockers = [{
+                "code": "duplicate-ids",
+                "detail": f"Duplicate work-item IDs must be resolved before migration: {', '.join(sorted(duplicate_ids))}",
+                "duplicate_ids": sorted(duplicate_ids),
+                "resolution": {
+                    "capability_id": "doctor.fix_graduation_blockers",
+                    "delegate_skill": "sweetclaude:doctor",
+                },
+            }]
+    elif route == "stabilize-without-migration":
         project_shape = "recovery_required"
     elif route == "manual-escalation":
         project_shape = "manual_escalation"
-    elif accepted_legacy_layout:
+    elif accepted_legacy_layout and old_prefix_count == 0:
+        # No old prefixes remain — check graduation eligibility
         grad_check = graduation_check(project)
         if grad_check.get("graduation_allowed"):
             project_shape = "graduation_candidate"
@@ -1933,6 +1999,20 @@ def guard_project(project_dir: Path | str) -> dict[str, Any]:
             ]
         else:
             project_shape = "accepted_legacy_taxonomy"
+    elif accepted_legacy_layout and old_prefix_count:
+        # Stabilized but old prefixes still on disk — route to migration
+        project_shape = "typed_legacy_backlog"
+        duplicate_ids = _get_real_duplicate_ids(project, characterization)
+        if duplicate_ids:
+            graduation_blockers = [{
+                "code": "duplicate-ids",
+                "detail": f"Duplicate work-item IDs must be resolved before migration: {', '.join(sorted(duplicate_ids))}",
+                "duplicate_ids": sorted(duplicate_ids),
+                "resolution": {
+                    "capability_id": "doctor.fix_graduation_blockers",
+                    "delegate_skill": "sweetclaude:doctor",
+                },
+            }]
     elif old_prefix_count and flat_bl_count and not has_typed_backlog_dirs:
         project_shape = "flat_bl_backlog"
     elif old_prefix_count:
@@ -1947,7 +2027,13 @@ def guard_project(project_dir: Path | str) -> dict[str, Any]:
     migrate_allowed = bool(shape_config.get("migrate_allowed", False))
     message = str(shape_config.get("message", "") or "")
 
-    return {
+    # S7: collect real duplicate ids from graduation_blockers for payload inclusion
+    real_dup_ids_flat: list[str] = []
+    for b in graduation_blockers:
+        if b.get("code") == "duplicate-ids":
+            real_dup_ids_flat.extend(b.get("duplicate_ids", []))
+
+    payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "command": "guard",
         "project_dir": str(project),
@@ -1968,6 +2054,9 @@ def guard_project(project_dir: Path | str) -> dict[str, Any]:
         "pending_doctor_prompts": diagnosis.get("pending_doctor_prompts", []),
         "taxonomy_recovery_status": state.get("taxonomy_recovery_status"),
     }
+    if real_dup_ids_flat:
+        payload["duplicate_ids"] = sorted(set(real_dup_ids_flat))
+    return payload
 
 
 def main(argv: list[str] | None = None) -> int:
