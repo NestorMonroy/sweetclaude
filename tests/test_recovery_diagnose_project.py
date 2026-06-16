@@ -69,9 +69,9 @@ def test_diagnose_routes_syncog_state_to_migration_without_writes(tmp_path):
 
     action_ids = {action["id"] for action in result["recommended_actions"]}
     assert action_ids == {
-        "snapshot-before-recovery",
-        "plan-stabilize-without-taxonomy-migration",
-        "verify-maintenance-entrypoints",
+        "snapshot-before-migration",
+        "run-typed-legacy-migration",
+        "verify-migration",
     }
 
 

@@ -1536,7 +1536,22 @@ def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
         next_step = "Resolve blocking factors before automated recovery planning."
 
     recommended_actions: list[dict[str, str]] = []
-    if has_recoverable_state:
+    if recovery_route == "typed-legacy-migrate":
+        recommended_actions.extend([
+            {
+                "id": "snapshot-before-migration",
+                "description": "Create a complete snapshot of SweetClaude state and product artifacts before migrating.",
+            },
+            {
+                "id": "run-typed-legacy-migration",
+                "description": "Run the supported typed-legacy to ISSUE-NNN migrator (dry-run, then execute with rollback).",
+            },
+            {
+                "id": "verify-migration",
+                "description": "Verify the migrated project re-characterizes as a clean v4 layout.",
+            },
+        ])
+    elif has_recoverable_state:
         recommended_actions.extend([
             {
                 "id": "snapshot-before-recovery",
