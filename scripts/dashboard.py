@@ -2093,7 +2093,8 @@ function showDetail(id) {
     if (!v) return '';
     if (v.includes('T')) {
       const d = new Date(v);
-      return d.toISOString().replace('T', ' ').replace(/\\.\\d+Z$/, ' UTC');
+      // Drop fractional seconds and the Z, label the timezone explicitly as UTC.
+      return d.toISOString().slice(0, 19).replace('T', ' ') + ' UTC';
     }
     return v + ' 00:00 UTC';
   }
