@@ -1836,7 +1836,9 @@ def _scan_product_tree_s2(product_base: Path, project_dir: Path) -> list:
             subdir = typed_backlog_root / subdir_name
             if not subdir.exists():
                 continue
-            for f in sorted(subdir.iterdir()):
+            # Recurse so completed items in nested subdirs (e.g.
+            # backlog/stories/done/STORY-*.md) are migrated, not just the top level.
+            for f in sorted(subdir.rglob("*")):
                 if not f.is_file() or not f.name.endswith(".md"):
                     continue
                 rel = str(f.relative_to(project_dir))
@@ -1914,8 +1916,9 @@ def _scan_product_tree_s2(product_base: Path, project_dir: Path) -> list:
                     "epic_dir": None,
                 })
 
-    # 5. Bespoke epic dirs: stories/EPIC-NNN/ containing EPIC-NNN.md + US-*.md
-    bespoke_epic_re = re.compile(r"^(EPIC)-(\d+)$")
+    # 5. Bespoke epic/backlog dirs: stories/EPIC-NNN/ or stories/BL-NNN/ holding
+    #    an optional container .md + nested US-*.md stories.
+    bespoke_epic_re = re.compile(r"^(EPIC|BL)-(\d+)$")
     bespoke_epic_file_re = re.compile(r"^(EPIC-\d+)\.md$")
     stories_dir = product_base / "stories"
     if stories_dir.exists():
