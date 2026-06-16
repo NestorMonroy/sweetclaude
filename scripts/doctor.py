@@ -2682,17 +2682,15 @@ def _legacy_value_from_summary(summary: str, label: str) -> str:
 
 
 def _legacy_taxonomy_kind(finding: Finding) -> str | None:
-    """Return a compatibility-collapse kind for accepted legacy taxonomy noise."""
-    if finding.id == "migration-currency:taxonomy-drift:old-prefixes":
-        return "old-prefix-taxonomy-drift"
+    """Return a compatibility-collapse kind for accepted legacy-taxonomy noise.
 
+    Post-WI-017, old-prefix work items route to migration (typed_legacy_backlog),
+    not compatibility-mode, so old-prefix-taxonomy-drift and legacy-work-item-id
+    findings can no longer co-occur with compatibility mode. Only legacy
+    frontmatter references (milestone/source) remain collapsible here.
+    """
     if finding.category != "file_diagnostics":
         return None
-
-    if finding.id.startswith("file-diagnostics:invalid-id:"):
-        bad_id = _legacy_value_from_summary(finding.summary, "id")
-        if re.match(r"^(STORY|BUG|DEBT|CHORE|BL)-\d+\b", bad_id):
-            return "legacy-work-item-id"
 
     if finding.id.startswith("file-diagnostics:invalid-milestone:"):
         bad_milestone = _legacy_value_from_summary(finding.summary, "milestone")
