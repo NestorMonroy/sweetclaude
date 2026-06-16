@@ -11,7 +11,7 @@ FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "syncog-layout"
 SCRIPT_PATH = Path(__file__).parents[1] / "scripts" / "recovery" / "recover_project.py"
 
 
-def _copy_syncog_fixture(tmp_path: Path, migration_status: str = "complete") -> Path:
+def _copy_syncog_fixture(tmp_path: Path, migration_status: str = "incomplete") -> Path:
     project = tmp_path / "project"
     shutil.copytree(FIXTURE_ROOT, project)
 
@@ -82,25 +82,50 @@ def test_plan_stabilizes_syncog_state_without_writes_or_product_moves(tmp_path):
         for operation in plan["operations"]
     )
 
+    record_operation = next(
+        operation
+        for operation in plan["operations"]
+        if operation["id"] == "record-taxonomy-recovery-state"
+    )
+    assert record_operation["action"] == "yaml-merge"
+    assert record_operation["target"] == ".sweetclaude/state/sweetclaude.yaml"
+    assert record_operation["yaml_path"] == ["recovery", "taxonomy"]
+
+    # Stabilize normalizes the interrupted migration (incomplete -> deferred) so
+    # the recovered project becomes migratable instead of cycling into recovery.
     status_operation = next(
         operation
         for operation in plan["operations"]
         if operation["id"] == "set-migration-status-deferred"
     )
-    assert status_operation["action"] == "yaml-set"
-    assert status_operation["target"] == ".sweetclaude/state/sweetclaude.yaml"
-    assert status_operation["yaml_path"] == ["framework", "migration_status"]
-    assert status_operation["current_value"] == "complete"
+    assert status_operation["current_value"] == "incomplete"
     assert status_operation["planned_value"] == "deferred"
-    assert status_operation["rollback"]["value"] == "complete"
 
-    blocked = {action["id"]: action for action in plan["blocked_actions"]}
-    assert set(blocked) == {"taxonomy-migration"}
-    assert "layout-specific migration manifest" in blocked["taxonomy-migration"]["reason"]
+    # Post-WI-017 the taxonomy migrator is supported, so stabilize no longer
+    # hard-blocks taxonomy-migration — a recovery_required project can be
+    # migrated after stabilizing.
+    assert plan["blocked_actions"] == []
+
+
+def test_plan_normalizes_incomplete_migration_status_to_deferred(tmp_path):
+    # An interrupted (incomplete) migration must be normalized to deferred during
+    # stabilization so the recovered typed-legacy project becomes migratable
+    # (recover-then-migrate) instead of cycling back into recovery.
+    project = _copy_syncog_fixture(tmp_path, migration_status="incomplete")
+
+    plan = plan_project(project)
+
+    status_op = next(
+        (o for o in plan["operations"] if o["id"] == "set-migration-status-deferred"),
+        None,
+    )
+    assert status_op is not None, "stabilize must normalize incomplete -> deferred"
+    assert status_op["current_value"] == "incomplete"
+    assert status_op["planned_value"] == "deferred"
 
 
 def test_plan_deletes_pending_doctor_prompt_by_manifest(tmp_path):
-    project = _copy_syncog_fixture(tmp_path, migration_status="deferred")
+    project = _copy_syncog_fixture(tmp_path, migration_status="incomplete")
     pending = project / ".sweetclaude" / "state" / "doctor-prompt-pending.json"
     pending.write_text(
         json.dumps({"category": "migration_currency", "recommendation": "migrate"}),

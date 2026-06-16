@@ -55,14 +55,14 @@ def test_capability_manifest_loads_project_shape_routes():
     assert project_shape_config("recovery_required")["guard_status"] == "run-recover"
     assert project_shape_config("flat_bl_backlog")["migrate_allowed"] is True
     assert project_shape_config("typed_legacy_backlog")["guard_status"] == (
-        "compatibility-mode"
+        "supported-migration-available"
     )
 
 
 def test_capability_manifest_loads_capability_contracts():
     recovery = capability_config("recover.stabilize_without_migration")
     migration = capability_config("migrate.flat_bl_to_issue")
-    blocked = capability_config("migrate.typed_legacy_backlog")
+    typed_legacy = capability_config("migrate.typed_legacy_backlog")
 
     assert recovery["delegate_skill"] == "sweetclaude:recover"
     assert "recovery_required" in recovery["supports_project_shapes"]
@@ -75,7 +75,7 @@ def test_capability_manifest_loads_capability_contracts():
     assert migration["rollback_support"]["command"]
     assert migration["unsupported_states"][0]["behavior"] == "block"
     assert migration["version_metadata"]["introduced_in"] == "4.0.0-beta"
-    assert blocked["supported"] is False
+    assert typed_legacy["supported"] is True
 
 
 def test_capability_manifest_validates_capability_shape_references():

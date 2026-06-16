@@ -297,6 +297,13 @@ state. Tell the user: "Old-format work items were found. Run
 `/sweetclaude:migrate` to review the migration — it runs its own preflight
 and safety steps." Stop (hard-stop mode only fires here).
 
+**`supported-migration-available`** — a typed legacy backlog layout that can
+now be migrated. Tell the user: "This project has a typed legacy backlog
+layout. Run `/sweetclaude:migrate` to migrate to the unified ISSUE-NNN
+taxonomy — it handles typed backlog folders (stories/, bugs/, debt/, chores/)
+and creates a rollback snapshot before writing anything." Stop in hard-stop
+mode; in advisory mode offer migration or continue.
+
 **`compatibility-mode`** — structural blockers (old taxonomy prefixes or
 non-standard layout) that only a layout-specific migration plan can clear.
 Print one line: "This project is in compatibility mode; migration stays
@@ -319,8 +326,8 @@ this." Stop in hard-stop mode.
 
 **`ok`** — nothing to do; continue to Step 5c.
 
-Never recommend `/sweetclaude:migrate` for any status except
-`migration-may-be-needed`.
+Recommend `/sweetclaude:migrate` for statuses `migration-may-be-needed` and
+`supported-migration-available`. Do not recommend it for other statuses.
 
 ## Step 5c: Artifact-format drift check (hard demand)
 

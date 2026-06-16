@@ -34,7 +34,10 @@ def _copy_syncog_fixture(tmp_path: Path) -> Path:
         "\n".join([
             "framework:",
             "  installed_version: 4.1.1-beta",
-            "  migration_status: complete",
+            # incomplete -> recovery_required (stabilize-without-migration), the
+            # flow these recovery-lifecycle tests exercise. Post-S7 a "complete"
+            # syncog routes to typed-legacy-migrate instead.
+            "  migration_status: incomplete",
             "paths:",
             "  product_base: docs/product",
             "",
@@ -130,7 +133,7 @@ def test_execute_rejects_approval_when_operation_value_changes_before_writes(tmp
     def changed_state_operations(project_arg, diagnosis):
         operations = original_state_operations(project_arg, diagnosis)
         for operation in operations:
-            if operation["id"] == "set-migration-status-deferred":
+            if operation["id"] == "record-taxonomy-recovery-state":
                 operation["planned_value"] = "changed-after-approval"
         return operations
 
@@ -184,6 +187,8 @@ def test_execute_snapshots_applies_manifest_and_verifies_without_product_changes
     assert not pending.exists()
 
     state = _state(project)
+    # Stabilizing normalizes an interrupted migration (incomplete -> deferred)
+    # so the recovered project can be migrated next (recover-then-migrate).
     assert state["framework"]["migration_status"] == "deferred"
     assert state["recovery"]["taxonomy"]["status"] == "stabilized-without-migration"
     assert state["recovery"]["taxonomy"]["blind_taxonomy_migration_allowed"] is False

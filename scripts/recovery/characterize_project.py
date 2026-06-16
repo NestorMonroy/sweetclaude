@@ -39,6 +39,50 @@ CANONICAL_TYPES = frozenset({
     "sprint", "story", "tech-debt", "theme",
 })
 
+# Backup/derived-file detection: suffix-anchored, case-insensitive.
+# Matches: *.bold-backup-*.md  *.bak  *~  *.orig  *.swp
+# Must NOT match "backup" or "orig" mid-slug (e.g. STORY-041-backup-and-restore.md).
+DERIVED_FILE_RE = re.compile(
+    r"(?:"
+    r"\.bold-backup-[^/\\]+\.md"   # *.bold-backup-*.md (suffix with .md at end)
+    r"|\.bak"                       # *.bak
+    r"|~"                           # *~ (tilde suffix)
+    r"|\.orig"                      # *.orig
+    r"|\.swp"                       # *.swp
+    r")$",
+    re.IGNORECASE,
+)
+
+# Epic directory name pattern: EPIC-NNN or BL-NNN
+EPIC_DIR_RE = re.compile(r"^(EPIC|BL)-\d+$")
+
+# Bespoke epic file: exactly EPIC-NNN.md (not EPIC-NNN-index.md or similar)
+EPIC_FILE_RE = re.compile(r"^(EPIC-\d+)\.md$")
+
+# Bespoke story file: US-* file inside an EPIC/BL dir
+STORY_FILE_RE = re.compile(r"^US-")
+
+# Supporting document keywords (filename-based, no frontmatter id required)
+SUPPORTING_DOC_RE = re.compile(
+    r"(?:FOUNDATION|prd|brief|index|personas)",
+    re.IGNORECASE,
+)
+
+# A STRONG document signature that overrides a work-item prefix: versioned/dated
+# drafts (e.g. BL-005-product-brief-draft-v1.0-20260511.md) or explicit
+# prd/brief draft|final documents. Real work items never carry a -vN.M-DATE
+# suffix, so this does not catch ids like ISSUE-001-prd-brief.md.
+VERSIONED_DOC_RE = re.compile(
+    r"-v\d+(?:\.\d+)*-\d{6,8}(?:\.md)?$"
+    r"|-(?:prd|product-brief|brief)-(?:draft|final)",
+    re.IGNORECASE,
+)
+
+
+def is_derived_file(rel_path: str) -> bool:
+    """Return True if rel_path matches a backup/derived-file pattern (suffix-anchored)."""
+    return bool(DERIVED_FILE_RE.search(rel_path))
+
 
 def _safe_load_yaml(path: Path) -> tuple[Any | None, str | None]:
     try:
@@ -126,6 +170,124 @@ def _rel(path: Path, root: Path) -> str:
     return path.relative_to(root).as_posix()
 
 
+def _nearest_epic_dir(path: Path, product_base: Path) -> str | None:
+    """Walk ancestors from path up to product_base; return the first dir matching EPIC_DIR_RE."""
+    try:
+        rel = path.relative_to(product_base)
+    except ValueError:
+        return None
+    parts = list(rel.parts)
+    # Walk from innermost to outermost, skipping the filename itself
+    for part in reversed(parts[:-1]):
+        if EPIC_DIR_RE.match(part):
+            return part
+    return None
+
+
+def _classify_and_collect(
+    product_base: Path,
+) -> tuple[
+    list[str],          # derived_files (rel paths, sorted)
+    list[str],          # supporting_docs (rel paths, sorted)
+    list[dict],         # epics [{id, path}]
+    list[dict],         # stories [{id, path, parent_epic, feature_file}]
+]:
+    """
+    Walk the product base and classify every file into one of:
+      - derived (backup): goes into derived_files, excluded from all counts
+      - bespoke epic: EPIC-NNN.md inside an EPIC-NNN/ dir
+      - bespoke story: US-* md inside an EPIC/BL dir
+      - supporting doc: matches doc keywords, no work-item id in filename
+      - work item: matches WORK_ITEM_RE (counted normally)
+      - other: counted but not classified specially
+
+    Returns four sorted lists.
+    """
+    derived_files: list[str] = []
+    supporting_docs: list[str] = []
+    epic_entries: list[dict] = []
+    story_entries: list[dict] = []
+
+    # Collect .feature files for pairing
+    feature_paths: set[str] = set()
+
+    all_files = [p for p in product_base.rglob("*") if p.is_file()]
+    for p in all_files:
+        if p.suffix.lower() == ".feature":
+            feature_paths.add(_rel(p, product_base))
+
+    for p in all_files:
+        rel = _rel(p, product_base)
+
+        # --- Derived/backup first (highest precedence) ---
+        if is_derived_file(rel):
+            derived_files.append(rel)
+            continue
+
+        # Only further classify .md files for epics/stories/docs
+        if p.suffix.lower() != ".md":
+            continue
+
+        name = p.name
+        parent_dir = p.parent
+
+        # --- Bespoke epic: EPIC-NNN.md inside an EPIC-NNN/ dir ---
+        epic_match = EPIC_FILE_RE.match(name)
+        if epic_match:
+            epic_id = epic_match.group(1)
+            # Must be inside a dir named EPIC-NNN
+            if parent_dir.name == epic_id:
+                epic_entries.append({"id": epic_id, "path": rel})
+                continue
+            # EPIC-NNN.md not inside its own dir → fall through to other checks
+
+        # --- Bespoke story: US-* inside an EPIC/BL dir ---
+        if STORY_FILE_RE.match(name):
+            parent_epic = _nearest_epic_dir(p, product_base)
+            if parent_epic is not None:
+                story_id = name[:-3]  # strip .md
+                feature_rel = rel[:-3] + ".feature"  # same path but .feature
+                feature_file = feature_rel if feature_rel in feature_paths else None
+                story_entries.append({
+                    "id": story_id,
+                    "path": rel,
+                    "parent_epic": parent_epic,
+                    "feature_file": feature_file,
+                })
+                continue
+
+        # --- Strong document signature overrides a work-item prefix ---
+        # Versioned/dated drafts (BL-005-product-brief-draft-v1.0-20260511.md)
+        # are documents, not work items, despite carrying a work-item prefix.
+        if VERSIONED_DOC_RE.search(name):
+            supporting_docs.append(rel)
+            continue
+
+        # --- Work-item id wins over doc keywords ---
+        if WORK_ITEM_RE.match(name):
+            continue  # counted in main loop; not a supporting doc
+
+        # --- EPIC-NNN-index.md → supporting doc (not epic, not work item) ---
+        # Also other known doc patterns
+        if SUPPORTING_DOC_RE.search(name):
+            supporting_docs.append(rel)
+            continue
+
+        # --- Loose lowercase narrative docs (e.g. epic-034-stories.md) ---
+        # A file is a supporting doc if its name has no known work-item prefix
+        # and starts with a lowercase letter (narrative/planning doc convention).
+        if name[0].islower():
+            supporting_docs.append(rel)
+            continue
+
+    return (
+        sorted(derived_files),
+        sorted(supporting_docs),
+        sorted(epic_entries, key=lambda e: e["id"]),
+        sorted(story_entries, key=lambda s: s["id"]),
+    )
+
+
 def characterize_project(project_dir: Path | str) -> dict[str, Any]:
     project = Path(project_dir).expanduser().resolve()
     if not project.exists():
@@ -158,6 +320,14 @@ def characterize_project(project_dir: Path | str) -> dict[str, Any]:
             "unique_count": 0,
             "duplicate_count": 0,
             "duplicates": [],
+            "derived_files": [],
+        },
+        "documents": {
+            "supporting": [],
+        },
+        "items": {
+            "epics": [],
+            "stories": [],
         },
         "layout": {
             "has_backlog": False,
@@ -190,8 +360,16 @@ def characterize_project(project_dir: Path | str) -> dict[str, Any]:
         result["migration_risk"]["reasons"].append("product-base-not-found")
         return result
 
+    # Classify all files first (derived files excluded from counts)
+    derived_files, supporting_docs, epic_entries, story_entries = _classify_and_collect(product_base)
+    derived_set: set[str] = set(derived_files)
+
     product_files = [p for p in product_base.rglob("*") if p.is_file()]
-    markdown_files = [p for p in product_files if p.suffix.lower() == ".md"]
+    # markdown_files: .md files only, NOT derived
+    markdown_files = [
+        p for p in product_files
+        if p.suffix.lower() == ".md" and _rel(p, product_base) not in derived_set
+    ]
     prefix_counts: Counter[str] = Counter()
     top_level_counts: Counter[str] = Counter()
     typed_dir_counts: Counter[str] = Counter()
@@ -210,6 +388,8 @@ def characterize_project(project_dir: Path | str) -> dict[str, Any]:
     result["layout"]["has_epics"] = (product_base / "epics").is_dir() or (product_base / "roadmap" / "epics").is_dir()
     result["layout"]["has_sprints"] = (product_base / "sprints").is_dir()
 
+    supporting_set: set[str] = set(supporting_docs)
+
     for path in markdown_files:
         rel_path = _rel(path, product_base)
         parts = rel_path.split("/")
@@ -217,7 +397,7 @@ def characterize_project(project_dir: Path | str) -> dict[str, Any]:
             top_level_counts[parts[0]] += 1
 
         match = WORK_ITEM_RE.match(path.name)
-        if match:
+        if match and rel_path not in supporting_set:
             item_id = match.group("id")
             prefix = match.group("prefix")
             prefix_counts[prefix] += 1
@@ -262,6 +442,7 @@ def characterize_project(project_dir: Path | str) -> dict[str, Any]:
         if len(files) > 1
     ]
 
+    # product_files count includes ALL files (derived included); markdown_files already excludes derived
     result["counts"]["product_files"] = len(product_files)
     result["counts"]["markdown_files"] = len(markdown_files)
     result["counts"]["prefixes"] = dict(sorted(prefix_counts.items()))
@@ -270,6 +451,10 @@ def characterize_project(project_dir: Path | str) -> dict[str, Any]:
     result["ids"]["unique_count"] = len(id_to_files)
     result["ids"]["duplicate_count"] = len(duplicate_ids)
     result["ids"]["duplicates"] = duplicate_ids
+    result["ids"]["derived_files"] = derived_files
+    result["documents"]["supporting"] = supporting_docs
+    result["items"]["epics"] = epic_entries
+    result["items"]["stories"] = story_entries
     result["layout"]["has_flat_backlog_items"] = flat_backlog_items > 0
     result["layout"]["has_typed_backlog_dirs"] = bool(typed_dir_counts)
     result["migration_risk"]["taxonomy_candidate_count"] = taxonomy_candidate_count

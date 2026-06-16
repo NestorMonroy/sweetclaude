@@ -42,6 +42,9 @@ Parse the JSON output.
   `Run /sweetclaude:recover to create a snapshot-backed recovery plan. Do not run /sweetclaude:migrate yet.` Stop.
 - If `status` is `manual-review`: output the guard `message`, summarize
   `blocking_factor_codes`, and stop. Do not recommend migration.
+- If `status` is `supported-migration-available`: output
+  `This project has a typed legacy backlog layout that can be migrated. Run /sweetclaude:migrate to convert to the unified ISSUE-NNN taxonomy.`
+  Stop.
 - If `status` is `compatibility-mode`: render the compatibility status below
   and stop. Do not recommend migration.
 - If `status` is `missing-product-base` or `guard-unavailable`: output the

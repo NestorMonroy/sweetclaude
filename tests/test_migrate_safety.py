@@ -87,13 +87,12 @@ def test_migrate_preflight_blocks_unsupported_typed_layout_without_writes(tmp_pa
     assert preflight["status"] == "blocked"
     assert preflight["migrate_allowed"] is False
     assert preflight["capability_id"] == "migrate.flat_bl_to_issue"
-    assert preflight["project_shape"] == "recovery_required"
+    assert preflight["project_shape"] == "typed_legacy_backlog"
     assert preflight["manifest_supported"] is False
     assert preflight["supported_project_shapes"] == ["flat_bl_backlog"]
     assert preflight["flat_bl_count"] == 0
     assert preflight["typed_old_prefix_count"] == 5
     assert {
-        "recovery-required",
         "manifest-capability-unsupported",
         "unsupported-project-shape",
         "unsupported-typed-backlog-layout",
@@ -112,7 +111,7 @@ def test_migrate_execute_blocks_unsupported_typed_layout_before_writes(tmp_path)
     payload = json.loads(result.stdout)
     assert payload["error"] == "migration-blocked"
     assert "unsupported-typed-backlog-layout" in _blocking_codes(payload["preflight"])
-    assert payload["preflight"]["project_shape"] == "recovery_required"
+    assert payload["preflight"]["project_shape"] == "typed_legacy_backlog"
     assert _file_snapshot(project) == before
     assert not (project / ".sweetclaude" / "product" / "backlog" / "MIGRATION-MAP.md").exists()
 

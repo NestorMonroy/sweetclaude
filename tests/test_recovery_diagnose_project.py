@@ -47,7 +47,7 @@ def _file_snapshot(root: Path) -> dict[str, bytes]:
     }
 
 
-def test_diagnose_routes_syncog_state_to_recovery_plan_without_writes(tmp_path):
+def test_diagnose_routes_syncog_state_to_migration_without_writes(tmp_path):
     project = _copy_syncog_fixture(tmp_path)
     before = _file_snapshot(project)
 
@@ -57,7 +57,7 @@ def test_diagnose_routes_syncog_state_to_recovery_plan_without_writes(tmp_path):
     assert result["mutating_actions_allowed"] is False
     assert result["can_plan_recovery"] is True
     assert result["requires_snapshot_before_execute"] is True
-    assert result["recovery_route"] == "stabilize-without-migration"
+    assert result["recovery_route"] == "typed-legacy-migrate"
     assert result["sweetclaude_state"]["migration_status"] == "complete"
 
     assert set(result["failure_class_codes"]) == {
@@ -69,9 +69,9 @@ def test_diagnose_routes_syncog_state_to_recovery_plan_without_writes(tmp_path):
 
     action_ids = {action["id"] for action in result["recommended_actions"]}
     assert action_ids == {
-        "snapshot-before-recovery",
-        "plan-stabilize-without-taxonomy-migration",
-        "verify-maintenance-entrypoints",
+        "snapshot-before-migration",
+        "run-typed-legacy-migration",
+        "verify-migration",
     }
 
 
@@ -121,13 +121,13 @@ def test_diagnose_ignores_normal_time_based_doctor_prompt_after_stabilization(tm
 
     assert result["pending_doctor_prompts"] == []
     assert "bad-doctor-migration-recommendation" not in result["failure_class_codes"]
-    assert result["recovery_route"] == "no-recovery-needed"
-    assert guard["status"] == "compatibility-mode"
-    assert guard["project_shape"] == "accepted_legacy_taxonomy"
-    assert guard["migrate_allowed"] is False
+    assert result["recovery_route"] == "typed-legacy-migrate"
+    assert guard["status"] == "supported-migration-available"
+    assert guard["project_shape"] == "typed_legacy_backlog"
+    assert guard["migrate_allowed"] is True
 
 
-def test_diagnose_reports_no_recovery_needed_after_stabilization(tmp_path):
+def test_diagnose_offers_migration_after_stabilization(tmp_path):
     project = _copy_syncog_fixture(tmp_path, migration_status="deferred")
     state_path = project / ".sweetclaude" / "state" / "sweetclaude.yaml"
     state_path.write_text(
@@ -150,30 +150,30 @@ def test_diagnose_reports_no_recovery_needed_after_stabilization(tmp_path):
 
     result = diagnose_project(project)
 
-    assert result["failure_classes"] == []
+    assert "unsupported-typed-backlog-layout" in result["failure_class_codes"]
     assert result["blocking_factors"] == []
-    assert result["can_plan_recovery"] is False
-    assert result["recovery_route"] == "no-recovery-needed"
+    assert result["can_plan_recovery"] is True
+    assert result["recovery_route"] == "typed-legacy-migrate"
     assert result["sweetclaude_state"]["taxonomy_recovery_status"] == (
         "stabilized-without-migration"
     )
 
 
-def test_guard_routes_unstable_legacy_layout_to_recover(tmp_path):
+def test_guard_routes_typed_legacy_layout_to_migration(tmp_path):
     project = _copy_syncog_fixture(tmp_path)
 
     result = guard_project(project)
 
     assert result["command"] == "guard"
-    assert result["status"] == "run-recover"
-    assert result["project_shape"] == "recovery_required"
-    assert result["migrate_allowed"] is False
-    assert result["recovery_route"] == "stabilize-without-migration"
+    assert result["status"] == "supported-migration-available"
+    assert result["project_shape"] == "typed_legacy_backlog"
+    assert result["migrate_allowed"] is True
+    assert result["recovery_route"] == "typed-legacy-migrate"
     assert "unsupported-typed-backlog-layout" in result["failure_class_codes"]
-    assert "/sweetclaude:recover" in result["message"]
+    assert "/sweetclaude:migrate" in result["message"]
 
 
-def test_guard_keeps_recovered_legacy_layout_in_compatibility_mode(tmp_path):
+def test_guard_offers_migration_for_stabilized_legacy_layout(tmp_path):
     project = _copy_syncog_fixture(tmp_path, migration_status="deferred")
     state_path = project / ".sweetclaude" / "state" / "sweetclaude.yaml"
     state_path.write_text(
@@ -196,10 +196,10 @@ def test_guard_keeps_recovered_legacy_layout_in_compatibility_mode(tmp_path):
 
     result = guard_project(project)
 
-    assert result["status"] == "compatibility-mode"
-    assert result["project_shape"] == "accepted_legacy_taxonomy"
-    assert result["migrate_allowed"] is False
-    assert result["recovery_route"] == "no-recovery-needed"
+    assert result["status"] == "supported-migration-available"
+    assert result["project_shape"] == "typed_legacy_backlog"
+    assert result["migrate_allowed"] is True
+    assert result["recovery_route"] == "typed-legacy-migrate"
     assert result["taxonomy_recovery_status"] == "stabilized-without-migration"
 
 
@@ -288,7 +288,7 @@ def test_recover_project_cli_diagnose_emits_json(tmp_path):
     assert completed.stderr == ""
     result = json.loads(completed.stdout)
     assert result["command"] == "diagnose"
-    assert result["recovery_route"] == "stabilize-without-migration"
+    assert result["recovery_route"] == "typed-legacy-migrate"
     assert "unsupported-typed-backlog-layout" in result["failure_class_codes"]
 
 
@@ -308,7 +308,7 @@ def test_recover_project_cli_without_subcommand_defaults_to_read_only_diagnosis(
     result = json.loads(completed.stdout)
     assert result["command"] == "diagnose"
     assert result["mutating_actions_allowed"] is False
-    assert result["recovery_route"] == "stabilize-without-migration"
+    assert result["recovery_route"] == "typed-legacy-migrate"
 
 
 def test_recover_project_cli_guard_emits_json(tmp_path):
@@ -332,5 +332,5 @@ def test_recover_project_cli_guard_emits_json(tmp_path):
     assert completed.stderr == ""
     result = json.loads(completed.stdout)
     assert result["command"] == "guard"
-    assert result["status"] == "run-recover"
-    assert result["migrate_allowed"] is False
+    assert result["status"] == "supported-migration-available"
+    assert result["migrate_allowed"] is True

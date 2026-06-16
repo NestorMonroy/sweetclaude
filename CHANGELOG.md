@@ -4,6 +4,59 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.10-beta] — 2026-06-16 (4.x beta channel)
+
+### Fixed — typed-legacy backlog projects could never leave compatibility mode
+
+A project whose product tree used typed backlog folders (`backlog/stories/`,
+`backlog/debt/`, …) with legacy work-item prefixes (`STORY-`, `DEBT-`, `BL-`, …)
+was classified `typed_legacy_backlog` and parked in compatibility mode
+permanently. The migrator for that layout was `supported: false`, graduation
+required zero legacy prefixes (impossible for the shape), and recovery only
+re-stabilized — so `update`, `doctor`, `migrate`, and `recover` could never get
+the project out. Running them again did nothing, because the framework was built
+to park it. This release builds and wires the missing migrator end to end.
+
+- **A real typed-legacy → unified `ISSUE-NNN` migrator.** `migrate_taxonomy`
+  recognizes typed backlog dirs (including nested `done/` subdirs), top-level
+  legacy-prefix files, spike reports, and the bespoke `stories/EPIC-NNN/` and
+  `stories/BL-NNN/` user-story trees. It produces a reviewable dry-run plan
+  (global ISSUE renumbering, `EP-NNN` epics, `migrated_from`, a `MIGRATION-MAP`,
+  and reference rewrites), then executes behind a snapshot with byte-for-byte
+  rollback and auto-rollback on failure.
+- **The guard now offers the migrator.** `migrate.typed_legacy_backlog` is
+  supported; the recovery guard, doctor maintenance route, and bootstrap route a
+  typed-legacy project to `supported-migration-available` instead of a no-action
+  compatibility mode. Projects with real (non-backup) duplicate IDs are routed
+  to a resolvable step, not a wall.
+- **No project shape is a dead end** — a test now asserts every guard status
+  routes to an offered action.
+
+Bugs found and fixed while validating against a real corpus:
+
+- The migrator crashed when run as a CLI (`No module named 'recovery'`) — i.e.
+  exactly how `sweetclaude:migrate` invokes it; the test suite had masked it.
+- Migration left items behind: nested `backlog/stories/done/` and
+  `stories/BL-NNN/` story dirs weren't scanned, so the project stayed
+  typed-legacy after "migrating."
+- Versioned draft documents (`BL-005-product-brief-draft-v1.0-….md`) were
+  miscounted as work items, leaving the project reading as `flat_bl_backlog` and
+  faking duplicate-ID blockers.
+- Tool backups (`*.bold-backup-*`) were counted as duplicate IDs and used to
+  justify refusing migration.
+- Recovery forbade the now-safe migration: the stabilize postcondition required
+  doctor to recommend no migration; it now fails only on unsupported migration.
+- Interrupted (`incomplete`) migrations got stuck in recovery; stabilize now
+  normalizes `incomplete → deferred` so recover-then-migrate completes.
+
+### Fixed — dashboard detail-panel dates now show their timezone
+
+Detail-panel date fields rendered as `2026-05-21 00:00:00.000Z` because an
+over-escaped regex in `fmtDate` was emitted literally into the page JS and never
+matched. They now read `2026-05-21 00:00:00 UTC`.
+
+---
+
 ## [4.2.9-beta] — 2026-06-10 (4.x beta channel)
 
 ### Fixed — missing skills.yaml was still a dead end (and said something scary)

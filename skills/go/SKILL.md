@@ -116,6 +116,9 @@ Parse the guard JSON:
   Then stop.
 - `manual-review` or `missing-product-base`: output the guard `message` and
   stop. Do not recommend migration.
+- `supported-migration-available`: output
+  > Your project has a typed legacy backlog layout that can now be migrated. Run `/sweetclaude:migrate` to convert to the unified ISSUE-NNN taxonomy — it handles typed backlog folders and creates a rollback snapshot before writing.
+  Then stop.
 - `compatibility-mode`: do not stop. Continue to Step 2 and use session-state
   priority logic; old work items may be invisible to cache-backed backlog views,
   but active work and checkpoint state are still usable. Do not recommend

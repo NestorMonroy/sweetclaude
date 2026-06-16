@@ -134,12 +134,43 @@ capabilities:
 
   migrate.typed_legacy_backlog:
     title: Typed legacy backlog migration
-    supported: false
-    supports_project_shapes: []
-    mutates_project: false
+    supported: true
+    delegate_skill: sweetclaude:migrate
+    command_entrypoint:
+      slash_command: /sweetclaude:migrate
+      script: scripts/migrate/migrate_taxonomy.py
+      module: migrate.migrate_taxonomy
+    supports_project_shapes:
+      - typed_legacy_backlog
+    mutation_class: planned_write
+    mutates_project: true
     requires_approval: true
-    block_reason: "Typed legacy backlog layouts remain compatibility/recovery-only until a layout-specific migration manifest passes dry-run, rollback, and verification drills."
-    graduation_path: recover.graduate_from_compatibility
+    rollback_support:
+      supported: true
+      command: "python3 scripts/migrate/migrate_taxonomy.py --rollback --project-dir <project>"
+      limitations: []
+    required_preconditions:
+      - project shape is typed_legacy_backlog
+      - no real duplicate ids present
+    snapshot_scope_hints:
+      - docs/product/
+      - .sweetclaude/product/
+    postconditions:
+      - id: old-prefix-files-removed
+        check: no old-prefix files remain on disk
+    version_metadata:
+      introduced_in: 4.3.0-beta
+      deprecated_in: null
+    safety_contract:
+      - diagnose
+      - dry-run
+      - snapshot
+      - approve
+      - execute
+      - verify-postconditions
+      - rollback
+    verification_commands:
+      - "python3 scripts/migrate/migrate_taxonomy.py --dry-run --project-dir <project>"
 
   recover.graduate_from_compatibility:
     title: Graduate from compatibility mode
@@ -276,8 +307,6 @@ project_shapes:
     message: "This project has an accepted legacy taxonomy layout. Do not run /sweetclaude:migrate unless a future layout-specific migration plan explicitly allows it."
     doctor_capability: doctor.compatibility_mode
     graduation_capability: recover.graduate_from_compatibility
-    blocked_capabilities:
-      - migrate.typed_legacy_backlog
 
   graduation_candidate:
     guard_status: graduation-available
@@ -291,8 +320,6 @@ project_shapes:
     message: "This project could graduate from compatibility mode, but validation blockers must be fixed first. Each blocker carries its resolution."
     blocker_fix_capability: doctor.fix_graduation_blockers
     graduation_capability: recover.graduate_from_compatibility
-    blocked_capabilities:
-      - migrate.typed_legacy_backlog
 
   flat_bl_backlog:
     migration: flat_bl_to_issue
@@ -302,12 +329,10 @@ project_shapes:
     migration_capability: migrate.flat_bl_to_issue
 
   typed_legacy_backlog:
-    migration: blocked
-    guard_status: compatibility-mode
-    migrate_allowed: false
-    recovery: stabilize-without-migration
-    blocked_capabilities:
-      - migrate.typed_legacy_backlog
+    guard_status: supported-migration-available
+    migrate_allowed: true
+    migration_capability: migrate.typed_legacy_backlog
+    message: "This project has a typed legacy backlog layout. Run /sweetclaude:migrate to migrate to the unified ISSUE-NNN taxonomy."
 
   missing_product_base:
     guard_status: missing-product-base
