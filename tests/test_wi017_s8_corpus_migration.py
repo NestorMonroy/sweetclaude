@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from migrate.migrate_taxonomy import run_migration  # noqa: E402
+from recovery.characterize_project import characterize_project  # noqa: E402
 
 
 def _make_project(tmp_path: Path, files: dict[str, str]) -> Path:
@@ -62,6 +63,29 @@ def test_plan_covers_us_stories_under_bl_dir(tmp_path):
     assert result["ok"] is True
     legacy_ids = {m["legacy_id"] for m in result["moves"]}
     assert any(lid.startswith("US-BL027-002") for lid in legacy_ids)
+
+
+def test_versioned_draft_doc_with_work_item_prefix_is_document(tmp_path):
+    project = _make_project(tmp_path, {
+        "BL-005-product-brief-draft-v1.0-20260511.md": "# Product brief\n\nDraft.\n",
+        "BL-005-prd-draft-v1.0-20260511.md": "# PRD\n\nDraft.\n",
+        "backlog/stories/STORY-007-real-feature.md": _story("STORY-007"),
+        # The caucus rule still holds: a work item with doc keywords but no
+        # versioned/dated draft signature stays a work item.
+        "backlog/ISSUE-001-prd-brief.md": (
+            "---\nid: ISSUE-001\ntitle: x\ntype: bug-fix\nstatus: new\n---\n"
+        ),
+    })
+    result = characterize_project(project)
+    docs = result["documents"]["supporting"]
+    assert "BL-005-product-brief-draft-v1.0-20260511.md" in docs
+    assert "BL-005-prd-draft-v1.0-20260511.md" in docs
+    # The versioned-draft BL files must NOT be counted as BL work items.
+    assert result["counts"]["prefixes"].get("BL", 0) == 0
+    assert result["counts"]["prefixes"].get("STORY", 0) == 1
+    # ISSUE-001-prd-brief.md (no version/date) stays a work item, not a document.
+    assert "backlog/ISSUE-001-prd-brief.md" not in docs
+    assert result["counts"]["prefixes"].get("ISSUE", 0) == 1
 
 
 def test_migrating_done_subdir_leaves_no_typed_backlog(tmp_path):

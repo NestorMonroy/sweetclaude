@@ -68,6 +68,16 @@ SUPPORTING_DOC_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A STRONG document signature that overrides a work-item prefix: versioned/dated
+# drafts (e.g. BL-005-product-brief-draft-v1.0-20260511.md) or explicit
+# prd/brief draft|final documents. Real work items never carry a -vN.M-DATE
+# suffix, so this does not catch ids like ISSUE-001-prd-brief.md.
+VERSIONED_DOC_RE = re.compile(
+    r"-v\d+(?:\.\d+)*-\d{6,8}(?:\.md)?$"
+    r"|-(?:prd|product-brief|brief)-(?:draft|final)",
+    re.IGNORECASE,
+)
+
 
 def is_derived_file(rel_path: str) -> bool:
     """Return True if rel_path matches a backup/derived-file pattern (suffix-anchored)."""
@@ -246,6 +256,13 @@ def _classify_and_collect(
                 })
                 continue
 
+        # --- Strong document signature overrides a work-item prefix ---
+        # Versioned/dated drafts (BL-005-product-brief-draft-v1.0-20260511.md)
+        # are documents, not work items, despite carrying a work-item prefix.
+        if VERSIONED_DOC_RE.search(name):
+            supporting_docs.append(rel)
+            continue
+
         # --- Work-item id wins over doc keywords ---
         if WORK_ITEM_RE.match(name):
             continue  # counted in main loop; not a supporting doc
@@ -380,7 +397,7 @@ def characterize_project(project_dir: Path | str) -> dict[str, Any]:
             top_level_counts[parts[0]] += 1
 
         match = WORK_ITEM_RE.match(path.name)
-        if match:
+        if match and rel_path not in supporting_set:
             item_id = match.group("id")
             prefix = match.group("prefix")
             prefix_counts[prefix] += 1
