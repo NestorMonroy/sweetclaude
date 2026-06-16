@@ -73,7 +73,10 @@ def test_plan_stabilizes_syncog_state_without_writes_or_product_moves(tmp_path):
     ]
 
     operation_ids = {operation["id"] for operation in plan["operations"]}
-    assert operation_ids == {"record-taxonomy-recovery-state"}
+    assert operation_ids == {
+        "record-taxonomy-recovery-state",
+        "set-migration-status-deferred",
+    }
     assert all(
         not operation["target"].startswith("docs/product")
         for operation in plan["operations"]
@@ -88,10 +91,37 @@ def test_plan_stabilizes_syncog_state_without_writes_or_product_moves(tmp_path):
     assert record_operation["target"] == ".sweetclaude/state/sweetclaude.yaml"
     assert record_operation["yaml_path"] == ["recovery", "taxonomy"]
 
+    # Stabilize normalizes the interrupted migration (incomplete -> deferred) so
+    # the recovered project becomes migratable instead of cycling into recovery.
+    status_operation = next(
+        operation
+        for operation in plan["operations"]
+        if operation["id"] == "set-migration-status-deferred"
+    )
+    assert status_operation["current_value"] == "incomplete"
+    assert status_operation["planned_value"] == "deferred"
+
     # Post-WI-017 the taxonomy migrator is supported, so stabilize no longer
     # hard-blocks taxonomy-migration — a recovery_required project can be
     # migrated after stabilizing.
     assert plan["blocked_actions"] == []
+
+
+def test_plan_normalizes_incomplete_migration_status_to_deferred(tmp_path):
+    # An interrupted (incomplete) migration must be normalized to deferred during
+    # stabilization so the recovered typed-legacy project becomes migratable
+    # (recover-then-migrate) instead of cycling back into recovery.
+    project = _copy_syncog_fixture(tmp_path, migration_status="incomplete")
+
+    plan = plan_project(project)
+
+    status_op = next(
+        (o for o in plan["operations"] if o["id"] == "set-migration-status-deferred"),
+        None,
+    )
+    assert status_op is not None, "stabilize must normalize incomplete -> deferred"
+    assert status_op["current_value"] == "incomplete"
+    assert status_op["planned_value"] == "deferred"
 
 
 def test_plan_deletes_pending_doctor_prompt_by_manifest(tmp_path):

@@ -516,6 +516,29 @@ def _state_operations(project: Path, diagnosis: dict[str, Any]) -> list[dict[str
                 "value": current_status,
             },
         })
+    elif (
+        _has_failure(diagnosis, "unsupported-typed-backlog-layout")
+        and state.get("migration_status") == "incomplete"
+    ):
+        operations.append({
+            "id": "set-migration-status-deferred",
+            "action": "yaml-set",
+            "target": state_target,
+            "yaml_path": ["framework", "migration_status"],
+            "current_value": "incomplete",
+            "planned_value": "deferred",
+            "reason": (
+                "Normalize an interrupted (incomplete) migration to deferred so "
+                "the recovered typed-legacy project can be migrated rather than "
+                "cycling back into recovery."
+            ),
+            "rollback": {
+                "action": "yaml-set",
+                "target": state_target,
+                "yaml_path": ["framework", "migration_status"],
+                "value": "incomplete",
+            },
+        })
 
     if _has_failure(diagnosis, "unsupported-typed-backlog-layout"):
         operations.append({

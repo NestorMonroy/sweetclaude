@@ -169,7 +169,7 @@ def test_execute_snapshots_applies_manifest_and_verifies_without_product_changes
     assert Path(result["report_path"]).is_file()
     report = Path(result["report_path"]).read_text(encoding="utf-8")
     assert "SweetClaude Recovery Report" in report
-    assert "record-taxonomy-recovery-state" in report
+    assert "set-migration-status-deferred" in report
     assert "doctor-migration-scan-safe" in report
     assert "Rollback command" in report
     assert ".sweetclaude/state/recovery-runs/" in report
@@ -187,10 +187,9 @@ def test_execute_snapshots_applies_manifest_and_verifies_without_product_changes
     assert not pending.exists()
 
     state = _state(project)
-    # Stabilizing an incomplete project records the taxonomy recovery state but
-    # does not itself normalize migration_status (the set-migration-status op
-    # only fires for the stale-complete case, which now routes to migration).
-    assert state["framework"]["migration_status"] == "incomplete"
+    # Stabilizing normalizes an interrupted migration (incomplete -> deferred)
+    # so the recovered project can be migrated next (recover-then-migrate).
+    assert state["framework"]["migration_status"] == "deferred"
     assert state["recovery"]["taxonomy"]["status"] == "stabilized-without-migration"
     assert state["recovery"]["taxonomy"]["blind_taxonomy_migration_allowed"] is False
 
@@ -240,7 +239,7 @@ def test_resume_continues_interrupted_run_from_manifest(tmp_path):
     ))
     assert manifest["status"] == "failed"
     assert [operation["id"] for operation in manifest["operations"]] == [
-        "record-taxonomy-recovery-state"
+        "set-migration-status-deferred"
     ]
 
     resumed = resume_project(run_dirs[0])
@@ -250,6 +249,7 @@ def test_resume_continues_interrupted_run_from_manifest(tmp_path):
     assert Path(resumed["report_path"]).is_file()
     assert resumed["resume_count"] == 1
     assert [operation["id"] for operation in resumed["operations"]] == [
+        "set-migration-status-deferred",
         "record-taxonomy-recovery-state",
         "delete-pending-doctor-prompt-1",
     ]
