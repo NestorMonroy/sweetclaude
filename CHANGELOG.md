@@ -4,6 +4,29 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.11-beta] — 2026-06-17 (4.x beta channel)
+
+### Fixed — a missing derived state snapshot bricked nearly every skill on load
+
+`session-state.yaml` is a per-session *derived* snapshot, not a tracked file.
+Since ec771ea (ISSUE-193), 85 skills loaded it with a bare
+`!`cat .sweetclaude/state/session-state.yaml`` bang preamble, assuming the
+SessionStart preflight always regenerated it first. Whenever the snapshot was
+absent — preflight hadn't run this session, an update/doctor run regenerated
+state mid-session, a worktree with a different working directory, a fresh
+checkout — the bare `cat` exited non-zero and the skill aborted on load with
+`cat: .sweetclaude/state/session-state.yaml: No such file or directory`.
+`/sweetclaude:go` and the rest of the skill surface became unusable.
+
+All 86 bang-preamble state loaders (85 × session-state, plus orchestrator's
+sweetclaude.yaml) now route through `hooks/read-state.sh`, invoked via
+`${CLAUDE_SKILL_DIR}/../../hooks/` so it resolves on fresh installs regardless
+of working directory. The wrapper emits file contents when present and a
+`STATE_NOT_FOUND` sentinel (which skills already handle) when absent, always
+exiting 0 — a missing snapshot can no longer abort skill load.
+
+---
+
 ## [4.2.10-beta] — 2026-06-16 (4.x beta channel)
 
 ### Fixed — typed-legacy backlog projects could never leave compatibility mode
