@@ -5,7 +5,7 @@ description: "Define and maintain a shared domain glossary."
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash
 PRODUCT_BASE=$(python3 -c "

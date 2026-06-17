@@ -5,7 +5,7 @@ description: "Define product users — who they are, what they need to do, and e
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # User Personas
 

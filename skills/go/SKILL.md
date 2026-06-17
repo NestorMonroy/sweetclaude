@@ -5,7 +5,7 @@ description: "Assess what to work on next and propose it."
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude Go
 

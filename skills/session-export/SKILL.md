@@ -5,7 +5,7 @@ description: "Export a Claude.ai session as a complete, portable package."
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # Session Export Skill
 

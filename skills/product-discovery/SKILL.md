@@ -5,7 +5,7 @@ description: "Establish what is being built, for whom, and why — at the depth 
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # Product Discovery
 

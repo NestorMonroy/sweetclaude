@@ -5,7 +5,7 @@ description: "Enable the Protocol Guardian — enforces skill invocations, TDD d
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # Protocol Guardian — Enable
 

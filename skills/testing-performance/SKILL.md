@@ -5,7 +5,7 @@ description: "Define load scenarios, establish performance baselines, set thresh
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash
 PERF_FILE="$PWD/.sweetclaude/state/performance.yaml"

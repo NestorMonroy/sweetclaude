@@ -6,7 +6,7 @@ description: "Orchestrator main loop — executes tracked workflow steps via sub
 
 
 <preflight-state>
-!`cat .sweetclaude/state/sweetclaude.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh sweetclaude`
 </preflight-state>
 
 # Orchestrator

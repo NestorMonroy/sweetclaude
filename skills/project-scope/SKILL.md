@@ -5,7 +5,7 @@ description: "Define and maintain project scope."
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash
 SCOPE_FILE="$PWD/.sweetclaude/state/scope.yaml"
