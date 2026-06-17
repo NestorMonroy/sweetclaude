@@ -439,12 +439,24 @@ def scan_orphans(project_dir: pathlib.Path) -> dict:
     backlog_path = product_base / "backlog"
     primary_bl_files = {str(p) for p in backlog_path.glob("BL-*.md")} if backlog_path.exists() else set()
 
+    # Correctly-placed current-taxonomy files are NOT orphans: ISSUE-*.md directly
+    # in backlog/, or under backlog/done|archived/. Without this, a fully-migrated
+    # project reports its entire backlog as orphaned and update prints a spurious
+    # "recovery disabled" prompt. (Legacy BL-*.md in backlog stays in primary_bl_files.)
+    expected_files = set(primary_bl_files)
+    if backlog_path.exists():
+        expected_files.update(str(p) for p in backlog_path.glob("ISSUE-*.md"))
+        for _sub in ("done", "archived"):
+            _sub_dir = backlog_path / _sub
+            if _sub_dir.is_dir():
+                expected_files.update(str(p) for p in _sub_dir.glob("ISSUE-*.md"))
+
     findings: list[dict] = []
     seen: set[str] = set()
 
     def _add(path: pathlib.Path, category: str, detail: str) -> None:
         key = str(path.resolve())
-        if key in seen or str(path) in primary_bl_files:
+        if key in seen or str(path) in expected_files:
             return
         seen.add(key)
         fm = _sniff_frontmatter(path)
