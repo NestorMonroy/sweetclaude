@@ -5,7 +5,7 @@ description: "Move an approved mockup from the sandbox into the main application
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude Mockup Graduate
 

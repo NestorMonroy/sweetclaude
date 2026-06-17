@@ -5,7 +5,7 @@ description: "Run SweetClaude's behavioral regression test suite."
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude Behavioral Regression Tests
 

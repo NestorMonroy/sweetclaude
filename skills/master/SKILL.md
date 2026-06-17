@@ -5,7 +5,7 @@ description: "SweetClaude master skill — phase router, interaction model, and 
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude — Master Skill
 

@@ -5,7 +5,7 @@ description: "Deactivate SweetClaude for the current project."
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # Deactivate SweetClaude
 

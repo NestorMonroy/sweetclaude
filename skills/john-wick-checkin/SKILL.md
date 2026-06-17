@@ -5,7 +5,7 @@ description: "Internal John Wick phase check-in subagent."
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # John Wick Phase Check-in
 

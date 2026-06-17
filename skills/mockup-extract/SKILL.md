@@ -5,7 +5,7 @@ description: "Pull an existing production component into the mockup sandbox as a
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude Mockup Extract
 

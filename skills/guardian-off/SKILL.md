@@ -5,7 +5,7 @@ description: "Disable the Protocol Guardian for the current session"
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # Protocol Guardian — Disable
 

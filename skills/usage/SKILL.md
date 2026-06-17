@@ -5,7 +5,7 @@ description: "Toggle and view local usage tracking."
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude Usage
 

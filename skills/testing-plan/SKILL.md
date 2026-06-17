@@ -5,7 +5,7 @@ description: "Define and maintain a test strategy for a feature or release."
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash
 ls .sweetclaude/testing/plans/TP-*.md 2>/dev/null | wc -l | xargs -I{} echo "PLAN_COUNT={}"

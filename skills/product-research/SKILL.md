@@ -5,7 +5,7 @@ description: "Survey the solution field — what exists commercially and open so
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # Product Research
 

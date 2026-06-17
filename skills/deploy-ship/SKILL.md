@@ -5,7 +5,7 @@ description: "SHIP phase skill."
 ---
 
 
-!`cat .sweetclaude/state/session-state.yaml`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude Deploy Ship
 
