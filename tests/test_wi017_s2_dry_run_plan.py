@@ -1613,7 +1613,7 @@ class TestScanExclusions:
                 f"got source: {move.get('source')!r}"
             )
 
-    def test_existing_v4_ep_003_not_in_id_map(self, tmp_path):
+    def test_existing_v4_ep_003_relocated_from_backlog(self, tmp_path):
         project, product = _make_project(tmp_path)
         _write_md(product, "backlog/EP-003-existing.md",
                   frontmatter={"id": "EP-003", "title": "Existing epic", "status": "active", "type": "epic"})
@@ -1624,11 +1624,16 @@ class TestScanExclusions:
 
         id_map = result.get("id_map", {})
         assert "STORY-001" in id_map, (
-            "STORY-001 must be in id_map for this exclusion test to be meaningful "
-            "(confirms scan ran, not just empty result)"
+            "STORY-001 must be in id_map (confirms scan ran, not just empty result)"
         )
-        assert "EP-003" not in id_map, (
-            "A bespoke EP-003 in the backlog (already v4 id) must NOT appear in id_map"
+        assert "EP-003" in id_map, (
+            "EP-003 in backlog/ is a legacy placement — must be relocated to roadmap/epics/"
+        )
+        moves = result.get("moves", [])
+        ep_moves = [m for m in moves if m.get("new_id") == "EP-003"]
+        assert ep_moves, "EP-003 must have a move entry"
+        assert "roadmap/epics" in ep_moves[0]["dest"], (
+            f"EP-003 must be relocated to roadmap/epics/, got {ep_moves[0]['dest']}"
         )
 
     def test_issue_050_not_in_id_map_when_present(self, tmp_path):

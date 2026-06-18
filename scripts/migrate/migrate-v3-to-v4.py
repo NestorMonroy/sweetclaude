@@ -216,9 +216,13 @@ def _read_v3_file(path: pathlib.Path) -> tuple[dict, str] | tuple[None, str]:
     return fm, parts[2]
 
 
-_WORK_ITEM_PATTERNS = ["BL-*.md", "STORY-*.md", "BUG-*.md", "DEBT-*.md", "CHORE-*.md", "ISSUE-*.md"]
-_TYPED_SUBDIRS = ["stories", "bugs", "debt", "chores"]
+_WORK_ITEM_PATTERNS = [
+    "BL-*.md", "STORY-*.md", "BUG-*.md", "DEBT-*.md", "CHORE-*.md",
+    "ISSUE-*.md", "EP-*.md", "EPIC-*.md", "US-*.md", "spike-BL-*.md",
+]
+_TYPED_SUBDIRS = ["stories", "bugs", "debt", "chores", "spike-reports"]
 _OLD_PREFIX_ID_RE = re.compile(r"^(STORY|BUG|DEBT|CHORE|BL)-\d+", re.I)
+_V4_ID_RE = re.compile(r"^(ISSUE|EP|MS|SP|TH|RM|REL|PITCH|CYC|I)-\d{2,}$")
 
 
 def _read_sweetclaude_state(project_dir: pathlib.Path) -> dict:
@@ -430,6 +434,60 @@ def _sniff_frontmatter(path: pathlib.Path) -> dict | None:
     return None
 
 
+_MARTIAN_REGISTRY = ".sweetclaude/state/martian-registry.yaml"
+
+
+def _load_martian_registry(project_dir: pathlib.Path) -> set[str]:
+    reg = project_dir / _MARTIAN_REGISTRY
+    if not reg.exists():
+        return set()
+    try:
+        data = yaml.safe_load(reg.read_text()) or {}
+        return {e["path"] for e in data.get("acknowledged", []) if isinstance(e, dict) and "path" in e}
+    except (yaml.YAMLError, KeyError, TypeError):
+        return set()
+
+
+def acknowledge_martians(project_dir: pathlib.Path, rel_paths: list[str]) -> dict:
+    reg_path = project_dir / _MARTIAN_REGISTRY
+    try:
+        data = yaml.safe_load(reg_path.read_text()) if reg_path.exists() else {}
+    except yaml.YAMLError:
+        data = {}
+    data = data or {}
+    data.setdefault("version", 1)
+    existing = data.setdefault("acknowledged", [])
+    known = {e["path"] for e in existing if isinstance(e, dict) and "path" in e}
+    ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    added = []
+    for p in rel_paths:
+        if p not in known:
+            existing.append({"path": p, "acknowledged_at": ts})
+            added.append(p)
+    reg_path.parent.mkdir(parents=True, exist_ok=True)
+    reg_path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
+    return {"acknowledged": added, "total": len(existing)}
+
+
+def archive_martians(project_dir: pathlib.Path, rel_paths: list[str]) -> dict:
+    product_base = resolve_product_base(project_dir)
+    archive_dir = product_base / "archive" / "martian"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    archived = []
+    for rp in rel_paths:
+        src = project_dir / rp
+        if not src.exists():
+            continue
+        dest = archive_dir / src.name
+        counter = 1
+        while dest.exists():
+            dest = archive_dir / f"{src.stem}-{counter}{src.suffix}"
+            counter += 1
+        src.rename(dest)
+        archived.append({"source": rp, "dest": str(dest.relative_to(project_dir))})
+    return {"archived": archived}
+
+
 def scan_orphans(project_dir: pathlib.Path) -> dict:
     """Scan all known SweetClaude locations for orphaned work item files.
 
@@ -439,11 +497,7 @@ def scan_orphans(project_dir: pathlib.Path) -> dict:
     backlog_path = product_base / "backlog"
     primary_bl_files = {str(p) for p in backlog_path.glob("BL-*.md")} if backlog_path.exists() else set()
 
-    # Correctly-placed current-taxonomy files are NOT orphans: ISSUE-*.md directly
-    # in backlog/, or under backlog/done|archived/. Without this, a fully-migrated
-    # project reports its entire backlog as orphaned and update prints a spurious
-    # "recovery disabled" prompt. (Legacy BL-*.md in backlog stays in primary_bl_files.)
-    expected_files = set(primary_bl_files)
+    expected_files: set[str] = set()
     if backlog_path.exists():
         expected_files.update(str(p) for p in backlog_path.glob("ISSUE-*.md"))
         for _sub in ("done", "archived"):
@@ -509,6 +563,28 @@ def scan_orphans(project_dir: pathlib.Path) -> dict:
             fm = _sniff_frontmatter(p)
             if fm is not None:
                 _add(p, "scratch", "work item found in scratch/")
+
+    # 5. Catch-all: any .md file with frontmatter under search roots that
+    #    wasn't matched by steps 1-4. These are "martian" files — unknown
+    #    prefix patterns that may be work items from a format the framework
+    #    doesn't recognize.
+    acknowledged = _load_martian_registry(project_dir)
+    for root in search_roots:
+        if not root.exists():
+            continue
+        for p in root.rglob("*.md"):
+            key = str(p.resolve())
+            if key in seen or str(p) in expected_files:
+                continue
+            rel = str(p.relative_to(project_dir))
+            if rel in acknowledged:
+                continue
+            fm = _sniff_frontmatter(p)
+            if fm is not None:
+                fid = str(fm.get("id", ""))
+                if _V4_ID_RE.match(fid):
+                    continue
+                _add(p, "martian", "unknown format with frontmatter")
 
     return {
         "product_base": str(product_base),
@@ -1494,6 +1570,10 @@ def main(argv: list[str] | None = None) -> int:
     p_verify.add_argument("--created-paths-file", required=True, type=pathlib.Path)
     _add("finalize")
     _add("cleanup-v3-files")
+    p_ack = _add("acknowledge-martians")
+    p_ack.add_argument("--paths", required=True, type=str)
+    p_arch = _add("archive-martians")
+    p_arch.add_argument("--paths", required=True, type=str)
 
     args = parser.parse_args(argv)
     project_dir = args.project_dir.resolve()
@@ -1529,6 +1609,12 @@ def main(argv: list[str] | None = None) -> int:
         _emit(result)
         if result.get("error"):
             return 1
+    elif args.cmd == "acknowledge-martians":
+        paths = json.loads(args.paths)
+        _emit(acknowledge_martians(project_dir, paths))
+    elif args.cmd == "archive-martians":
+        paths = json.loads(args.paths)
+        _emit(archive_martians(project_dir, paths))
     return 0
 
 

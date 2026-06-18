@@ -1869,7 +1869,7 @@ def _scan_product_tree_s2(product_base: Path, project_dir: Path) -> list:
                 })
 
     # 3. Top-level old-prefix files at product_base root
-    top_prefix_re = re.compile(r"^(BL|STORY|BUG|CHORE|DEBT)-(\d+)")
+    top_prefix_re = re.compile(r"^(BL|STORY|BUG|CHORE|DEBT|EP)-(\d+)")
     if product_base.exists():
         for f in sorted(product_base.iterdir()):
             if not f.is_file() or not f.name.endswith(".md"):
@@ -2177,7 +2177,7 @@ def _build_dry_run_plan(project_dir: str) -> dict:
         # Only one candidate per key now (path-qualified for typed-backlog)
         cand = real_cands[0]
         cand["legacy_id"] = legacy_id
-        if cand["kind"] == "bespoke-epic":
+        if cand["kind"] == "bespoke-epic" or re.match(r"^EP-\d+$", legacy_id):
             epic_cands.append(cand)
         else:
             issue_cands.append(cand)
@@ -2192,14 +2192,16 @@ def _build_dry_run_plan(project_dir: str) -> dict:
     # Assign EP-NNN ids (number preserved)
     for cand in epic_cands:
         legacy_id = cand["legacy_id"]
-        if _V4_ID_RE.match(legacy_id):
+        m_ep = re.match(r"^EP-(\d+)$", legacy_id)
+        m_epic = re.match(r"^EPIC-(\d+)$", legacy_id)
+        if m_ep:
+            new_id = f"EP-{int(m_ep.group(1)):03d}"
+        elif m_epic:
+            new_id = f"EP-{int(m_epic.group(1)):03d}"
+        elif _V4_ID_RE.match(legacy_id):
             continue
-        m = re.match(r"^EPIC-(\d+)$", legacy_id)
-        if m:
-            num = int(m.group(1))
-            new_id = f"EP-{num:03d}"
         else:
-            new_id = f"EP-{legacy_id}"
+            continue
         source_rel = str(cand["path"].relative_to(pd))
         id_map[legacy_id] = {"new_id": new_id, "source": source_rel}
         cand["new_id"] = new_id
@@ -2312,7 +2314,7 @@ def _build_dry_run_plan(project_dir: str) -> dict:
         fm, full_text = _parse_frontmatter_and_body(path)
         tier, should_flag = _tier_and_flag(fm, full_text)
 
-        if cand["kind"] == "bespoke-epic":
+        if cand["kind"] == "bespoke-epic" or new_id.startswith("EP-"):
             dest_rel = f"{pb_rel}/roadmap/epics/{new_id}/{new_id}.md"
         else:
             dest_rel = f"{pb_rel}/backlog/{new_id}.md"
