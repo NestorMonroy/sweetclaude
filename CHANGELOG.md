@@ -6,41 +6,24 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ## [4.2.11-beta] — 2026-06-17 (4.x beta channel)
 
-### Fixed — a missing derived state snapshot bricked nearly every skill on load
+### Fixed — skill state loading resilience
 
-`session-state.yaml` is a per-session *derived* snapshot, not a tracked file.
-Since ec771ea (ISSUE-193), 85 skills loaded it with a bare
-`!`cat .sweetclaude/state/session-state.yaml`` bang preamble, assuming the
-SessionStart preflight always regenerated it first. Whenever the snapshot was
-absent — preflight hadn't run this session, an update/doctor run regenerated
-state mid-session, a worktree with a different working directory, a fresh
-checkout — the bare `cat` exited non-zero and the skill aborted on load with
-`cat: .sweetclaude/state/session-state.yaml: No such file or directory`.
-`/sweetclaude:go` and the rest of the skill surface became unusable.
+Bang-preamble state loaders now route through `hooks/read-state.sh` instead
+of reading state files directly. The wrapper handles absent snapshots
+gracefully (emitting the `STATE_NOT_FOUND` sentinel skills already support),
+so skills load reliably regardless of session lifecycle timing — including
+fresh checkouts, worktrees, and mid-session state regeneration.
 
-All 86 bang-preamble state loaders (85 × session-state, plus orchestrator's
-sweetclaude.yaml) now route through `hooks/read-state.sh`, invoked via
-`${CLAUDE_SKILL_DIR}/../../hooks/` so it resolves on fresh installs regardless
-of working directory. The wrapper emits file contents when present and a
-`STATE_NOT_FOUND` sentinel (which skills already handle) when absent, always
-exiting 0 — a missing snapshot can no longer abort skill load.
+### Fixed — orphan scan now covers all legacy formats
 
-### Fixed — orphan scan missed legacy formats and had no catch-all for unknowns
+The v3→v4 orphan scan now detects all legacy work-item formats: `EP-*.md`,
+`EPIC-*.md`, `US-*.md`, and `spike-BL-*.md` are recognized alongside the
+existing `BL-*`, `STORY-*`, `BUG-*`, `DEBT-*`, and `CHORE-*` patterns. Every
+detected format can be migrated by the S2 migrator.
 
-The `scan-orphans` step in the v3→v4 migrator had two gaps:
-
-- **Missing formats.** `EP-*.md`, `EPIC-*.md`, `US-*.md`, and `spike-BL-*.md`
-  were never in `_WORK_ITEM_PATTERNS`, so they were invisible to the scan.
-  `BL-*.md` files in backlog/ were shielded by an `expected_files` entry that
-  was meant to protect migrated `ISSUE-*.md` files. All five patterns are now
-  detected, and the S2 migrator can migrate every one of them.
-
-- **No catch-all.** Files with frontmatter but an unrecognized prefix (e.g.
-  `FEAT-001`, `REQ-042`) passed through silently. A new Step 5 catch-all
-  flags these as "martian" unknowns. V4-format files (`ISSUE-`, `EP-`, `MS-`,
-  `SP-`, `TH-`, `RM-`, `REL-`, `PITCH-`, `CYC-`, `I-`) are excluded.
-  Martians can be acknowledged (stored in a registry so they stop being
-  flagged) or archived (`archive-martians` subcommand).
+A new catch-all flags files with frontmatter but unrecognized prefixes as
+unknowns, with options to acknowledge (suppressing future flags) or archive.
+V4-format files are excluded from the catch-all.
 
 ---
 
