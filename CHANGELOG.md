@@ -4,6 +4,35 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.12-beta] — 2026-06-18 (4.x beta channel)
+
+### Added — interactive orphan resolution
+
+The orphan scan now offers five actions when orphaned work items are found:
+re-onboard all as new ISSUE items, review by group, review one by one, archive
+all, or leave in place. Previously, the scan was report-only. Each action
+preserves provenance — re-onboarded items link back to their original path and
+ID via `reonboarded_from` metadata.
+
+### Fixed — orphan scan returned absolute paths
+
+`scan-orphans` now emits paths relative to the project directory, so all action
+CLIs (`reonboard-orphans`, `resolve-orphan`, `archive-orphans`,
+`acknowledge-orphans`) work correctly in any project location.
+
+### Fixed — orphan scan false positives eliminated
+
+The scan no longer flags migrated ISSUE-format items in the primary backlog as
+orphans. Previously, 525 false positives were reported on a real project with
+2 actual orphans.
+
+### Changed — orphan terminology
+
+Internal function and CLI names renamed from `martian` to `orphan` for clarity.
+No user-facing behavior change.
+
+---
+
 ## [4.2.11-beta] — 2026-06-17 (4.x beta channel)
 
 ### Fixed — skill state loading resilience
