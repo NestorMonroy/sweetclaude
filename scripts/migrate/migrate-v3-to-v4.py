@@ -498,12 +498,27 @@ def scan_orphans(project_dir: pathlib.Path) -> dict:
     primary_bl_files = {str(p) for p in backlog_path.glob("BL-*.md")} if backlog_path.exists() else set()
 
     expected_files: set[str] = set()
-    if backlog_path.exists():
-        expected_files.update(str(p) for p in backlog_path.glob("ISSUE-*.md"))
-        for _sub in ("done", "archived"):
-            _sub_dir = backlog_path / _sub
-            if _sub_dir.is_dir():
-                expected_files.update(str(p) for p in _sub_dir.glob("ISSUE-*.md"))
+    for root in [product_base, project_dir / "docs" / "product"]:
+        if not root.exists():
+            continue
+        for loc in [
+            root / "backlog",
+            root / "backlog" / "done",
+            root / "backlog" / "archived",
+            root / "roadmap" / "issues",
+            root / "roadmap" / "issues" / "done",
+            root / "roadmap" / "epics",
+            root / "roadmap" / "epics" / "done",
+            root / "milestones",
+            root / "issues",
+        ]:
+            if loc.is_dir():
+                expected_files.update(str(p) for p in loc.glob("ISSUE-*.md"))
+                expected_files.update(str(p) for p in loc.glob("EP-*.md"))
+                expected_files.update(str(p) for p in loc.glob("MS-*.md"))
+                expected_files.update(str(p) for p in loc.glob("SP-*.md"))
+                expected_files.update(str(p) for p in loc.glob("RM-*.md"))
+                expected_files.update(str(p) for p in loc.glob("I-*.md"))
 
     findings: list[dict] = []
     seen: set[str] = set()
@@ -537,16 +552,20 @@ def scan_orphans(project_dir: pathlib.Path) -> dict:
                 for p in typed_dir.rglob("*.md"):
                     _add(p, "typed-subdir", f"found in retired {subdir}/ subdirectory")
 
-    # 2. Work-item-patterned files anywhere under search roots (not already in primary set)
+    # 2. Legacy-prefix files anywhere under search roots (not already expected)
+    _LEGACY_PATTERNS = [
+        "BL-*.md", "STORY-*.md", "BUG-*.md", "DEBT-*.md", "CHORE-*.md",
+        "EPIC-*.md", "US-*.md", "spike-BL-*.md",
+    ]
     for root in search_roots:
         if not root.exists():
             continue
-        for pattern in _WORK_ITEM_PATTERNS:
+        for pattern in _LEGACY_PATTERNS:
             for p in root.rglob(pattern):
                 if "done/" in str(p) or "archived/" in str(p):
-                    _add(p, "archived", "in done/ or archived/ directory")
+                    _add(p, "legacy-archived", "legacy-prefix file in archival directory")
                 else:
-                    _add(p, "stray-file", f"matches {pattern} outside expected location")
+                    _add(p, "legacy-stray", f"legacy-prefix file ({pattern})")
 
     # 3. BL-*.md in unexpected locations (wrong base path, nested)
     for root in search_roots:
@@ -556,23 +575,18 @@ def scan_orphans(project_dir: pathlib.Path) -> dict:
             if str(p) not in primary_bl_files:
                 _add(p, "bl-wrong-location", "BL file outside primary backlog directory")
 
-    # 4. scratch/ — markdown files that look like work items
-    scratch_dir = project_dir / "scratch"
-    if scratch_dir.is_dir():
-        for p in scratch_dir.rglob("*.md"):
-            fm = _sniff_frontmatter(p)
-            if fm is not None:
-                _add(p, "scratch", "work item found in scratch/")
-
-    # 5. Catch-all: any .md file with frontmatter under search roots that
-    #    wasn't matched by steps 1-4. These are "martian" files — unknown
-    #    prefix patterns that may be work items from a format the framework
-    #    doesn't recognize.
+    # 4. Catch-all: .md files with frontmatter in backlog directories only
+    #    that weren't matched by steps 1-3 and have a work-item-shaped ID
+    #    (prefixed with letters + hyphen + digits). Product docs, specs,
+    #    briefs, and scratch files are not work items.
     acknowledged = _load_martian_registry(project_dir)
+    backlog_roots = []
     for root in search_roots:
-        if not root.exists():
-            continue
-        for p in root.rglob("*.md"):
+        bl = root / "backlog"
+        if bl.is_dir():
+            backlog_roots.append(bl)
+    for bl_root in backlog_roots:
+        for p in bl_root.rglob("*.md"):
             key = str(p.resolve())
             if key in seen or str(p) in expected_files:
                 continue
@@ -584,7 +598,9 @@ def scan_orphans(project_dir: pathlib.Path) -> dict:
                 fid = str(fm.get("id", ""))
                 if _V4_ID_RE.match(fid):
                     continue
-                _add(p, "martian", "unknown format with frontmatter")
+                if _OLD_PREFIX_ID_RE.match(fid):
+                    continue
+                _add(p, "martian", "unknown format with frontmatter in backlog")
 
     return {
         "product_base": str(product_base),

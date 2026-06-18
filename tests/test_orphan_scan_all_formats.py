@@ -96,7 +96,7 @@ def test_unknown_prefix_with_frontmatter_flagged_as_martian(tmp_path):
     bl = base / "backlog"
     _w(bl / "ISSUE-001-normal.md", "ISSUE-001")
     _w(bl / "FEAT-001-alien.md", "FEAT-001")
-    _w(base / "custom" / "REQ-042-spec.md", "REQ-042")
+    _w(bl / "REQ-042-spec.md", "REQ-042")
     findings = _scan(tmp_path)["findings"]
     martians = [f for f in findings if f["category"] == "martian"]
     martian_ids = {f["id"] for f in martians}
