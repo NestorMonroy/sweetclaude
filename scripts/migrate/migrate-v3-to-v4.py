@@ -533,8 +533,12 @@ def scan_orphans(project_dir: pathlib.Path) -> dict:
             return
         seen.add(key)
         fm = _sniff_frontmatter(path)
+        try:
+            rel = str(path.relative_to(project_dir))
+        except ValueError:
+            rel = str(path)
         findings.append({
-            "file": str(path),
+            "file": rel,
             "category": category,
             "detail": detail,
             "id": (fm or {}).get("id", path.stem),
