@@ -25,6 +25,23 @@ of working directory. The wrapper emits file contents when present and a
 `STATE_NOT_FOUND` sentinel (which skills already handle) when absent, always
 exiting 0 — a missing snapshot can no longer abort skill load.
 
+### Fixed — orphan scan missed legacy formats and had no catch-all for unknowns
+
+The `scan-orphans` step in the v3→v4 migrator had two gaps:
+
+- **Missing formats.** `EP-*.md`, `EPIC-*.md`, `US-*.md`, and `spike-BL-*.md`
+  were never in `_WORK_ITEM_PATTERNS`, so they were invisible to the scan.
+  `BL-*.md` files in backlog/ were shielded by an `expected_files` entry that
+  was meant to protect migrated `ISSUE-*.md` files. All five patterns are now
+  detected, and the S2 migrator can migrate every one of them.
+
+- **No catch-all.** Files with frontmatter but an unrecognized prefix (e.g.
+  `FEAT-001`, `REQ-042`) passed through silently. A new Step 5 catch-all
+  flags these as "martian" unknowns. V4-format files (`ISSUE-`, `EP-`, `MS-`,
+  `SP-`, `TH-`, `RM-`, `REL-`, `PITCH-`, `CYC-`, `I-`) are excluded.
+  Martians can be acknowledged (stored in a registry so they stop being
+  flagged) or archived (`archive-martians` subcommand).
+
 ---
 
 ## [4.2.10-beta] — 2026-06-16 (4.x beta channel)
