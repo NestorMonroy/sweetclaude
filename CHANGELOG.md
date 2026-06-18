@@ -4,6 +4,23 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.14-beta] — 2026-06-18 (4.x beta channel)
+
+### Added — interactive orphan resolution
+
+The update skill's orphan scan now offers interactive resolution when orphaned
+work items are found. Users can re-onboard all items as new ISSUE entries,
+review by group or one at a time, archive all, or leave them in place.
+Re-onboarded items preserve provenance via `reonboarded_from` metadata linking
+back to the original path and ID.
+
+### Fixed — orphan scan path handling
+
+The scan now emits paths relative to the project directory, ensuring all action
+commands work correctly regardless of where the project lives on disk.
+
+---
+
 ## [4.2.12-beta] — 2026-06-18 (4.x beta channel)
 
 ### Added — interactive orphan resolution
