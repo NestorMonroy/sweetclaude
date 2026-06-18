@@ -434,22 +434,23 @@ def _sniff_frontmatter(path: pathlib.Path) -> dict | None:
     return None
 
 
-_MARTIAN_REGISTRY = ".sweetclaude/state/martian-registry.yaml"
+_ORPHAN_REGISTRY = ".sweetclaude/state/orphan-registry.yaml"
 
 
-def _load_martian_registry(project_dir: pathlib.Path) -> set[str]:
-    reg = project_dir / _MARTIAN_REGISTRY
-    if not reg.exists():
-        return set()
-    try:
-        data = yaml.safe_load(reg.read_text()) or {}
-        return {e["path"] for e in data.get("acknowledged", []) if isinstance(e, dict) and "path" in e}
-    except (yaml.YAMLError, KeyError, TypeError):
-        return set()
+def _load_orphan_registry(project_dir: pathlib.Path) -> set[str]:
+    for name in [_ORPHAN_REGISTRY, ".sweetclaude/state/martian-registry.yaml"]:
+        reg = project_dir / name
+        if reg.exists():
+            try:
+                data = yaml.safe_load(reg.read_text()) or {}
+                return {e["path"] for e in data.get("acknowledged", []) if isinstance(e, dict) and "path" in e}
+            except (yaml.YAMLError, KeyError, TypeError):
+                pass
+    return set()
 
 
-def acknowledge_martians(project_dir: pathlib.Path, rel_paths: list[str]) -> dict:
-    reg_path = project_dir / _MARTIAN_REGISTRY
+def acknowledge_orphans(project_dir: pathlib.Path, rel_paths: list[str]) -> dict:
+    reg_path = project_dir / _ORPHAN_REGISTRY
     try:
         data = yaml.safe_load(reg_path.read_text()) if reg_path.exists() else {}
     except yaml.YAMLError:
@@ -469,9 +470,9 @@ def acknowledge_martians(project_dir: pathlib.Path, rel_paths: list[str]) -> dic
     return {"acknowledged": added, "total": len(existing)}
 
 
-def archive_martians(project_dir: pathlib.Path, rel_paths: list[str]) -> dict:
+def archive_orphans(project_dir: pathlib.Path, rel_paths: list[str]) -> dict:
     product_base = resolve_product_base(project_dir)
-    archive_dir = product_base / "archive" / "martian"
+    archive_dir = product_base / "archive" / "orphans"
     archive_dir.mkdir(parents=True, exist_ok=True)
     archived = []
     for rp in rel_paths:
@@ -579,7 +580,7 @@ def scan_orphans(project_dir: pathlib.Path) -> dict:
     #    that weren't matched by steps 1-3 and have a work-item-shaped ID
     #    (prefixed with letters + hyphen + digits). Product docs, specs,
     #    briefs, and scratch files are not work items.
-    acknowledged = _load_martian_registry(project_dir)
+    acknowledged = _load_orphan_registry(project_dir)
     backlog_roots = []
     for root in search_roots:
         bl = root / "backlog"
@@ -1586,9 +1587,9 @@ def main(argv: list[str] | None = None) -> int:
     p_verify.add_argument("--created-paths-file", required=True, type=pathlib.Path)
     _add("finalize")
     _add("cleanup-v3-files")
-    p_ack = _add("acknowledge-martians")
+    p_ack = _add("acknowledge-orphans")
     p_ack.add_argument("--paths", required=True, type=str)
-    p_arch = _add("archive-martians")
+    p_arch = _add("archive-orphans")
     p_arch.add_argument("--paths", required=True, type=str)
 
     args = parser.parse_args(argv)
@@ -1625,12 +1626,12 @@ def main(argv: list[str] | None = None) -> int:
         _emit(result)
         if result.get("error"):
             return 1
-    elif args.cmd == "acknowledge-martians":
+    elif args.cmd == "acknowledge-orphans":
         paths = json.loads(args.paths)
-        _emit(acknowledge_martians(project_dir, paths))
-    elif args.cmd == "archive-martians":
+        _emit(acknowledge_orphans(project_dir, paths))
+    elif args.cmd == "archive-orphans":
         paths = json.loads(args.paths)
-        _emit(archive_martians(project_dir, paths))
+        _emit(archive_orphans(project_dir, paths))
     return 0
 
 

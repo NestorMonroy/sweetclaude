@@ -144,7 +144,7 @@ def test_archive_martians_moves_files(tmp_path):
     _w(bl / "FEAT-001-alien.md", "FEAT-001")
 
     out = subprocess.run(
-        ["python3", str(SCRIPT), "archive-martians", "--project-dir", str(tmp_path),
+        ["python3", str(SCRIPT), "archive-orphans", "--project-dir", str(tmp_path),
          "--paths", json.dumps([".sweetclaude/product/backlog/FEAT-001-alien.md"])],
         capture_output=True, text=True,
     )
@@ -152,13 +152,13 @@ def test_archive_martians_moves_files(tmp_path):
     result = json.loads(out.stdout)
     assert len(result["archived"]) == 1
     assert not (bl / "FEAT-001-alien.md").exists(), "source file must be moved"
-    assert (base / "archive" / "martian" / "FEAT-001-alien.md").exists(), "file must land in archive/martian/"
+    assert (base / "archive" / "orphans" / "FEAT-001-alien.md").exists(), "file must land in archive/orphans/"
 
 
 def test_acknowledge_martians_writes_registry(tmp_path):
     (tmp_path / ".sweetclaude" / "state").mkdir(parents=True, exist_ok=True)
     out = subprocess.run(
-        ["python3", str(SCRIPT), "acknowledge-martians", "--project-dir", str(tmp_path),
+        ["python3", str(SCRIPT), "acknowledge-orphans", "--project-dir", str(tmp_path),
          "--paths", json.dumps([".sweetclaude/product/backlog/FEAT-001-alien.md"])],
         capture_output=True, text=True,
     )
@@ -167,5 +167,5 @@ def test_acknowledge_martians_writes_registry(tmp_path):
     assert "FEAT-001-alien.md" in result["acknowledged"][0]
 
     import yaml
-    reg = yaml.safe_load((tmp_path / ".sweetclaude" / "state" / "martian-registry.yaml").read_text())
+    reg = yaml.safe_load((tmp_path / ".sweetclaude" / "state" / "orphan-registry.yaml").read_text())
     assert len(reg["acknowledged"]) == 1
