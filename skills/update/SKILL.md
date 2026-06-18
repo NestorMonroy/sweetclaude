@@ -566,7 +566,7 @@ Stop. Do NOT continue to Step 7.
 
 Only run if `.sweetclaude/state/sweetclaude.yaml` exists in the current project directory — skip silently otherwise.
 
-Scan for work item files that may have been lost, abandoned, or orphaned from previous SweetClaude versions — files in typed subdirectories (retired in 4.1.0), scratch/, or other locations the primary migration wouldn't find. This scan is report-only from update.
+Scan for work item files that may have been lost, abandoned, or orphaned from previous SweetClaude versions — files in typed subdirectories (retired in 4.1.0), legacy prefixes, or other locations the primary migration wouldn't find.
 
 ```bash
 ORPHAN_COUNT=0
@@ -583,32 +583,116 @@ echo "ORPHAN_COUNT=$ORPHAN_COUNT"
 
 If `ORPHAN_COUNT` is 0: continue silently to Step 6b2.
 
-If `ORPHAN_COUNT > 0`: present findings grouped by category:
+If `ORPHAN_COUNT > 0`: run `group-orphans` to get grouping data:
 
-```
-Found {N} orphaned work item files outside the primary backlog:
-
-Typed subdirectories (retired in 4.1.0):
-  {file} — {id} — {title} [{status}]
-
-Scratch directory:
-  {file} — {id} — {title} [{status}]
-
-Stray files:
-  {file} — {id} — {title} [{status}]
+```bash
+GROUP_OUT=$(python3 "$MIGRATE_SCRIPT" group-orphans --project-dir . 2>/dev/null)
 ```
 
-Do not move, copy, delete, or normalize these files from `sweetclaude:update`.
-Report them as a follow-up diagnostic only:
+Present a summary of findings:
 
 ```
-Found {N} orphaned work item file(s) outside the primary backlog.
-
-No files were changed. Taxonomy/orphan recovery is disabled in this beta
-hotfix because the current migrator does not safely support every v4 project
-layout. Continue using the project as-is; run `sweetclaude:doctor` for a
-read-only diagnostic report.
+Found {total_files} orphaned work item file(s) outside the primary backlog.
 ```
+
+Then present via **AskUserQuestion** (single-select):
+
+> "How would you like to handle these orphaned files?"
+>
+> Options:
+> - **Re-onboard all as new ISSUE items** — creates a new ISSUE-NNN file in backlog/ for each orphan, preserving original content and linking back to the source via `reonboarded_from` metadata.
+> - **Review by group** — groups orphans by category and location. You decide what to do with each group (re-onboard, archive, or leave in place).
+> - **Review one by one** — step through each orphan individually and decide its fate (re-onboard, archive, leave in place, or skip).
+> - **Archive all** — moves all orphans to `archive/orphans/` where they are preserved but no longer flagged.
+
+(No "Leave all in place" option in the menu — the user can dismiss the menu with "Something else" and say they want to leave them.)
+
+### Action path: Re-onboard all
+
+Collect all file paths from `ORPHAN_OUT` findings:
+
+```bash
+PATHS=$(echo "$ORPHAN_OUT" | python3 -c "import sys, json; print(json.dumps([f['file'] for f in json.load(sys.stdin).get('findings', [])]))")
+python3 "$MIGRATE_SCRIPT" reonboard-orphans --project-dir . --paths "$PATHS"
+```
+
+Report results: "{N} files re-onboarded as new ISSUE items." List each mapping: `{source} → {new_id}`.
+
+### Action path: Review by group
+
+If `has_grouping` from `GROUP_OUT` is false (only one file or one group with one file), fall through to "Review one by one" instead.
+
+Otherwise, iterate through each group in `GROUP_OUT`. For each group, present:
+
+```
+Group: {label} ({count} files)
+Directory: {directory}
+
+Files:
+  {id} — {title} [{status}]
+  ...
+```
+
+Then present via **AskUserQuestion** (single-select) per group:
+
+> "What would you like to do with this group?"
+>
+> Options:
+> - **Re-onboard this group** — creates new ISSUE-NNN files for all items in this group.
+> - **Archive this group** — moves all items to `archive/orphans/`.
+> - **Leave in place** — acknowledges these files so they stop being flagged.
+> - **Skip for now** — leaves files untouched without acknowledging (will be flagged again next scan).
+
+Execute the chosen action for each group using the appropriate CLI subcommand:
+- Re-onboard: `reonboard-orphans --paths {json list of group file paths}`
+- Archive: `archive-orphans --paths {json list of group file paths}`
+- Leave in place: `acknowledge-orphans --paths {json list of group file paths}`
+- Skip: no action
+
+### Action path: Review one by one
+
+Iterate through all findings from `ORPHAN_OUT`. For each file, present:
+
+```
+{file}
+  ID: {id}  Title: {title}  Status: {status}  Category: {category}
+```
+
+Then present via **AskUserQuestion** (single-select) per file:
+
+> "What would you like to do with this file?"
+>
+> Options:
+> - **Re-onboard** — creates a new ISSUE-NNN file from this orphan.
+> - **Archive** — moves to `archive/orphans/`.
+> - **Leave in place** — acknowledges so it stops being flagged.
+> - **Skip** — leave untouched (will be flagged again next scan).
+
+Execute each choice using the `resolve-orphan` CLI:
+
+```bash
+python3 "$MIGRATE_SCRIPT" resolve-orphan --project-dir . --path "{file}" --action "{action}"
+```
+
+### Action path: Archive all
+
+```bash
+PATHS=$(echo "$ORPHAN_OUT" | python3 -c "import sys, json; print(json.dumps([f['file'] for f in json.load(sys.stdin).get('findings', [])]))")
+python3 "$MIGRATE_SCRIPT" archive-orphans --project-dir . --paths "$PATHS"
+```
+
+Report: "{N} orphaned files archived to `archive/orphans/`."
+
+### Action path: Leave all in place (user typed "Something else")
+
+If the user says they want to leave all orphans in place, acknowledge them all so they stop being flagged:
+
+```bash
+PATHS=$(echo "$ORPHAN_OUT" | python3 -c "import sys, json; print(json.dumps([f['file'] for f in json.load(sys.stdin).get('findings', [])]))")
+python3 "$MIGRATE_SCRIPT" acknowledge-orphans --project-dir . --paths "$PATHS"
+```
+
+Report: "{N} orphaned files acknowledged — they will no longer be flagged."
 
 Then continue to Step 6b2.
 

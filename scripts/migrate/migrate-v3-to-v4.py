@@ -19,6 +19,9 @@ CLI subcommands:
   execute            --project-dir DIR [--include-done]
   verify             --project-dir DIR --created-paths-file FILE
   finalize           --project-dir DIR
+  reonboard-orphans  --project-dir DIR --paths JSON_LIST
+  resolve-orphan     --project-dir DIR --path REL_PATH --action ACTION
+  group-orphans      --project-dir DIR
 
 All commands emit JSON on stdout. Errors emit on stderr; exit 1 on failure.
 """
@@ -652,6 +655,161 @@ def validate(project_dir: pathlib.Path) -> dict:
 
 def _make_slug(title: str) -> str:
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", (title or "").lower())).strip("-")
+
+
+def _next_issue_number(backlog_path: pathlib.Path) -> int:
+    highest = 0
+    if backlog_path.is_dir():
+        for sub in [backlog_path, backlog_path / "done", backlog_path / "archived"]:
+            if not sub.is_dir():
+                continue
+            for p in sub.glob("ISSUE-*.md"):
+                m = re.match(r"^ISSUE-(\d+)", p.name)
+                if m:
+                    highest = max(highest, int(m.group(1)))
+    return highest + 1
+
+
+def reonboard_orphans(project_dir: pathlib.Path, rel_paths: list[str]) -> dict:
+    product_base = resolve_product_base(project_dir)
+    backlog_path = product_base / "backlog"
+    backlog_path.mkdir(parents=True, exist_ok=True)
+    counter = _next_issue_number(backlog_path)
+    created = []
+    for rp in rel_paths:
+        src = project_dir / rp
+        if not src.exists():
+            continue
+        fm = _sniff_frontmatter(src)
+        title = (fm or {}).get("title", src.stem) or src.stem
+        old_id = (fm or {}).get("id", src.stem)
+        status = (fm or {}).get("status", "new")
+        item_type = (fm or {}).get("type", "story")
+        new_id = f"ISSUE-{counter:03d}"
+        slug = _make_slug(title)
+        dest_name = f"{new_id}-{slug}.md" if slug else f"{new_id}.md"
+        dest = backlog_path / dest_name
+        try:
+            body = src.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        parts = body.split("---", 2)
+        body_text = parts[2].strip() if len(parts) >= 3 else body.strip()
+        new_fm = {
+            "id": new_id,
+            "title": title,
+            "status": status,
+            "type": item_type,
+            "reonboarded_from": {"path": rp, "original_id": old_id},
+        }
+        dest.write_text(
+            f"---\n{yaml.dump(new_fm, default_flow_style=False, sort_keys=False).rstrip()}\n---\n\n{body_text}\n"
+        )
+        created.append({
+            "source": rp,
+            "dest": str(dest.relative_to(project_dir)),
+            "new_id": new_id,
+            "original_id": old_id,
+        })
+        counter += 1
+    return {"reonboarded": created, "next_issue_number": counter}
+
+
+def reonboard_orphan(project_dir: pathlib.Path, rel_path: str) -> dict:
+    product_base = resolve_product_base(project_dir)
+    backlog_path = product_base / "backlog"
+    backlog_path.mkdir(parents=True, exist_ok=True)
+    src = project_dir / rel_path
+    if not src.exists():
+        return {"error": "file-not-found", "path": rel_path}
+    fm = _sniff_frontmatter(src)
+    title = (fm or {}).get("title", src.stem) or src.stem
+    old_id = (fm or {}).get("id", src.stem)
+    status = (fm or {}).get("status", "new")
+    item_type = (fm or {}).get("type", "story")
+    counter = _next_issue_number(backlog_path)
+    new_id = f"ISSUE-{counter:03d}"
+    slug = _make_slug(title)
+    dest_name = f"{new_id}-{slug}.md" if slug else f"{new_id}.md"
+    dest = backlog_path / dest_name
+    try:
+        body = src.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {"error": "read-failed", "path": rel_path}
+    parts = body.split("---", 2)
+    body_text = parts[2].strip() if len(parts) >= 3 else body.strip()
+    new_fm = {
+        "id": new_id,
+        "title": title,
+        "status": status,
+        "type": item_type,
+        "reonboarded_from": {"path": rel_path, "original_id": old_id},
+    }
+    dest.write_text(
+        f"---\n{yaml.dump(new_fm, default_flow_style=False, sort_keys=False).rstrip()}\n---\n\n{body_text}\n"
+    )
+    return {
+        "action": "reonboarded",
+        "source": rel_path,
+        "dest": str(dest.relative_to(project_dir)),
+        "new_id": new_id,
+        "original_id": old_id,
+    }
+
+
+def resolve_orphan(project_dir: pathlib.Path, rel_path: str, action: str) -> dict:
+    if action == "reonboard":
+        return reonboard_orphan(project_dir, rel_path)
+    elif action == "archive":
+        result = archive_orphans(project_dir, [rel_path])
+        if result["archived"]:
+            return {"action": "archived", **result["archived"][0]}
+        return {"error": "archive-failed", "path": rel_path}
+    elif action == "acknowledge":
+        acknowledge_orphans(project_dir, [rel_path])
+        return {"action": "acknowledged", "path": rel_path}
+    elif action == "skip":
+        return {"action": "skipped", "path": rel_path}
+    else:
+        return {"error": f"unknown-action: {action}", "path": rel_path}
+
+
+def group_orphans(findings: list[dict]) -> dict:
+    groups: dict[str, list[dict]] = {}
+    for f in findings:
+        cat = f.get("category", "unknown")
+        prefix_m = re.match(r"^([A-Za-z]+[-_])", f.get("id", ""))
+        prefix = prefix_m.group(1) if prefix_m else "unknown-"
+        parent = str(pathlib.Path(f.get("file", "")).parent)
+        if cat == "typed-subdir":
+            label = f"typed subdirectory ({parent.split('/')[-1]}/)"
+        elif cat == "legacy-stray":
+            label = f"{prefix}* files (legacy prefix)"
+        elif cat == "legacy-archived":
+            label = f"{prefix}* files in archival directory"
+        elif cat == "bl-wrong-location":
+            label = "BL-* files outside primary backlog"
+        elif cat == "martian":
+            label = f"{prefix}* files (unknown format)"
+        else:
+            label = f"{cat}: {prefix}*"
+        key = f"{cat}:{prefix}:{parent}"
+        if key not in groups:
+            groups[key] = {"label": label, "category": cat, "prefix": prefix, "directory": parent, "files": []}
+        groups[key]["files"].append({
+            "file": f["file"], "id": f["id"], "title": f["title"], "status": f["status"],
+        })
+    result = []
+    for key in sorted(groups):
+        g = groups[key]
+        g["count"] = len(g["files"])
+        g["group_key"] = key
+        result.append(g)
+    has_grouping = len(result) > 1 or (len(result) == 1 and result[0]["count"] > 1)
+    return {
+        "groups": result, "group_count": len(result),
+        "total_files": len(findings), "has_grouping": has_grouping,
+    }
 
 
 def build_plan(project_dir: pathlib.Path, include_done: bool) -> dict:
@@ -1591,6 +1749,12 @@ def main(argv: list[str] | None = None) -> int:
     p_ack.add_argument("--paths", required=True, type=str)
     p_arch = _add("archive-orphans")
     p_arch.add_argument("--paths", required=True, type=str)
+    p_reonboard = _add("reonboard-orphans")
+    p_reonboard.add_argument("--paths", required=True, type=str)
+    p_resolve = _add("resolve-orphan")
+    p_resolve.add_argument("--path", required=True, type=str)
+    p_resolve.add_argument("--action", required=True, choices=["reonboard", "archive", "acknowledge", "skip"])
+    _add("group-orphans")
 
     args = parser.parse_args(argv)
     project_dir = args.project_dir.resolve()
@@ -1632,6 +1796,14 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "archive-orphans":
         paths = json.loads(args.paths)
         _emit(archive_orphans(project_dir, paths))
+    elif args.cmd == "reonboard-orphans":
+        paths = json.loads(args.paths)
+        _emit(reonboard_orphans(project_dir, paths))
+    elif args.cmd == "resolve-orphan":
+        _emit(resolve_orphan(project_dir, args.path, args.action))
+    elif args.cmd == "group-orphans":
+        scan_result = scan_orphans(project_dir)
+        _emit(group_orphans(scan_result.get("findings", [])))
     return 0
 
 

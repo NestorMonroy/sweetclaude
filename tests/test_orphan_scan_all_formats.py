@@ -169,3 +169,198 @@ def test_acknowledge_martians_writes_registry(tmp_path):
     import yaml
     reg = yaml.safe_load((tmp_path / ".sweetclaude" / "state" / "orphan-registry.yaml").read_text())
     assert len(reg["acknowledged"]) == 1
+
+
+# --- Action 1: Re-onboard (batch) ---
+
+
+def test_reonboard_orphans_creates_issue_files(tmp_path):
+    base = tmp_path / ".sweetclaude" / "product"
+    bl = base / "backlog"
+    _w(bl / "ISSUE-001-existing.md", "ISSUE-001")
+    _w(bl / "stories" / "STORY-050-typed.md", "STORY-050")
+    _w(bl / "bugs" / "BUG-050-typed.md", "BUG-050")
+
+    out = subprocess.run(
+        ["python3", str(SCRIPT), "reonboard-orphans", "--project-dir", str(tmp_path),
+         "--paths", json.dumps([
+             ".sweetclaude/product/backlog/stories/STORY-050-typed.md",
+             ".sweetclaude/product/backlog/bugs/BUG-050-typed.md",
+         ])],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 0, out.stderr
+    result = json.loads(out.stdout)
+    assert len(result["reonboarded"]) == 2
+    assert result["reonboarded"][0]["new_id"] == "ISSUE-002"
+    assert result["reonboarded"][1]["new_id"] == "ISSUE-003"
+    assert (bl / "ISSUE-002-story-050.md").exists() or any(
+        p.name.startswith("ISSUE-002") for p in bl.glob("ISSUE-002*.md")
+    )
+
+    import yaml
+    for entry in result["reonboarded"]:
+        dest = tmp_path / entry["dest"]
+        fm = yaml.safe_load(dest.read_text().split("---", 2)[1])
+        assert "reonboarded_from" in fm
+
+
+# --- Action 2: Group orphans ---
+
+
+def test_group_orphans_groups_by_category_prefix_and_directory(tmp_path):
+    base = tmp_path / ".sweetclaude" / "product"
+    bl = base / "backlog"
+    _w(bl / "ISSUE-001-normal.md", "ISSUE-001")
+    _w(bl / "BL-010-legacy.md", "BL-010")
+    _w(bl / "BL-011-legacy.md", "BL-011")
+    _w(bl / "stories" / "STORY-050-typed.md", "STORY-050")
+
+    out = subprocess.run(
+        ["python3", str(SCRIPT), "group-orphans", "--project-dir", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 0, out.stderr
+    result = json.loads(out.stdout)
+    assert result["group_count"] >= 2
+    assert result["has_grouping"] is True
+    labels = [g["label"] for g in result["groups"]]
+    assert any("BL-" in l for l in labels)
+    assert any("directory" in g for g in result["groups"])
+
+
+def test_group_orphans_single_file_has_grouping_false(tmp_path):
+    base = tmp_path / ".sweetclaude" / "product"
+    bl = base / "backlog"
+    _w(bl / "ISSUE-001-normal.md", "ISSUE-001")
+    _w(bl / "FEAT-001-alien.md", "FEAT-001")
+
+    out = subprocess.run(
+        ["python3", str(SCRIPT), "group-orphans", "--project-dir", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 0, out.stderr
+    result = json.loads(out.stdout)
+    assert result["total_files"] == 1
+    assert result["has_grouping"] is False
+
+
+# --- Action 3: Review one by one (resolve-orphan dispatcher) ---
+
+
+def test_resolve_orphan_reonboard(tmp_path):
+    base = tmp_path / ".sweetclaude" / "product"
+    bl = base / "backlog"
+    _w(bl / "FEAT-001-alien.md", "FEAT-001")
+
+    out = subprocess.run(
+        ["python3", str(SCRIPT), "resolve-orphan", "--project-dir", str(tmp_path),
+         "--path", ".sweetclaude/product/backlog/FEAT-001-alien.md",
+         "--action", "reonboard"],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 0, out.stderr
+    result = json.loads(out.stdout)
+    assert result["action"] == "reonboarded"
+    assert result["new_id"] == "ISSUE-001"
+    assert (tmp_path / result["dest"]).exists()
+
+
+def test_resolve_orphan_archive(tmp_path):
+    base = tmp_path / ".sweetclaude" / "product"
+    bl = base / "backlog"
+    _w(bl / "FEAT-001-alien.md", "FEAT-001")
+
+    out = subprocess.run(
+        ["python3", str(SCRIPT), "resolve-orphan", "--project-dir", str(tmp_path),
+         "--path", ".sweetclaude/product/backlog/FEAT-001-alien.md",
+         "--action", "archive"],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 0, out.stderr
+    result = json.loads(out.stdout)
+    assert result["action"] == "archived"
+    assert not (bl / "FEAT-001-alien.md").exists()
+    assert (base / "archive" / "orphans" / "FEAT-001-alien.md").exists()
+
+
+def test_resolve_orphan_acknowledge(tmp_path):
+    base = tmp_path / ".sweetclaude" / "product"
+    bl = base / "backlog"
+    _w(bl / "ISSUE-001-normal.md", "ISSUE-001")
+    _w(bl / "FEAT-001-alien.md", "FEAT-001")
+    (tmp_path / ".sweetclaude" / "state").mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        ["python3", str(SCRIPT), "resolve-orphan", "--project-dir", str(tmp_path),
+         "--path", ".sweetclaude/product/backlog/FEAT-001-alien.md",
+         "--action", "acknowledge"],
+        capture_output=True, text=True, check=True,
+    )
+
+    rescan = _scan(tmp_path)
+    assert not any(
+        f["id"] == "FEAT-001" for f in rescan["findings"]
+    ), "acknowledged file must not appear in subsequent scan"
+
+
+def test_resolve_orphan_skip(tmp_path):
+    base = tmp_path / ".sweetclaude" / "product"
+    bl = base / "backlog"
+    _w(bl / "FEAT-001-alien.md", "FEAT-001")
+
+    out = subprocess.run(
+        ["python3", str(SCRIPT), "resolve-orphan", "--project-dir", str(tmp_path),
+         "--path", ".sweetclaude/product/backlog/FEAT-001-alien.md",
+         "--action", "skip"],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 0, out.stderr
+    result = json.loads(out.stdout)
+    assert result["action"] == "skipped"
+    assert (bl / "FEAT-001-alien.md").exists()
+
+
+# --- Action 4: Archive round-trip verification ---
+
+
+def test_archived_orphan_not_in_subsequent_scan(tmp_path):
+    base = tmp_path / ".sweetclaude" / "product"
+    bl = base / "backlog"
+    _w(bl / "ISSUE-001-normal.md", "ISSUE-001")
+    _w(bl / "FEAT-001-alien.md", "FEAT-001")
+
+    subprocess.run(
+        ["python3", str(SCRIPT), "archive-orphans", "--project-dir", str(tmp_path),
+         "--paths", json.dumps([".sweetclaude/product/backlog/FEAT-001-alien.md"])],
+        capture_output=True, text=True, check=True,
+    )
+
+    rescan = _scan(tmp_path)
+    assert not any(
+        f["id"] == "FEAT-001" for f in rescan["findings"]
+    ), "archived file must not appear in subsequent scan"
+
+
+# --- Action 5: Acknowledge round-trip verification ---
+
+
+def test_acknowledge_orphan_roundtrip_scan(tmp_path):
+    base = tmp_path / ".sweetclaude" / "product"
+    bl = base / "backlog"
+    _w(bl / "ISSUE-001-normal.md", "ISSUE-001")
+    _w(bl / "FEAT-001-alien.md", "FEAT-001")
+    (tmp_path / ".sweetclaude" / "state").mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        ["python3", str(SCRIPT), "acknowledge-orphans", "--project-dir", str(tmp_path),
+         "--paths", json.dumps([".sweetclaude/product/backlog/FEAT-001-alien.md"])],
+        capture_output=True, text=True, check=True,
+    )
+
+    assert (bl / "FEAT-001-alien.md").exists(), "acknowledged file must remain in place"
+
+    rescan = _scan(tmp_path)
+    assert not any(
+        f["id"] == "FEAT-001" for f in rescan["findings"]
+    ), "acknowledged file must not appear in subsequent scan"
