@@ -4,6 +4,21 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.15-beta] — 2026-06-20 (4.x beta channel)
+
+### Fixed — story stop guard no longer repeats on a paused story
+
+When a large- or small-story workflow was paused mid-flight, the Stop guard
+re-surfaced the full completion status on every subsequent turn, because the
+pause was only honored within a single turn. The guard now records a durable
+pause acknowledgment, fingerprinted to the workflow's current phase and status.
+Once a pause is confirmed, later turns stay quiet until the story progresses —
+which re-surfaces a single reminder — or the story closes out. The reminder is
+now a one-line summary rather than a full status dump. Multi-turn regression
+tests cover both the large- and small-story guards.
+
+---
+
 ## [4.2.14-beta] — 2026-06-18 (4.x beta channel)
 
 ### Added — interactive orphan resolution
