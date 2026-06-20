@@ -367,6 +367,57 @@ def test_stop_hook_allows_after_terminal_closeout(tmp_path):
     assert not result.stdout.strip()
 
 
+def test_stop_hook_honors_pause_across_turns(tmp_path):
+    """Regression: a deliberately paused story must not re-fire the block on
+    every subsequent turn. The bug: stop_hook_active only suppresses within a
+    single turn, so the next fresh turn blocks again, forever, until terminal.
+    """
+    project = _project_with_workflow(tmp_path)
+    _advance_to_implement(project)
+
+    # Turn 1, first stop: blocks (reminder that the story is still open).
+    first = _run_hook(STOP_HOOK, project, _stop_payload(project, stop_hook_active=False))
+    assert json.loads(first.stdout)["decision"] == "block"
+
+    # Turn 1, deliberate second stop (same turn): allowed, records the pause.
+    second = _run_hook(STOP_HOOK, project, _stop_payload(project, stop_hook_active=True))
+    assert not second.stdout.strip()
+
+    # Turn 2+, fresh stops with no state change: must stay SILENT. This is the
+    # bug — today each fresh turn re-fires the full block.
+    for _ in range(3):
+        later = _run_hook(STOP_HOOK, project, _stop_payload(project, stop_hook_active=False))
+        assert not later.stdout.strip(), "paused large-story re-fired the stop block on a new turn"
+
+
+def test_stop_hook_rearms_after_state_change(tmp_path):
+    """An acknowledged pause is invalidated when the workflow progresses, so the
+    guard reminds once more that the (now-advanced) story is still not done."""
+    project = _project_with_workflow(tmp_path)
+    _advance_to_implement(project)
+    _run_hook(STOP_HOOK, project, _stop_payload(project, stop_hook_active=False))
+    _run_hook(STOP_HOOK, project, _stop_payload(project, stop_hook_active=True))
+    assert not _run_hook(STOP_HOOK, project, _stop_payload(project)).stdout.strip()
+
+    # Progress the workflow: evidence + phase advance changes the fingerprint.
+    record_evidence(project_dir=project, tool="Write", file_path="app.py", workflow_id="STORY-001")
+    assert enter_verify_phase(project_dir=project, workflow_id="STORY-001")["ok"]
+
+    result = _run_hook(STOP_HOOK, project, _stop_payload(project, stop_hook_active=False))
+    assert json.loads(result.stdout)["decision"] == "block"
+
+
+def test_stop_block_message_is_a_summary_not_a_verbatim_dump(tmp_path):
+    """The block reason must not order the assistant to paste raw controller
+    JSON verbatim — that is the wall-of-text users revolted against."""
+    project = _project_with_workflow(tmp_path)
+    _advance_to_implement(project)
+    result = _run_hook(STOP_HOOK, project, _stop_payload(project, stop_hook_active=False))
+    reason = json.loads(result.stdout)["reason"]
+    assert "verbatim" not in reason.lower()
+    assert "render-status" not in reason
+
+
 def test_evidence_hook_survives_oversized_command(tmp_path):
     project = _project_with_workflow(tmp_path)
     _advance_to_implement(project)
