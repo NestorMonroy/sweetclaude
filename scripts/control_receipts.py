@@ -918,6 +918,16 @@ def _string_contains_entrypoint(path: Path, entrypoint: str) -> bool:
     return False
 
 
+# Canonical plugin distribution surface. Claude Code installs SweetClaude by
+# cloning the repo (see .claude-plugin/marketplace.json), so the distributable
+# plugin is the clone root: skills/agents/commands load from the root, the
+# manifest lives under .claude-plugin/, and hooks/ ship too. The release gate's
+# distribution inventory and entrypoint search must walk this surface, not the
+# manifest dir alone.
+PLUGIN_DISTRIBUTION_ROOTS = ("skills", "agents", "commands", ".claude-plugin")
+PLUGIN_HOOK_ROOT = "hooks"
+
+
 def _inventory_files(root: Path) -> set[str]:
     if not root.exists():
         return set()
@@ -1227,13 +1237,15 @@ def validate_installed_smoke_receipt(
                 "Installed smoke receipt entrypoint_source_paths "
                 f"#{index} sha256 mismatch"
             )
-        try:
-            resolved_source.relative_to(installed)
-        except ValueError as exc:
+        load_roots = [
+            installed / root_name
+            for root_name in (*PLUGIN_DISTRIBUTION_ROOTS, PLUGIN_HOOK_ROOT)
+        ]
+        if not any(resolved_source.is_relative_to(root) for root in load_roots):
             raise ValueError(
                 "Installed smoke receipt entrypoint_source_paths "
-                f"#{index} must be inside installed_path"
-            ) from exc
+                f"#{index} must be inside the installed plugin load surface"
+            )
         if _string_contains_entrypoint(resolved_source, entrypoint):
             found_entrypoint = True
     if not found_entrypoint:
@@ -1341,12 +1353,13 @@ def validate_public_distribution_inventory_receipt(
                     f"Public distribution inventory receipt {field} path lacks hash evidence: "
                     f"{listed_path}"
                 )
-    for field, root_name in (
-        ("installed_plugin_files", ".claude-plugin"),
-        ("hook_files", "hooks"),
+    installed_discovered: set[str] = set()
+    for root_name in PLUGIN_DISTRIBUTION_ROOTS:
+        installed_discovered |= _inventory_files(repo_root / root_name)
+    for field, discovered in (
+        ("installed_plugin_files", installed_discovered),
+        ("hook_files", _inventory_files(repo_root / PLUGIN_HOOK_ROOT)),
     ):
-        root = repo_root / root_name
-        discovered = _inventory_files(root)
         listed = {
             str(path if path.is_absolute() else repo_root / path)
             for path in (Path(value) for value in receipt[field])

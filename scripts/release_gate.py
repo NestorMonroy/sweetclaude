@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 
 from control_receipts import (
+    PLUGIN_DISTRIBUTION_ROOTS,
+    PLUGIN_HOOK_ROOT,
     hash_file,
     validate_change_context_receipt,
     validate_contract_test_or_exemption,
@@ -143,7 +145,7 @@ def _validate_release_receipt(
         "commit": expected_commit,
     }
     expected_artifact = project_dir / "dist" / f"sweetclaude-{version}.tgz"
-    expected_install_path = project_dir / ".claude-plugin"
+    expected_install_path = project_dir
     for check in receipt.get("checks", []):
         if not isinstance(check, dict):
             continue
@@ -653,18 +655,26 @@ def _write_release_identity_receipt(
     return _write_json_atomic(path, data)
 
 
+def _installed_manifest(installed_path: Path) -> Path:
+    return installed_path / ".claude-plugin" / "plugin.json"
+
+
 def _installed_entrypoint_sources(installed_path: Path, entrypoint: str) -> list[Path]:
     if not installed_path.exists():
         raise ValueError(f"Installed plugin path not found: {installed_path}")
     matches: list[Path] = []
-    for candidate in installed_path.rglob("*"):
-        if not candidate.is_file() or ".git" in candidate.parts:
+    for root_name in PLUGIN_DISTRIBUTION_ROOTS:
+        root = installed_path / root_name
+        if not root.exists():
             continue
-        try:
-            if entrypoint in candidate.read_text(encoding="utf-8"):
-                matches.append(candidate)
-        except UnicodeDecodeError:
-            continue
+        for candidate in root.rglob("*"):
+            if not candidate.is_file() or ".git" in candidate.parts:
+                continue
+            try:
+                if entrypoint in candidate.read_text(encoding="utf-8"):
+                    matches.append(candidate)
+            except UnicodeDecodeError:
+                continue
     if not matches:
         raise ValueError(f"Installed entrypoint {entrypoint} not found under {installed_path}")
     return sorted(matches)
@@ -680,7 +690,7 @@ def _write_docs_capability_receipt(
     installed_path: Path,
     installed_entrypoint: str,
 ) -> Path:
-    manifest = installed_path / "plugin.json"
+    manifest = _installed_manifest(installed_path)
     if not manifest.exists():
         raise ValueError(f"Installed plugin manifest not found: {manifest}")
     plugin = _load_json(manifest)
@@ -808,12 +818,18 @@ def _write_public_distribution_receipts(
     commit: str,
     installed_path: Path,
 ) -> Path:
-    plugin_files = _files_under(installed_path)
-    hook_files = _files_under(project_dir / "hooks")
+    plugin_files: list[Path] = []
+    for root_name in PLUGIN_DISTRIBUTION_ROOTS:
+        plugin_files.extend(_files_under(project_dir / root_name))
+    plugin_files = sorted(set(plugin_files))
+    hook_files = _files_under(project_dir / PLUGIN_HOOK_ROOT)
     if not plugin_files:
-        raise ValueError(f"No installed plugin files found under {installed_path}")
+        raise ValueError(
+            "No installed plugin files found under distribution roots "
+            f"{PLUGIN_DISTRIBUTION_ROOTS} of {project_dir}"
+        )
     manifest_path = project_dir / "config" / "capability-manifest.yaml"
-    plugin_manifest = installed_path / "plugin.json"
+    plugin_manifest = _installed_manifest(project_dir)
     generated_from = [manifest_path, plugin_manifest]
     inventory_inputs: dict[str, dict[str, str]] = {}
     for artifact in [*generated_from, *plugin_files, *hook_files]:
@@ -902,7 +918,7 @@ def generate_release_evidence(
     commit = _git(project_dir, "rev-parse", "HEAD").stdout.strip()
     artifact = _release_artifact(project_dir, version)
     resolved_installed_path = (
-        installed_path if installed_path is not None else project_dir / ".claude-plugin"
+        installed_path if installed_path is not None else project_dir
     )
     if not resolved_installed_path.is_absolute():
         resolved_installed_path = project_dir / resolved_installed_path

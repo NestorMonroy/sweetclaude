@@ -31,7 +31,7 @@ EFFORT_ROOT = Path(".sweetclaude") / "efforts" / "ms-007-failure-mode-controls"
 
 def _write_release_project(project_dir: Path, version: str) -> None:
     (project_dir / ".claude-plugin").mkdir(parents=True, exist_ok=True)
-    (project_dir / ".claude-plugin" / "skills" / "recover").mkdir(parents=True, exist_ok=True)
+    (project_dir / "skills" / "recover").mkdir(parents=True, exist_ok=True)
     (project_dir / "config").mkdir(parents=True, exist_ok=True)
     (project_dir / "hooks").mkdir(parents=True, exist_ok=True)
     (project_dir / "dist").mkdir(parents=True, exist_ok=True)
@@ -43,7 +43,7 @@ def _write_release_project(project_dir: Path, version: str) -> None:
         json.dumps({"name": "sweetclaude", "version": version}, indent=2) + "\n",
         encoding="utf-8",
     )
-    (project_dir / ".claude-plugin" / "skills" / "recover" / "SKILL.md").write_text(
+    (project_dir / "skills" / "recover" / "SKILL.md").write_text(
         "Invoke /sweetclaude:recover for recovery.\n",
         encoding="utf-8",
     )
@@ -298,7 +298,7 @@ def _write_release_identity_receipt(
                 "execution_receipt_path": str(beta_execution),
             },
         },
-        install_path=str(project_dir / ".claude-plugin"),
+        install_path=str(project_dir),
         artifact_path=str(artifact),
         artifact_sha256=hash_file(artifact),
         build_receipt_path=str(build_receipt),
@@ -358,7 +358,7 @@ def _write_public_distribution_inventory_receipt(
         manifest_capabilities=["slash-commands", "hooks"],
         installed_plugin_files=[
             ".claude-plugin/plugin.json",
-            ".claude-plugin/skills/recover/SKILL.md",
+            "skills/recover/SKILL.md",
         ],
         hook_files=["hooks/session-preflight.sh"],
         mutation_commands=["/sweetclaude:migrate", "/sweetclaude:recover"],
@@ -375,8 +375,8 @@ def _write_public_distribution_inventory_receipt(
                 "sha256": hash_file(project_dir / ".claude-plugin" / "plugin.json"),
             },
             {
-                "path": ".claude-plugin/skills/recover/SKILL.md",
-                "sha256": hash_file(project_dir / ".claude-plugin" / "skills" / "recover" / "SKILL.md"),
+                "path": "skills/recover/SKILL.md",
+                "sha256": hash_file(project_dir / "skills" / "recover" / "SKILL.md"),
             },
             {
                 "path": "hooks/session-preflight.sh",
@@ -401,7 +401,7 @@ def _write_docs_capability_receipt(project_dir: Path, *, branch: str, commit: st
         branch=branch,
         commit=commit,
         installed_entrypoint="/sweetclaude:recover",
-        installed_path=str(project_dir / ".claude-plugin"),
+        installed_path=str(project_dir),
         plugin_identity="sweetclaude",
         installed_manifest_path=str(project_dir / ".claude-plugin" / "plugin.json"),
         installed_manifest_sha256=hash_file(project_dir / ".claude-plugin" / "plugin.json"),
@@ -415,8 +415,8 @@ def _write_docs_capability_receipt(project_dir: Path, *, branch: str, commit: st
         entrypoint_lookup_result="/sweetclaude:recover found in installed plugin",
         entrypoint_source_paths=[
             {
-                "path": str(project_dir / ".claude-plugin" / "skills" / "recover" / "SKILL.md"),
-                "sha256": hash_file(project_dir / ".claude-plugin" / "skills" / "recover" / "SKILL.md"),
+                "path": str(project_dir / "skills" / "recover" / "SKILL.md"),
+                "sha256": hash_file(project_dir / "skills" / "recover" / "SKILL.md"),
             }
         ],
         release_artifact_path=str(artifact),
@@ -433,7 +433,7 @@ def _write_docs_capability_receipt(project_dir: Path, *, branch: str, commit: st
                 "claim": "/sweetclaude:recover repairs project state",
                 "status": "proven",
                 "installed_entrypoint": "/sweetclaude:recover",
-                "installed_path": str(project_dir / ".claude-plugin"),
+                "installed_path": str(project_dir),
                 "plugin_identity": "sweetclaude",
                 "smoke_command": "claude /sweetclaude:recover --help",
                 "run_at": "2026-05-26T12:00:00Z",
@@ -1071,7 +1071,91 @@ def test_release_gate_generate_evidence_derives_distribution_inventory_from_disk
     }
 
     assert ".claude-plugin/plugin.json" in inventory["installed_plugin_files"]
-    assert ".claude-plugin/skills/recover/SKILL.md" in inventory["installed_plugin_files"]
+    assert "skills/recover/SKILL.md" in inventory["installed_plugin_files"]
     assert "hooks/session-preflight.sh" in inventory["hook_files"]
     assert "hooks/extra-release-hook.sh" in inventory["hook_files"]
     assert input_hashes["hooks/extra-release-hook.sh"] == hash_file(extra_hook)
+
+
+def test_generate_evidence_resolves_recover_skill_at_canonical_root_layout(tmp_path):
+    """Regression (ISSUE-203): the gate only ever modeled the fabricated
+    .claude-plugin/skills/ layout. In the canonical layout skills live at root
+    skills/, and generate-evidence (default installed-path) must still resolve
+    the /sweetclaude:recover entrypoint and inventory the skill from root."""
+    _write_release_project(tmp_path, "4.1.7-beta")
+    _write_ms007_control_artifacts(tmp_path)
+    (tmp_path / "config" / "capability-manifest.yaml").write_text(
+        (ROOT / "config" / "capability-manifest.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    _init_release_git_state(tmp_path, branch="beta-4.x", tag="v4.1.7-beta")
+
+    completed = subprocess.run(
+        [
+            "python3",
+            str(ROOT / "scripts" / "release_gate.py"),
+            "generate-evidence",
+            "--project-dir",
+            str(tmp_path),
+            "--tag",
+            "v4.1.7-beta",
+            "--channel",
+            "beta",
+            "--branch",
+            "beta-4.x",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    generated = json.loads(completed.stdout)
+    assert generated["ok"] is True
+
+    public_receipt = Path(generated["public_distribution_receipt"])
+    inventory_path = Path(json.loads(public_receipt.read_text(encoding="utf-8"))["inventory_receipt_path"])
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    assert "skills/recover/SKILL.md" in inventory["installed_plugin_files"]
+    assert ".claude-plugin/skills/recover/SKILL.md" not in inventory["installed_plugin_files"]
+
+
+def test_distribution_roots_cover_every_present_load_dir_in_real_repo():
+    """Re-rot guard (ISSUE-203): every Claude Code plugin component directory
+    that exists at the real repo root must be covered by the gate's
+    distribution model. If a new load dir is added to the repo (or skills move),
+    this fails until the gate's roots are updated — the exact silent drift that
+    let the gate inventory the wrong tree for releases."""
+    from control_receipts import PLUGIN_DISTRIBUTION_ROOTS, PLUGIN_HOOK_ROOT
+
+    known_load_dirs = {"skills", "agents", "commands", "hooks"}
+    covered = set(PLUGIN_DISTRIBUTION_ROOTS) | {PLUGIN_HOOK_ROOT}
+    present = {name for name in known_load_dirs if (ROOT / name).is_dir()}
+    uncovered = present - covered
+    assert not uncovered, f"load dirs present in repo but absent from gate distribution model: {uncovered}"
+
+
+def test_recover_entrypoint_is_findable_in_real_repo_distribution_surface():
+    """Re-rot guard (ISSUE-203): the /sweetclaude:recover entrypoint the gate
+    proves must actually be discoverable under the gate's distribution roots in
+    the real repo — not just in a fixture."""
+    from control_receipts import PLUGIN_DISTRIBUTION_ROOTS
+
+    entrypoint = "/sweetclaude:recover"
+    found = False
+    for root_name in PLUGIN_DISTRIBUTION_ROOTS:
+        root = ROOT / root_name
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*"):
+            if not path.is_file() or ".git" in path.parts:
+                continue
+            try:
+                if entrypoint in path.read_text(encoding="utf-8"):
+                    found = True
+                    break
+            except (UnicodeDecodeError, OSError):
+                continue
+        if found:
+            break
+    assert found, f"{entrypoint} not findable under {PLUGIN_DISTRIBUTION_ROOTS} in the real repo"

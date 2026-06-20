@@ -85,7 +85,7 @@ def _init_release_git_state(project_dir: Path, *, branch: str, tag: str) -> str:
 
 def _write_release_project(project_dir: Path, version: str = "3.9.0") -> None:
     (project_dir / ".claude-plugin").mkdir(parents=True, exist_ok=True)
-    (project_dir / ".claude-plugin" / "skills" / "recover").mkdir(parents=True, exist_ok=True)
+    (project_dir / "skills" / "recover").mkdir(parents=True, exist_ok=True)
     (project_dir / "config").mkdir(parents=True, exist_ok=True)
     (project_dir / "hooks").mkdir(parents=True, exist_ok=True)
     (project_dir / "dist").mkdir(parents=True, exist_ok=True)
@@ -97,7 +97,7 @@ def _write_release_project(project_dir: Path, version: str = "3.9.0") -> None:
         json.dumps({"name": "sweetclaude", "version": version}, indent=2) + "\n",
         encoding="utf-8",
     )
-    (project_dir / ".claude-plugin" / "skills" / "recover" / "SKILL.md").write_text(
+    (project_dir / "skills" / "recover" / "SKILL.md").write_text(
         "Invoke /sweetclaude:recover for recovery.\n",
         encoding="utf-8",
     )
@@ -270,7 +270,7 @@ def _release_identity_receipt(
                 tag="v4.1.99-beta",
             ),
         },
-        "install_path": str(project_dir / ".claude-plugin"),
+        "install_path": str(project_dir),
         "artifact_path": str(artifact),
         "artifact_sha256": "will-be-overwritten",
     }
@@ -344,7 +344,7 @@ def _public_distribution_inventory_receipt(
         "manifest_capabilities": ["slash-commands", "hooks"],
         "installed_plugin_files": [
             ".claude-plugin/plugin.json",
-            ".claude-plugin/skills/recover/SKILL.md",
+            "skills/recover/SKILL.md",
         ],
         "hook_files": ["hooks/session-preflight.sh"],
         "mutation_commands": ["/sweetclaude:migrate", "/sweetclaude:recover"],
@@ -361,8 +361,8 @@ def _public_distribution_inventory_receipt(
                 "sha256": hash_file(project_dir / ".claude-plugin" / "plugin.json"),
             },
             {
-                "path": ".claude-plugin/skills/recover/SKILL.md",
-                "sha256": hash_file(project_dir / ".claude-plugin" / "skills" / "recover" / "SKILL.md"),
+                "path": "skills/recover/SKILL.md",
+                "sha256": hash_file(project_dir / "skills" / "recover" / "SKILL.md"),
             },
             {
                 "path": "hooks/session-preflight.sh",
@@ -440,7 +440,7 @@ def _docs_capability_receipt(project_dir: Path, *, commit: str = "abc123") -> Pa
         branch="stable-3.x",
         commit=commit,
         installed_entrypoint="/sweetclaude:recover",
-        installed_path=str(project_dir / ".claude-plugin"),
+        installed_path=str(project_dir),
         plugin_identity="sweetclaude",
         installed_manifest_path=str(project_dir / ".claude-plugin" / "plugin.json"),
         installed_manifest_sha256=hash_file(project_dir / ".claude-plugin" / "plugin.json"),
@@ -454,8 +454,8 @@ def _docs_capability_receipt(project_dir: Path, *, commit: str = "abc123") -> Pa
         entrypoint_lookup_result="/sweetclaude:recover found in installed plugin",
         entrypoint_source_paths=[
             {
-                "path": str(project_dir / ".claude-plugin" / "skills" / "recover" / "SKILL.md"),
-                "sha256": hash_file(project_dir / ".claude-plugin" / "skills" / "recover" / "SKILL.md"),
+                "path": str(project_dir / "skills" / "recover" / "SKILL.md"),
+                "sha256": hash_file(project_dir / "skills" / "recover" / "SKILL.md"),
             }
         ],
         release_artifact_path=str(artifact),
@@ -472,7 +472,7 @@ def _docs_capability_receipt(project_dir: Path, *, commit: str = "abc123") -> Pa
                 "claim": "/sweetclaude:recover repairs project state",
                 "status": "proven",
                 "installed_entrypoint": "/sweetclaude:recover",
-                "installed_path": str(project_dir / ".claude-plugin"),
+                "installed_path": str(project_dir),
                 "plugin_identity": "sweetclaude",
                 "smoke_command": "claude /sweetclaude:recover --help",
                 "run_at": "2026-05-26T12:00:00Z",
@@ -708,7 +708,7 @@ def test_t020_docs_capability_rejects_non_installed_entrypoint_source(tmp_path):
     ]
     smoke_receipt.write_text(json.dumps(smoke, indent=2) + "\n", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="must be inside installed_path"):
+    with pytest.raises(ValueError, match="must be inside the installed plugin load surface"):
         validate_docs_capability_receipt(receipt)
 
 
