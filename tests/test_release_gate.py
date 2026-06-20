@@ -51,6 +51,10 @@ def _write_release_project(project_dir: Path, version: str) -> None:
         "capabilities:\n  slash-commands: true\n  hooks: true\n",
         encoding="utf-8",
     )
+    (project_dir / "config" / "controls-map.md").write_text(
+        "# Controls Map\n\n| Control | Description |\n| CTL-001 | Test control |\n",
+        encoding="utf-8",
+    )
     (project_dir / "hooks" / "session-preflight.sh").write_text(
         "#!/bin/sh\nexit 0\n",
         encoding="utf-8",
@@ -1118,6 +1122,51 @@ def test_generate_evidence_resolves_recover_skill_at_canonical_root_layout(tmp_p
     inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
     assert "skills/recover/SKILL.md" in inventory["installed_plugin_files"]
     assert ".claude-plugin/skills/recover/SKILL.md" not in inventory["installed_plugin_files"]
+
+
+def test_generate_evidence_emits_control_lint_receipt_for_beta(tmp_path):
+    """ISSUE-203: beta `check` requires a control-lint receipt, and nothing
+    generated it. generate-evidence must now emit it (from config/controls-map.md)
+    so `check` passes for beta WITHOUT an explicitly supplied receipt."""
+    _write_release_project(tmp_path, "4.1.7-beta")
+    _write_ms007_control_artifacts(tmp_path)
+    (tmp_path / "config" / "capability-manifest.yaml").write_text(
+        (ROOT / "config" / "capability-manifest.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    _init_release_git_state(tmp_path, branch="beta-4.x", tag="v4.1.7-beta")
+
+    completed = subprocess.run(
+        [
+            "python3",
+            str(ROOT / "scripts" / "release_gate.py"),
+            "generate-evidence",
+            "--project-dir",
+            str(tmp_path),
+            "--tag",
+            "v4.1.7-beta",
+            "--channel",
+            "beta",
+            "--branch",
+            "beta-4.x",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    release_receipt = Path(json.loads(completed.stdout)["release_receipt"])
+
+    # No explicit control-lint receipt: must use the one generate-evidence emitted.
+    result = check_release_readiness(
+        tmp_path,
+        tag="v4.1.7-beta",
+        channel="beta",
+        branch="beta-4.x",
+        receipt_path=release_receipt,
+        control_lint_receipt_path=None,
+    )
+    assert result["ok"] is True
 
 
 def test_distribution_roots_cover_every_present_load_dir_in_real_repo():

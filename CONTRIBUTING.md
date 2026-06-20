@@ -152,3 +152,36 @@ git push origin main
 ```
 
 Use `--dry-run` to preview the version change without modifying files.
+
+### The release readiness gate (enforced)
+
+Pushing a version tag triggers `.github/workflows/release.yml`, which runs the
+**release readiness gate** (`scripts/release_gate.py`) before creating the
+GitHub release. The gate is blocking: if it fails, the job stops and **no
+release is created** for that tag (the tag still exists on the remote — delete
+and re-tag after fixing).
+
+The gate, on the channel branch (`beta-4.x` for `-beta`/`-rc`/`-alpha` tags,
+`stable-3.x` otherwise):
+
+- requires the tag to sit at the channel-branch HEAD (releases are cut from the
+  branch HEAD, not arbitrary commits);
+- validates version consistency across `package.json`, `.claude-plugin/plugin.json`,
+  and the `CHANGELOG.md` section for the tag;
+- builds the distribution artifact (`npm pack` into `dist/`) and inventories the
+  real plugin load surface (`skills/`, `agents/`, `commands/`, `.claude-plugin/`,
+  `hooks/`) — the canonical layout Claude Code clones;
+- proves the `/sweetclaude:recover` entrypoint is present in the installed plugin;
+- for beta, control-lints `config/controls-map.md` (the canonical control plane).
+
+To dry-run the gate locally before tagging, from the channel-branch HEAD with
+the tag created:
+
+```bash
+npm pack --pack-destination dist
+python3 scripts/release_gate.py generate-evidence \
+  --project-dir . --tag vX.Y.Z-beta --channel beta --branch beta-4.x > evidence.json
+python3 scripts/release_gate.py check \
+  --project-dir . --tag vX.Y.Z-beta --channel beta --branch beta-4.x \
+  --receipt "$(python3 -c 'import json;print(json.load(open("evidence.json"))["release_receipt"])')"
+```

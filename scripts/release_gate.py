@@ -15,6 +15,7 @@ from control_receipts import (
     PLUGIN_DISTRIBUTION_ROOTS,
     PLUGIN_HOOK_ROOT,
     hash_file,
+    write_control_lint_receipt,
     validate_change_context_receipt,
     validate_contract_test_or_exemption,
     validate_control_lint_receipt,
@@ -950,6 +951,22 @@ def generate_release_evidence(
         commit=commit,
         installed_path=resolved_installed_path,
     )
+
+    # Beta releases require a control-lint receipt at the gate's default path.
+    # Emit it here from the canonical controls map so a single generate-evidence
+    # run produces the full bundle `check` needs — nothing else generated it.
+    if channel == "beta":
+        controls_map = project_dir / "config" / "controls-map.md"
+        if not controls_map.exists():
+            raise ValueError(f"Canonical controls map not found: {controls_map}")
+        write_control_lint_receipt(
+            project_dir,
+            subject_id=f"release:{tag}",
+            branch=branch,
+            commit=commit,
+            controls_map_path=controls_map,
+            artifact_paths=[controls_map],
+        )
 
     checks = []
     for check in sorted(required_release_checks()):

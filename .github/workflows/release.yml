@@ -23,6 +23,49 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Release readiness gate
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # Derive channel + channel-branch from the tag.
+          case "$TAG" in
+            *-beta*|*-rc*|*-alpha*) channel=beta;   branch=beta-4.x ;;
+            *)                      channel=stable; branch=stable-3.x ;;
+          esac
+
+          # The gate requires a named branch (not the detached tag checkout)
+          # tracking origin/<branch>, with the tag at the branch HEAD. Releases
+          # must be cut from the channel-branch HEAD.
+          git checkout "$branch"
+          tag_commit="$(git rev-list -n1 "$TAG")"
+          head_commit="$(git rev-parse HEAD)"
+          if [ "$tag_commit" != "$head_commit" ]; then
+            echo "::error::Tag $TAG ($tag_commit) is not at $branch HEAD ($head_commit) — releases must be cut from the channel-branch HEAD."
+            exit 1
+          fi
+
+          python3 -m pip install --quiet pyyaml
+
+          # Build the release artifact the gate inventories (dist/ is gitignored).
+          npm pack --pack-destination dist
+
+          # Generate evidence, then enforce. A non-zero exit here fails the job
+          # before the release is created (publish-time gate).
+          if ! python3 scripts/release_gate.py generate-evidence \
+              --project-dir . --tag "$TAG" --channel "$channel" --branch "$branch" \
+              > "$RUNNER_TEMP/release-evidence.json"; then
+            cat "$RUNNER_TEMP/release-evidence.json"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/release-evidence.json"
+          receipt="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_receipt"])' "$RUNNER_TEMP/release-evidence.json")"
+
+          python3 scripts/release_gate.py check \
+            --project-dir . --tag "$TAG" --channel "$channel" --branch "$branch" \
+            --receipt "$receipt"
+
       - name: Create release from tag
         env:
           GH_TOKEN: ${{ github.token }}
