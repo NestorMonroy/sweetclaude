@@ -48,8 +48,24 @@ jobs:
 
           python3 -m pip install --quiet pyyaml
 
-          # Build the release artifact the gate inventories (dist/ is gitignored).
+          # Build the release artifact the gate inventories. dist/ is gitignored
+          # so it is absent in a fresh checkout — create it before packing.
+          mkdir -p dist
           npm pack --pack-destination dist
+
+          # The release-identity evidence asserts update-discovery for BOTH
+          # channels, so the other channel's current artifact must also exist.
+          # Build it from the other channel branch, then return to ours.
+          case "$branch" in
+            beta-4.x)   other_branch=stable-3.x ;;
+            stable-3.x) other_branch=beta-4.x ;;
+            *)          other_branch="" ;;
+          esac
+          if [ -n "$other_branch" ] && git rev-parse --verify "origin/$other_branch" >/dev/null 2>&1; then
+            git checkout "$other_branch"
+            npm pack --pack-destination dist
+            git checkout "$branch"
+          fi
 
           # Generate evidence, then enforce. A non-zero exit here fails the job
           # before the release is created (publish-time gate).
