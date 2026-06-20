@@ -4,6 +4,31 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.16-beta] — 2026-06-20 (4.x beta channel)
+
+### Changed — release readiness gate is now enforced
+
+The release readiness gate now models the real plugin layout (skills at the
+repo root, manifests under `.claude-plugin/`) and runs as a blocking step in the
+release workflow: on a version tag, CI verifies the tag sits at the channel
+branch HEAD, builds the distribution artifacts for both channels, generates the
+evidence bundle, and validates it before publishing. If the gate fails, no
+release is created for that tag.
+
+### Added — canonical controls map
+
+`config/controls-map.md` is now the shipped, canonical control plane that the
+release control-lint validates against.
+
+### Added — release gate regression guards
+
+Guards assert that every plugin load directory present in the repo is covered by
+the gate's distribution model and that the `/sweetclaude:recover` entrypoint is
+discoverable in the real repo, so the gate cannot silently drift from the layout
+again.
+
+---
+
 ## [4.2.15-beta] — 2026-06-20 (4.x beta channel)
 
 ### Fixed — story stop guard no longer repeats on a paused story
