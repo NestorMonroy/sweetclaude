@@ -927,9 +927,12 @@ def init_workflow(
     project = Path(project_dir).expanduser().resolve(strict=False)
     if find_backlog_file(project, workflow_id, exclude_done=True) is None:
         return _failure(
-            "blocked_init_failed",
+            "blocked_init_no_story",
             f"Large-story init is blocked: no backlog file found for {workflow_id}. "
-            "A backlog item must exist before a workflow can start.",
+            "A backlog item must exist before a workflow can start. "
+            "Create one by: (1) interview — walk through a structured intake, "
+            "(2) point to a file — seed from an existing spec or scratch note, "
+            "(3) search for WIP — scan scratch/, .sweetclaude/work/, and feature branches.",
         )
     existing = [
         (existing_id, state)
