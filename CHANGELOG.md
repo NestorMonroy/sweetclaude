@@ -4,6 +4,35 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.18-beta] — 2026-06-21 (4.x beta channel)
+
+### Fixed — controller state cross-validation gaps (ISSUE-206)
+
+Closed seven state cross-validation gaps across large_story_controller,
+small_story_controller, and success_criteria_contracts where the three
+decoupled state systems (workflow YAML, phase.yaml, sweetclaude.yaml) could
+diverge, leaving orphaned or phantom state.
+
+- **SC-001:** `enter_ship_phase` now clears `sweetclaude.yaml work.active`
+  when completing a workflow, preventing orphaned active-work references.
+- **SC-002:** `find_backlog_file` accepts `exclude_done=True`; `init_workflow`
+  and `init_contract` use it to reject re-initialization of completed items
+  found in `done/`.
+- **SC-003:** `arm_enforcement_probe` and `check_enforcement_probe` verify the
+  workflow state file exists before operating, preventing phantom partial
+  workflow state from `_load_yaml_dict` returning `{}` for missing files.
+- **SC-004:** `record_evidence` validates the workflow file exists when given
+  an explicit `workflow_id`, blocking evidence recording against nonexistent
+  workflows.
+- **SC-005:** `init_workflow` syncs `sweetclaude.yaml work.active` at
+  initialization, ensuring the active-work reference is set from the start
+  rather than relying solely on the orchestrator.
+
+28 regression tests (14 original ISSUE-047 + 14 new ISSUE-206) and 21
+behavioral CLI end-to-end tests cover all fixed vectors.
+
+---
+
 ## [4.2.17-beta] — 2026-06-21 (4.x beta channel)
 
 ### Fixed — story terminal gate no longer locks out subsequent stories
