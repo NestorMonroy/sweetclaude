@@ -11,7 +11,13 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from control_receipts import hash_file, write_control_lint_receipt
-from release_gate import check_release_readiness
+from release_gate import (
+    check_release_readiness,
+    _validate_issue_closeout,
+    _extract_issue_ids_from_commits,
+    _issue_is_terminal,
+    _previous_tag,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -1208,3 +1214,152 @@ def test_recover_entrypoint_is_findable_in_real_repo_distribution_surface():
         if found:
             break
     assert found, f"{entrypoint} not findable under {PLUGIN_DISTRIBUTION_ROOTS} in the real repo"
+
+
+# --- Issue closeout gate (ISSUE-214) ------------------------------------------
+
+
+def _init_closeout_git(project_dir, *, prev_tag=None, messages=None, tag=None):
+    _git(project_dir, "init")
+    _git(project_dir, "config", "user.email", "tests@sweetclaude.local")
+    _git(project_dir, "config", "user.name", "SweetClaude Tests")
+    _git(project_dir, "checkout", "-b", "beta-4.x")
+    (project_dir / "base.txt").write_text("base\n", encoding="utf-8")
+    _git(project_dir, "add", ".")
+    _git(project_dir, "commit", "-m", "initial")
+    if prev_tag:
+        _git(project_dir, "tag", prev_tag)
+    for i, msg in enumerate(messages or []):
+        (project_dir / f"file-{i}.txt").write_text(f"{i}\n", encoding="utf-8")
+        _git(project_dir, "add", ".")
+        _git(project_dir, "commit", "-m", msg)
+    if tag:
+        _git(project_dir, "tag", tag)
+
+
+def _write_backlog_issue(project_dir, issue_id, *, status="new", subdir=""):
+    backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+    if subdir:
+        backlog = backlog / subdir
+    backlog.mkdir(parents=True, exist_ok=True)
+    (backlog / f"{issue_id}-test.md").write_text(
+        f"---\nid: {issue_id}\nstatus: {status}\n---\nTest.\n",
+        encoding="utf-8",
+    )
+
+
+def test_extract_issue_ids_from_commits(tmp_path):
+    _init_closeout_git(
+        tmp_path,
+        prev_tag="v4.2.0-beta",
+        messages=[
+            "fix(hooks): stop guard UX (ISSUE-208)",
+            "fix(ISSUE-207): eliminate legacy paths",
+            "chore: unrelated change",
+            "fix(controllers): ownership filter (ISSUE-211, ISSUE-213)",
+        ],
+        tag="v4.2.1-beta",
+    )
+    ids = _extract_issue_ids_from_commits(tmp_path, "v4.2.0-beta", "v4.2.1-beta")
+    assert ids == {"ISSUE-208", "ISSUE-207", "ISSUE-211", "ISSUE-213"}
+
+
+def test_previous_tag_finds_beta_predecessor(tmp_path):
+    _init_closeout_git(tmp_path, prev_tag="v4.2.0-beta", messages=["next"], tag="v4.2.1-beta")
+    assert _previous_tag(tmp_path, "v4.2.1-beta", "beta") == "v4.2.0-beta"
+
+
+def test_previous_tag_returns_none_for_first_release(tmp_path):
+    _init_closeout_git(tmp_path, messages=["first"], tag="v4.0.0-beta")
+    assert _previous_tag(tmp_path, "v4.0.0-beta", "beta") is None
+
+
+def test_issue_is_terminal_in_done_dir(tmp_path):
+    _write_backlog_issue(tmp_path, "ISSUE-100", status="done", subdir="done")
+    assert _issue_is_terminal(tmp_path, "ISSUE-100") is True
+
+
+def test_issue_is_terminal_in_archived_dir(tmp_path):
+    _write_backlog_issue(tmp_path, "ISSUE-100", status="done", subdir="archived")
+    assert _issue_is_terminal(tmp_path, "ISSUE-100") is True
+
+
+def test_issue_is_not_terminal_when_active(tmp_path):
+    _write_backlog_issue(tmp_path, "ISSUE-100", status="new")
+    assert _issue_is_terminal(tmp_path, "ISSUE-100") is False
+
+
+def test_issue_is_not_terminal_when_missing(tmp_path):
+    assert _issue_is_terminal(tmp_path, "ISSUE-999") is False
+
+
+def test_validate_issue_closeout_passes_when_all_closed(tmp_path):
+    _init_closeout_git(
+        tmp_path,
+        prev_tag="v4.2.0-beta",
+        messages=["fix: thing (ISSUE-100)", "fix: other (ISSUE-101)"],
+        tag="v4.2.1-beta",
+    )
+    _write_backlog_issue(tmp_path, "ISSUE-100", status="done", subdir="done")
+    _write_backlog_issue(tmp_path, "ISSUE-101", status="done", subdir="done")
+    result = _validate_issue_closeout(tmp_path, "v4.2.1-beta", "beta")
+    assert result["checked"] is True
+    assert result["unclosed"] == []
+
+
+def test_validate_issue_closeout_fails_on_unclosed_issue(tmp_path):
+    _init_closeout_git(
+        tmp_path,
+        prev_tag="v4.2.0-beta",
+        messages=["fix: thing (ISSUE-100)", "fix: other (ISSUE-101)"],
+        tag="v4.2.1-beta",
+    )
+    _write_backlog_issue(tmp_path, "ISSUE-100", status="done", subdir="done")
+    _write_backlog_issue(tmp_path, "ISSUE-101", status="new")
+    with pytest.raises(ValueError, match="ISSUE-101"):
+        _validate_issue_closeout(tmp_path, "v4.2.1-beta", "beta")
+
+
+def test_validate_issue_closeout_skips_when_no_previous_tag(tmp_path):
+    _init_closeout_git(tmp_path, messages=["fix: thing (ISSUE-100)"], tag="v4.0.0-beta")
+    result = _validate_issue_closeout(tmp_path, "v4.0.0-beta", "beta")
+    assert result["skipped"] is True
+
+
+def test_validate_issue_closeout_error_lists_all_unclosed(tmp_path):
+    _init_closeout_git(
+        tmp_path,
+        prev_tag="v4.2.0-beta",
+        messages=["fix: A (ISSUE-100)", "fix: B (ISSUE-101)", "fix: C (ISSUE-102)"],
+        tag="v4.2.1-beta",
+    )
+    _write_backlog_issue(tmp_path, "ISSUE-100", status="new")
+    _write_backlog_issue(tmp_path, "ISSUE-102", status="active")
+    _write_backlog_issue(tmp_path, "ISSUE-101", status="done", subdir="done")
+    with pytest.raises(ValueError, match="ISSUE-100.*ISSUE-102"):
+        _validate_issue_closeout(tmp_path, "v4.2.1-beta", "beta")
+
+
+def test_release_readiness_fails_on_unclosed_issues(tmp_path):
+    _write_release_project(tmp_path, "4.2.1-beta")
+    _write_ms007_control_artifacts(tmp_path)
+    _init_release_git_state(tmp_path, branch="beta-4.x")
+    _git(tmp_path, "tag", "v4.2.0-beta")
+    _write_backlog_issue(tmp_path, "ISSUE-100", status="new")
+    (tmp_path / "fix.txt").write_text("fix\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "fix: thing (ISSUE-100)")
+    _git(tmp_path, "tag", "v4.2.1-beta")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/beta-4.x", "HEAD")
+    receipt = _write_release_receipt(tmp_path, "v4.2.1-beta")
+    control_lint = _write_control_lint_receipt(tmp_path, "v4.2.1-beta")
+
+    with pytest.raises(ValueError, match="ISSUE-100"):
+        check_release_readiness(
+            tmp_path,
+            tag="v4.2.1-beta",
+            channel="beta",
+            branch="beta-4.x",
+            receipt_path=receipt,
+            control_lint_receipt_path=control_lint,
+        )
