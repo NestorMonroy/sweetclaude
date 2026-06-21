@@ -216,3 +216,36 @@ def test_gate_denies_bash_history_tampering_after_terminal_closeout(tmp_path):
         command="echo '{}' > .sweetclaude/reports/success-criteria-ledger.json",
     )
     assert result["allow"] is False
+
+
+# --- Regression: cross-controller contamination (ISSUE-211) -------------------
+
+
+def test_gate_ignores_large_story_workflow(tmp_path):
+    """ISSUE-211 regression: a large-story workflow must not block the small-story gate."""
+    from large_story_controller import init_workflow as large_init
+
+    project = tmp_path
+    _create_backlog_file(project, "LARGE-001")
+    _write_contract(project, _contract("LARGE-001"))
+    large_result = large_init(project_dir=project, workflow_id="LARGE-001")
+    assert large_result["ok"], large_result
+
+    result = gate_tool_use(project_dir=project, tool="Write", file_path="app.py")
+    assert result["allow"] is True, (
+        f"Small-story gate should not be blocked by a large-story workflow: {result['reason']}"
+    )
+
+
+# --- Regression: init without backlog story (ISSUE-215) -----------------------
+
+
+def test_init_workflow_fails_without_backlog_file(tmp_path):
+    """ISSUE-215 regression: init must refuse if no backlog file exists."""
+    project = tmp_path
+    _write_contract(project, _contract("PHANTOM-001"))
+    result = init_workflow(project_dir=project, workflow_id="PHANTOM-001")
+    assert result["ok"] is False
+    assert result["code"] == "blocked_init_no_story"
+    wf_path = project / ".sweetclaude" / "state" / "workflows" / "PHANTOM-001.yaml"
+    assert not wf_path.exists(), "No workflow state should be written without a backlog story"
