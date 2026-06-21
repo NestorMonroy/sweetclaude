@@ -4,6 +4,39 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.17-beta] — 2026-06-21 (4.x beta channel)
+
+### Fixed — story terminal gate no longer locks out subsequent stories
+
+After a large- or small-story workflow completed successfully, the terminal
+gate locked the shared parent directories (`.sweetclaude/contracts/`,
+`reports/`, `state/workflows/`) rather than the specific completed story's
+files. This made it impossible to start a second story in the same project:
+the DEFINE phase could not author a new contract because the gate denied all
+writes under those directories.
+
+The gate now protects only per-completed-story files (workflow YAML, ledger,
+closeout, report subtree) while allowing new stories to be authored in the
+same directory structure. The contract at the default path is treated as a
+reusable draft workspace — its integrity for completed stories is guaranteed
+by the frozen hash stored in the workflow state, not by the file remaining
+unchanged.
+
+### Fixed — Bash gate no longer blocks read-only commands
+
+The terminal gate's Bash check used simple substring matching, blocking any
+command whose text mentioned a protected path — including read-only commands
+like `ls`, `cat`, and `grep`. The gate now detects write-like commands
+(`rm`, `mv`, `sed -i`, redirects) and only denies those that target completed
+story files.
+
+### Fixed — README version badge
+
+The version badge in README.md was stuck at 4.1.16-beta; now tracks the
+current release.
+
+---
+
 ## [4.2.16-beta] — 2026-06-20 (4.x beta channel)
 
 ### Changed — release readiness gate is now enforced
