@@ -3385,10 +3385,7 @@ def _config_conflict_adopt(before: bytes, recipe: dict) -> bytes:
 
 
 def _resolve_hook_restore_paths(recipe: dict) -> tuple[Path, Path]:
-    """Map a hook_restore target name to its real plugin SOURCE and ~/.claude
-    DEST, per restorable kind. This is the correct mapping the old skill-side
-    ``cp $PLUGIN_DIR/config/{hook}`` got wrong — the scripts ship in the plugin
-    ``hooks/`` dir, the rules in ``rules/``; ``config/`` never holds either.
+    """Map a hook_restore target name to its real plugin SOURCE and installed DEST.
 
       - rules ``*.md``              : {plugin}/rules/{name} -> ~/.claude/rules/sweetclaude/{name}
       - hook script ``*.sh`` / json : {plugin}/hooks/{name} -> ~/.claude/hooks/sweetclaude/{name}
@@ -3411,7 +3408,6 @@ def _resolve_hook_restore_paths(recipe: dict) -> tuple[Path, Path]:
         source = plugin_dir / "rules" / name
         dest = home_claude / "rules" / "sweetclaude" / name
     else:
-        # hook scripts (.sh) and the hooks.json / hooks-manifest.json configs
         source = plugin_dir / "hooks" / name
         dest = home_claude / "hooks" / "sweetclaude" / name
     return source, dest

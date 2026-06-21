@@ -5,6 +5,8 @@ description: "Launch a local web dashboard showing roadmap, releases, epics, bac
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:dashboard"`
+
 # Dashboard
 
 Launch a local read-only web dashboard for the current project.
@@ -21,14 +23,14 @@ Tabs align with the status view scopes spec (v3.1):
 ## Step 1: Ensure cache is current
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild 2>/dev/null
 ```
 
 ## Step 2: Launch server
 
 ```bash
 PORT=${1:-8411}
-python3 ~/.claude/scripts/sweetclaude/dashboard.py --project-dir . --port "$PORT" &
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dashboard.py --project-dir . --port "$PORT" &
 DASH_PID=$!
 sleep 1
 if kill -0 "$DASH_PID" 2>/dev/null; then

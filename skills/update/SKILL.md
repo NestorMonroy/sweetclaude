@@ -5,6 +5,8 @@ description: "Update SweetClaude to the latest version from GitHub (or a local r
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:update"`
+
 # Update SweetClaude
 
 Fetch the latest SweetClaude and sync it to all installed locations.
@@ -15,31 +17,10 @@ Fetch the latest SweetClaude and sync it to all installed locations.
 
 ## Step -1: Pre-flight
 
-Ensure the versionless framework path is populated, clear any previous update decline (running `/sweetclaude:update` is explicit re-engagement), and emit the runner path for later steps.
+Clear any previous update decline (running `/sweetclaude:update` is explicit re-engagement), and emit the runner path for later steps.
 
 ```bash
-if [ ! -f ~/.claude/scripts/sweetclaude/preflight.sh ]; then
-  IP=$(python3 -c "
-import json, os
-try:
-    d = json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json')))
-    entries = [e for versions in d.get('plugins', {}).values()
-               for e in versions if e.get('scope') == 'user']
-    entries.sort(key=lambda e: e.get('lastUpdated', ''), reverse=True)
-    for e in entries:
-        ip = e.get('installPath', '')
-        if ip and os.path.isdir(os.path.join(ip, 'scripts')):
-            print(ip)
-            break
-except Exception:
-    pass
-" 2>/dev/null)
-  if [ -n "$IP" ] && [ -d "$IP/scripts" ]; then
-    mkdir -p ~/.claude/scripts/sweetclaude
-    rsync -a "$IP/scripts/" ~/.claude/scripts/sweetclaude/ 2>/dev/null || true
-  fi
-fi
-eval "$(bash ~/.claude/scripts/sweetclaude/preflight.sh --from-update 2>/dev/null)"
+eval "$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" --from-update 2>/dev/null)"
 ```
 
 `DECLINE_CLEARED=true` if the project's `framework.update.declined` was cleared. `RUNNER` is set for use in Step 6b. `SC_PLUGIN_CHANNEL`, `SC_PLUGIN_EXPECTED_REF`, `SC_PLUGIN_KEY`, `SC_PLUGIN_INSTALL_PATH`, `SC_PLUGIN_VERSION`, and `SC_PLUGIN_GIT_SHA` are emitted by the deterministic plugin-state helper and are the source of truth for channel-safe update decisions. If the user picks "Not now" later, `declined` will be re-set to the specific version declined (per Gap #1's version-aware decline rule).
@@ -211,11 +192,9 @@ Then diff against installed:
 
 ```bash
 diff -rq $SOURCE_DIR/skills/ {installPath}/skills/ 2>/dev/null
-diff -rq $SOURCE_DIR/skills/ ~/.claude/skills/sweetclaude/ 2>/dev/null
-diff -rq $SOURCE_DIR/rules/ ~/.claude/rules/sweetclaude/ 2>/dev/null
-diff -rq $SOURCE_DIR/hooks/ "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/hooks/sweetclaude}/" 2>/dev/null
-diff -rq $SOURCE_DIR/config/ ~/.claude/config/sweetclaude/ 2>/dev/null
-diff -rq $SOURCE_DIR/agents/ ~/.claude/agents/sweetclaude/ 2>/dev/null
+diff -rq $SOURCE_DIR/rules/ ${CLAUDE_PLUGIN_ROOT}/rules/ 2>/dev/null
+diff -rq $SOURCE_DIR/hooks/ ${CLAUDE_PLUGIN_ROOT}/hooks/ 2>/dev/null
+diff -rq $SOURCE_DIR/config/ ${CLAUDE_PLUGIN_ROOT}/config/ 2>/dev/null
 diff -rq $SOURCE_DIR/scripts/ {installPath}/scripts/ 2>/dev/null
 ```
 
@@ -367,30 +346,21 @@ done
 # Plugin manifest
 rsync -a $SOURCE_DIR/.claude-plugin/ {installPath}/.claude-plugin/
 
-# Skills → legacy install path (created by install.sh — must stay in sync)
-if [ -d "$HOME/.claude/skills/sweetclaude" ]; then
-  rsync -a --delete $SOURCE_DIR/skills/ ~/.claude/skills/sweetclaude/
-fi
-
-# Scripts → plugin cache AND versionless ~/.claude/scripts/sweetclaude/.
-# The versionless path is what skills reference (no installPath lookup needed).
+# Scripts → plugin cache
 if [ -d "$SOURCE_DIR/scripts" ]; then
   rsync -a --delete $SOURCE_DIR/scripts/ {installPath}/scripts/
-  mkdir -p ~/.claude/scripts/sweetclaude
-  rsync -a --delete $SOURCE_DIR/scripts/ ~/.claude/scripts/sweetclaude/
 fi
 
-# Framework dirs → ~/.claude/
-rsync -a --delete $SOURCE_DIR/rules/ ~/.claude/rules/sweetclaude/
-rsync -a --delete $SOURCE_DIR/hooks/ "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/hooks/sweetclaude}/"
-rsync -a --delete $SOURCE_DIR/config/ ~/.claude/config/sweetclaude/
-rsync -a --delete $SOURCE_DIR/agents/ ~/.claude/agents/sweetclaude/
+# Framework dirs → plugin cache
+rsync -a --delete $SOURCE_DIR/rules/ ${CLAUDE_PLUGIN_ROOT}/rules/
+rsync -a --delete $SOURCE_DIR/hooks/ ${CLAUDE_PLUGIN_ROOT}/hooks/
+rsync -a --delete $SOURCE_DIR/config/ ${CLAUDE_PLUGIN_ROOT}/config/
 
 # Ensure hooks are executable
-chmod +x "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/hooks/sweetclaude}/"*.sh 2>/dev/null || true
+chmod +x "${CLAUDE_PLUGIN_ROOT}/hooks/"*.sh 2>/dev/null || true
 
 # Verify registry file synced correctly
-ls ~/.claude/config/sweetclaude/skills-registry.yaml 2>/dev/null || echo "WARNING: skills-registry.yaml not found after sync"
+ls ${CLAUDE_PLUGIN_ROOT}/config/skills-registry.yaml 2>/dev/null || echo "WARNING: skills-registry.yaml not found after sync"
 
 # Claude Code may load skills from a version-named directory (e.g. 4.0.6-beta/)
 # rather than installPath (e.g. 3.52.14/) when they differ. Sync to both.
@@ -418,7 +388,7 @@ Strip broken `${CLAUDE_PLUGIN_ROOT}` literals (from pre-3.68.2 installs) and sta
 
 ```bash
 HOOK_RECONCILE_LOG=$(mktemp -t sc-hook-reconcile.XXXXXX) || HOOK_RECONCILE_LOG=/tmp/sc-hook-reconcile.log
-if ! python3 ~/.claude/scripts/sweetclaude/maintenance/ensure-global-hooks.py >"$HOOK_RECONCILE_LOG" 2>&1; then
+if ! python3 ${CLAUDE_PLUGIN_ROOT}/scripts/maintenance/ensure-global-hooks.py >"$HOOK_RECONCILE_LOG" 2>&1; then
   echo "warning: hook reconciliation failed — see $HOOK_RECONCILE_LOG"
 fi
 cat "$HOOK_RECONCILE_LOG"
@@ -442,7 +412,7 @@ plugin-state helper. Do not hand-edit JSON and do not hard-code
 NEW_SHA=$(git -C "$SOURCE_DIR" rev-parse HEAD)
 NEW_VER=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$SOURCE_DIR/package.json")
 SYNC_TARGET="${VERSION_DIR:-$installPath}"
-python3 ~/.claude/scripts/sweetclaude/maintenance/plugin-state.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/maintenance/plugin-state.py \
   --project-dir . \
   repair \
   --plugin-key "$PLUGIN_KEY" \
@@ -495,7 +465,6 @@ Run a final diff to confirm sync:
 ```bash
 SYNC_TARGET="${VERSION_DIR:-{installPath}}"
 diff -rq $SOURCE_DIR/skills/ "$SYNC_TARGET/skills/" 2>/dev/null
-diff -rq $SOURCE_DIR/skills/ ~/.claude/skills/sweetclaude/ 2>/dev/null
 diff -rq $SOURCE_DIR/scripts/ "$SYNC_TARGET/scripts/" 2>/dev/null
 ```
 
@@ -570,7 +539,7 @@ Scan for work item files that may have been lost, abandoned, or orphaned from pr
 
 ```bash
 ORPHAN_COUNT=0
-MIGRATE_SCRIPT=~/.claude/scripts/sweetclaude/migrate/migrate-v3-to-v4.py
+MIGRATE_SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/migrate/migrate-v3-to-v4.py
 if [ ! -f "$MIGRATE_SCRIPT" ]; then
   MIGRATE_SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -name 'migrate-v3-to-v4.py' 2>/dev/null | head -1)
 fi

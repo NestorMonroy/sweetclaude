@@ -5,6 +5,8 @@ description: "Feature configuration — shows all optional SweetClaude features 
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:_features"`
+
 # Feature Configuration
 
 ## Step 1: Read current state

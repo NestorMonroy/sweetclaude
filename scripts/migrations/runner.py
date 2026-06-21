@@ -252,32 +252,11 @@ class MigrationRunner:
         migrations_dir: Path | str | None = None,
     ):
         self.project_dir = Path(project_dir).resolve()
-        # Migration registry ships with the framework. Try, in order:
-        #   1. Explicit registry_path argument (caller-provided)
-        #   2. <runner_root>/config/migration-registry.yaml (dev clone + plugin-cache install layout)
-        #   3. ~/.claude/config/sweetclaude/migration-registry.yaml (versionless install layout)
-        # The runner can live at either ~/.claude/plugins/cache/.../scripts/migrations/runner.py
-        # OR ~/.claude/scripts/sweetclaude/migrations/runner.py — the latter has no
-        # colocated config/, so the versionless fallback is required.
         repo_root = Path(__file__).resolve().parent.parent.parent
         if registry_path:
             self.registry_path = Path(registry_path)
         else:
-            colocated = repo_root / "config" / "migration-registry.yaml"
-            versionless = Path.home() / ".claude" / "config" / "sweetclaude" / "migration-registry.yaml"
-            if versionless.exists() and colocated.exists():
-                # Prefer whichever was written more recently — versionless wins when
-                # freshly synced by an update that the plugin cache hasn't seen yet.
-                self.registry_path = (
-                    versionless if versionless.stat().st_mtime >= colocated.stat().st_mtime
-                    else colocated
-                )
-            elif versionless.exists():
-                self.registry_path = versionless
-            elif colocated.exists():
-                self.registry_path = colocated
-            else:
-                self.registry_path = versionless  # will raise FileNotFoundError at load
+            self.registry_path = repo_root / "config" / "migration-registry.yaml"
         self.migrations_dir = (
             Path(migrations_dir) if migrations_dir else Path(__file__).resolve().parent
         )

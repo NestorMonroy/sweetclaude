@@ -5,10 +5,11 @@ description: "Manage themes — optional domain-grouping labels on stories."
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-themes"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 ```
 
 # Project Themes
@@ -36,7 +37,7 @@ Themes are optional domain-grouping labels — classification attributes on stor
 ## List
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_list theme
 sc_artifact_list issue
 ```
@@ -66,7 +67,7 @@ If no themes: "No themes yet. Run `project-themes new` to create one, or skip th
 ## View
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_read <TH-NNN>
 sc_artifact_query issue theme_id=<TH-NNN>
 ```
@@ -110,7 +111,7 @@ Ask one question at a time:
 4. **Stories** (optional) — "Which existing stories should be tagged with this theme?" Load stories without a theme:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query issue theme_id=
 ```
 
@@ -119,7 +120,7 @@ Present them (filtered by service if one was specified). Accept a list of IDs or
 Create the theme:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_create theme '{
   "title": "<title>",
   "category": "<category>",
@@ -131,7 +132,7 @@ sc_artifact_create theme '{
 For each issue the user assigned, update it:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_write <issue_id> '{"theme_id": "<new_theme_id>"}'
 ```
 
@@ -144,7 +145,7 @@ Confirm: `Created TH-NNN — {N} stories tagged`
 Load the theme and currently untagged stories:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_read <TH-NNN>
 sc_artifact_query issue theme_id=
 ```
@@ -166,7 +167,7 @@ Note: a story can carry both a theme and an epic simultaneously. Tagging with a 
 ## Close
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query issue theme_id=<TH-NNN>
 ```
 

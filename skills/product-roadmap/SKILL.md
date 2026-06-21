@@ -5,10 +5,11 @@ description: "Manage the product roadmap — feature delivery targets, releases,
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:product-roadmap"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_list roadmap_item
 sc_artifact_list release
 ```
@@ -72,7 +73,7 @@ Releases
 ## View (single item)
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_read <MS-NNN>
 ```
 
@@ -98,14 +99,14 @@ Epics
 Load contributing epics:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query epic roadmap_item_id=<MS-NNN>
 ```
 
 Load direct issues (no epic):
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query issue roadmap_item_id=<MS-NNN> epic_id=
 ```
 
@@ -126,7 +127,7 @@ Ask one question at a time:
 5. **Release** (optional):
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_list release
 ```
 
@@ -137,7 +138,7 @@ sc_artifact_list release
 If the user inserts at an existing priority, shift all items at that position and below down by 1:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_list roadmap_item
 ```
 
@@ -146,7 +147,7 @@ Update each displaced item: `sc_artifact_write <MS-NNN> '{"priority": <new_numbe
 Then create:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_create roadmap_item '{
   "title": "<title>",
   "type": "<type>",
@@ -167,7 +168,7 @@ Confirm: `Created MS-NNN at priority #{N} — {title}`
 Activating a roadmap item kicks off the downstream workflow appropriate for its type.
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_read <MS-NNN>
 ```
 
@@ -183,7 +184,7 @@ sc_artifact_read <MS-NNN>
 Set status to `in_progress`:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_write <MS-NNN> '{"status": "in_progress"}'
 ```
 
@@ -195,20 +196,20 @@ Confirm: `MS-NNN activated — {workflow guidance}`
 
 **Defer:**
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_write <MS-NNN> '{"status": "deferred"}'
 ```
 
 **Complete:**
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_write <MS-NNN> '{"status": "complete"}'
 ```
 
 Check if this item's release has all items complete:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query roadmap_item release_id=<MS-NNN>
 ```
 
@@ -216,7 +217,7 @@ If all complete: "All items in MS-NNN are complete. Run `product-roadmap release
 
 **Cancel:**
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_write <MS-NNN> '{"status": "cancelled"}'
 ```
 
@@ -234,14 +235,14 @@ Ask:
 4. **Milestone** — "Does shipping this release achieve a milestone?":
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query milestone status=pending
 ```
 
 List pending milestones. Accept MS-NNN or "none."
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_create release '{
   "title": "<title>",
   "version": "<version or null>",
@@ -258,7 +259,7 @@ Confirm: `Created MS-NNN — {title}`
 ## Release view
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_read <MS-NNN>
 sc_artifact_query roadmap_item release_id=<MS-NNN>
 ```

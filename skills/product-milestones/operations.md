@@ -352,7 +352,7 @@ Blockers for MS-001 Exit Stealth
 5. Close the milestone via status.py:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {milestone_path} --status done --actor product-milestones --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/status.py set-terminal --file {milestone_path} --status done --actor product-milestones --project-dir .
 ```
 
 This handles: status change, closed_date, updated timestamp, file move to done/, audit log, cache rebuild, and parent propagation.

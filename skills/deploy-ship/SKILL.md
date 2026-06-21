@@ -5,6 +5,7 @@ description: "SHIP phase skill."
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:deploy-ship"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude Deploy Ship
@@ -133,7 +134,7 @@ Then write a ship evidence receipt and keep the returned path for any closeout
 command:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/evidence.py write \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/evidence.py write \
   --project-dir . \
   --subject-id {work item id} \
   --receipt-type ship \
@@ -250,7 +251,7 @@ tags: [post-mortem, hotfix, {work-item-id}]
 ```
 Body: "## Origin\n\nFollow-on from {work-item-id} hotfix. Document timeline, root cause (5 whys), contributing factors, and action items to prevent recurrence.\n\nIf the fix was a workaround rather than a real fix, also create a follow-on tech-debt item."
 
-Derive the next issue ID: `python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query next-id --prefix ISSUE`. Rebuild cache after creating the file: `python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild`. Report: `✓ {ISSUE-NNN} created — run /sweetclaude:go when ready for the post-mortem.`
+Derive the next issue ID: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query next-id --prefix ISSUE`. Rebuild cache after creating the file: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild`. Report: `✓ {ISSUE-NNN} created — run /sweetclaude:go when ready for the post-mortem.`
 
 If "Skip": log the skip: append `| {next #} | {today} | POST-MORTEM skipped for {work item id} | User opted to create manually | N/A |` to decision log.
 

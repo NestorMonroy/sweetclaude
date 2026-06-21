@@ -5,6 +5,7 @@ description: "Diagnostic scan, repair, and rollback. Checks 8 categories (state 
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:doctor"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
@@ -25,8 +26,8 @@ Before any Doctor scan or maintenance routing, run the SweetClaude preflight
 helper to detect stale beta plugin installs:
 
 ```bash
-if [ -f ~/.claude/scripts/sweetclaude/preflight.sh ]; then
-  eval "$(bash ~/.claude/scripts/sweetclaude/preflight.sh . 2>/dev/null)"
+if [ -f ${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh ]; then
+  eval "$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh . 2>/dev/null)"
 fi
 ```
 
@@ -86,7 +87,7 @@ outside the project git tree (e.g. `~/.claude` files) that a safety branch can't
 4. Invoke restore (whole run, or once per chosen file with `--file {path}` instead of `--all`):
 
    ```bash
-   python3 ~/.claude/scripts/sweetclaude/doctor.py restore --project-dir . --archive-dir {run_dir} --all
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py restore --project-dir . --archive-dir {run_dir} --all
    ```
 
 5. Report the result. `restored` lists the files reverted byte-for-byte (this now includes
@@ -103,7 +104,7 @@ separate from the full scan because large projects can produce huge finding
 lists, and the user-facing maintenance decision must not get buried.
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/doctor.py maintenance-route --project-dir . 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py maintenance-route --project-dir . 2>/dev/null
 ```
 
 Parse the JSON output. Handle these cases:
@@ -115,7 +116,7 @@ Stop. Do not continue to Step 2.
 
 **Parse failure:** If the output is not valid JSON or the command exits
 non-zero, print:
-> Doctor route check failed. Run `python3 ~/.claude/scripts/sweetclaude/doctor.py maintenance-route --project-dir .` manually to see the error.
+> Doctor route check failed. Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py maintenance-route --project-dir .` manually to see the error.
 
 Stop.
 
@@ -167,19 +168,19 @@ then execute graduation through the recovery script. The graduation is a
 state-only write to `sweetclaude.yaml` — no file renames, no content changes.
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/doctor.py create-archive --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py create-archive --project-dir .
 ```
 
 Store the `archive_dir`. Then snapshot `sweetclaude.yaml` before graduating:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py graduation-check --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py graduation-check --project-dir .
 ```
 
 If `graduation_allowed` is true, execute:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py graduate --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py graduate --project-dir .
 ```
 
 Report the result. If `status` is `graduated`, confirm success:
@@ -216,7 +217,7 @@ command, fall through to the full scan — the matching findings carry prompted
 fixes (Step 6). After resolutions:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/recovery/recover_project.py graduation-check --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py graduation-check --project-dir .
 ```
 
 If `graduation_allowed` is true, execute graduation and report as in the
@@ -245,7 +246,7 @@ continue to Step 1b. Do not invoke any migration script.
 ## Step 1b: Scan
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/doctor.py scan --project-dir . 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py scan --project-dir . 2>/dev/null
 ```
 
 Parse the JSON output. Handle these cases:
@@ -256,7 +257,7 @@ Parse the JSON output. Handle these cases:
 Stop. Do not continue to Step 2.
 
 **Parse failure:** If the output is not valid JSON or the command exits non-zero, print:
-> Doctor scan failed. Run `python3 ~/.claude/scripts/sweetclaude/doctor.py scan --project-dir .` manually to see the error.
+> Doctor scan failed. Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py scan --project-dir .` manually to see the error.
 
 Stop.
 
@@ -379,7 +380,7 @@ Present via AskUserQuestion:
 
 - **Re-onboard from scratch** — "Archive existing state to `.sweetclaude.legacy/<timestamp>/` (preserved, not auto-imported), then re-onboard the existing project fresh." Archive through the script, then hand off to init:
   ```bash
-  python3 ~/.claude/scripts/sweetclaude/recovery/re_adopt.py execute --project-dir .
+  python3 ${CLAUDE_PLUGIN_ROOT}/scripts/recovery/re_adopt.py execute --project-dir .
   ```
   Parse the JSON. On `ok: true`, report the `legacy_path` and tell the user their
   old state is preserved there for manual reference (init does not auto-import
@@ -439,7 +440,7 @@ After the list, the user can ask about a specific number for detail (show `detai
 If the user picks dry run:
 
 ```bash
-echo '{scan_findings_json}' | python3 ~/.claude/scripts/sweetclaude/doctor.py dry-run --project-dir .
+echo '{scan_findings_json}' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py dry-run --project-dir .
 ```
 
 Parse the `simulations` array. For each:
@@ -507,7 +508,7 @@ If no: record that the user declined (pass `--safety-branch ""` to persist, or o
 ## Step 5: Create archive and run auto-fixes
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/doctor.py create-archive --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py create-archive --project-dir .
 ```
 
 Store the `archive_dir` from the response.
@@ -515,7 +516,7 @@ Store the `archive_dir` from the response.
 Then pipe the scan findings to auto-fix:
 
 ```bash
-echo '{scan_findings_json}' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir}
+echo '{scan_findings_json}' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py auto-fix --project-dir . --archive-dir {archive_dir}
 ```
 
 Parse the result. Report:
@@ -535,7 +536,7 @@ If no auto-fixable findings existed, skip this output.
 If `post_fix_categories` is non-empty:
 
 ```bash
-echo '{scan_findings_json}' | python3 ~/.claude/scripts/sweetclaude/doctor.py post-fix-rescan --project-dir . --categories {comma_separated_categories}
+echo '{scan_findings_json}' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py post-fix-rescan --project-dir . --categories {comma_separated_categories}
 ```
 
 If the rescan returns new findings:
@@ -578,14 +579,14 @@ Present the finding details and offer via AskUserQuestion:
 Execute the fix through the script's backup pipeline. For fix types that have a concrete recipe action (not just `"prompt"`):
 
 ```bash
-echo '[{single_finding_json}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+echo '[{single_finding_json}]' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
 ```
 
 For fix types that require further user input or skill delegation:
 
 - `choose_value`: Present `fix_recipe.options` for `fix_recipe.field` via AskUserQuestion. If the recipe carries `fix_recipe.recommended` (e.g. a legacy item-type alias whose canonical target is known — `bug`→`bug-fix`, `debt`/`chore`→`tech-debt`, `feature`→`net-new-feature`), list that value first and label it "Recommended". With the chosen value, apply through the executor by **reusing the `write_frontmatter_field` action** (do not write the file directly) — build a finding whose recipe is the executable write and pipe it to auto-fix:
   ```bash
-  echo '[{"id": "{finding_id}", "category": "{category}", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "write_frontmatter_field", "file": "{fix_recipe.file}", "key": "{fix_recipe.field}", "value": "{chosen_value}"}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+  echo '[{"id": "{finding_id}", "category": "{category}", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "write_frontmatter_field", "file": "{fix_recipe.file}", "key": "{fix_recipe.field}", "value": "{chosen_value}"}}]' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
   ```
   This routes through the executor's backup/diff pipeline (reversible via `restore`). Then record the prompted-fix action.
 
@@ -593,30 +594,30 @@ For fix types that require further user input or skill delegation:
 
 - `config_conflict`: Present the options from `fix_recipe.options` (**adopt** = use SweetClaude's rule, **keep** = keep your rule, **both** = keep both) via AskUserQuestion. Apply through the executor by building a finding whose recipe is the executable `config_conflict` action — carry the chosen `choice` plus the target the check already threaded into the prompt recipe (`path`, `conflict`, and `tool`/`hook_command`/`matcher` for settings F1-F3, or `pattern` for text F4/W1-W4/I1-I2). Do not write the file directly. Only `adopt` mutates (a targeted line/key edit through the backup pipeline, reversible via `restore`); `keep`/`both` are no-ops the executor records as success with no backup.
   ```bash
-  echo '[{"id": "{finding_id}", "category": "config_compat", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "config_conflict", "file": "{fix_recipe.file}", "path": "{fix_recipe.path}", "choice": "{chosen_choice}", "conflict": "{fix_recipe.conflict}", "tool": "{fix_recipe.tool}", "hook_command": "{fix_recipe.hook_command}", "matcher": "{fix_recipe.matcher}", "pattern": "{fix_recipe.pattern}"}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+  echo '[{"id": "{finding_id}", "category": "config_compat", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "config_conflict", "file": "{fix_recipe.file}", "path": "{fix_recipe.path}", "choice": "{chosen_choice}", "conflict": "{fix_recipe.conflict}", "tool": "{fix_recipe.tool}", "hook_command": "{fix_recipe.hook_command}", "matcher": "{fix_recipe.matcher}", "pattern": "{fix_recipe.pattern}"}}]' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
   ```
   Include only the target fields present on the prompt recipe (settings conflicts carry `tool` or `hook_command`/`matcher`; text conflicts carry `pattern`). Then record the prompted-fix action.
 
-- `hook_restore`: Restore a missing or broken SweetClaude hook script, hooks config (`hooks.json` / `hooks-manifest.json`), or rules `.md` file from the installed plugin to its `~/.claude` destination. Present the source options the recipe offers (`fix_recipe.sources`, typically **repo/plugin** vs **backup**) via AskUserQuestion. Apply through the executor by building a finding whose recipe is the executable `hook_restore` action — carry the target `hook` name from the prompt recipe plus the resolved plugin source dir (`SC_PLUGIN_INSTALL_PATH` from the Step 0 preflight). Do **not** raw-`cp` in the skill: the executor resolves the correct per-kind source (`{plugin}/hooks/{name}` for scripts and configs, `{plugin}/rules/{name}` for rules) and dest (`~/.claude/hooks/sweetclaude/{name}` or `~/.claude/rules/sweetclaude/{name}`), backs up any existing dest through the pipeline (reversible via `restore` — these `~/.claude` files are outside the project git safety branch), then writes. If the source is genuinely absent it returns failure with a clear error — surface that, never a silent skip.
+- `hook_restore`: Restore a missing or broken SweetClaude hook script or hooks config (`hooks.json` / `hooks-manifest.json`) from the installed plugin. Present the source options the recipe offers (`fix_recipe.sources`, typically **repo/plugin** vs **backup**) via AskUserQuestion. Apply through the executor by building a finding whose recipe is the executable `hook_restore` action — carry the target `hook` name from the prompt recipe plus the resolved plugin source dir (`SC_PLUGIN_INSTALL_PATH` from the Step 0 preflight). Do **not** raw-`cp` in the skill: the executor resolves the correct source (`{plugin}/hooks/{name}`) and writes to the plugin hooks directory, backing up any existing file through the pipeline (reversible via `restore`). If the source is genuinely absent it returns failure with a clear error — surface that, never a silent skip.
   ```bash
-  echo '[{"id": "{finding_id}", "category": "hook_health", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "hook_restore", "hook": "{fix_recipe.hook}", "plugin_dir": "'"$SC_PLUGIN_INSTALL_PATH"'"}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+  echo '[{"id": "{finding_id}", "category": "hook_health", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "hook_restore", "hook": "{fix_recipe.hook}", "plugin_dir": "'"$SC_PLUGIN_INSTALL_PATH"'"}}]' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
   ```
   Then record the prompted-fix action.
 
 - `file_move`: Relocate a misfiled artifact — storage-lint emits this for done-status items in the wrong folder (a done/abandoned item not in `done/`, or a non-done item sitting in `done/`). Confirm the move via AskUserQuestion (**move** = relocate `fix_recipe.src` → `fix_recipe.dest`, **leave** = skip). On **move**, apply through the executor by building a finding whose recipe is the executable `file_move` action carrying the `src` and `dest` the prompt recipe threaded. Do **not** `mv` in the skill: the executor validates src exists, creates the dest parent dir if missing, backs up src's content through the pipeline keyed to src, and moves src → dest. The move is recorded as a move (the action carries a `moved_to` marker), so `restore` REVERSES it — deletes dest and recreates src from its before-image — rather than leaving a double file.
   ```bash
-  echo '[{"id": "{finding_id}", "category": "storage_lint", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "file_move", "src": "{fix_recipe.src}", "dest": "{fix_recipe.dest}"}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+  echo '[{"id": "{finding_id}", "category": "storage_lint", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "file_move", "src": "{fix_recipe.src}", "dest": "{fix_recipe.dest}"}}]' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
   ```
   If src is genuinely absent the executor returns failure with a clear error — surface that, never a silent skip. Then record the prompted-fix action.
 
 - `renumber_duplicate`: Two different items share the same id. The prompt recipe carries `fix_recipe.duplicate_id`, both colliding files in `fix_recipe.files` with their location labels in `fix_recipe.labels`, and a `fix_recipe.proposed_new_id` (the next-available id of that prefix family). Ask the user which copy should be renumbered via AskUserQuestion (**Renumber {labels[0]} copy** → renumber `files[0]`, **Renumber {labels[1]} copy** → renumber `files[1]`, plus a "Something else" escape). Apply through the executor by building a finding whose recipe is the executable `renumber_duplicate` action carrying the chosen `file`, the `old_id` (= `duplicate_id`), and the `new_id` (= `proposed_new_id`). Do **not** edit or rename in the skill: the executor rewrites the chosen file's `id` frontmatter to `new_id` AND renames `OLD-ID*.md` → `NEW-ID*.md`. Because it both edits and renames, it is recorded move-aware (the before-image is keyed to the original path and a `moved_to` marker carries the renamed path), so `restore` REVERSES BOTH — deletes the renamed file and recreates the original from its before-image (which restores the old id) — rather than leaving a double file.
   ```bash
-  echo '[{"id": "{finding_id}", "category": "file_diagnostics", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "renumber_duplicate", "file": "{chosen_file}", "old_id": "{fix_recipe.duplicate_id}", "new_id": "{fix_recipe.proposed_new_id}"}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+  echo '[{"id": "{finding_id}", "category": "file_diagnostics", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "renumber_duplicate", "file": "{chosen_file}", "old_id": "{fix_recipe.duplicate_id}", "new_id": "{fix_recipe.proposed_new_id}"}}]' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
   ```
   If the chosen file is genuinely absent the executor returns failure with a clear error — surface that, never a silent skip. Report the new-id assignment ("{old_id} → {new_id} in {file}"). Then record the prompted-fix action.
 
   ```bash
-  echo '[{"id": "{finding_id}", "category": "compatibility_mode", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "write_field", "file": "{fix_recipe.file}", "key_path": ["recovery", "taxonomy", "compatibility_exited"], "value": true}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+  echo '[{"id": "{finding_id}", "category": "compatibility_mode", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "write_field", "file": "{fix_recipe.file}", "key_path": ["recovery", "taxonomy", "compatibility_exited"], "value": true}}]' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
   ```
   After it succeeds, re-run the scan so the previously-blocked migration findings become actionable. Then record the prompted-fix action.
 
@@ -624,7 +625,7 @@ For fix types that require further user input or skill delegation:
 
 - `yaml_repair`: Present three options via AskUserQuestion — **auto-fix** (let SweetClaude repair common frontmatter-delimiter breakage), **restore from archive** (revert the file to a prior doctor run's saved copy), **show for manual edit** (open the file for hand-editing). Apply through the executor by building a finding whose recipe is the executable `yaml_repair` action carrying the chosen `choice` (`auto` / `restore` / `manual`) and the file path the prompt recipe threaded (`fix_recipe.file`). Do not write the file directly.
   ```bash
-  echo '[{"id": "{finding_id}", "category": "{category}", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "yaml_repair", "file": "{fix_recipe.file}", "choice": "{chosen_choice}"}}]' | python3 ~/.claude/scripts/sweetclaude/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+  echo '[{"id": "{finding_id}", "category": "{category}", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "yaml_repair", "file": "{fix_recipe.file}", "choice": "{chosen_choice}"}}]' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
   ```
   Only `auto` and `restore` mutate (both reversible via `restore`); `manual` is a no-op the executor records as success with no backup. `auto` repairs **only** unambiguous delimiter problems (a missing opening or closing `---`) — it never guesses at broken quoting, indentation, or values. If `auto` returns failure (the breakage is inside the frontmatter, not the delimiters), surface the manual-edit signal and offer the file for hand-editing instead. Then record the prompted-fix action.
 
@@ -632,7 +633,7 @@ For fix types that require further user input or skill delegation:
 
 **On Skip:**
 ```bash
-echo '{"finding_id": "...", "action": "skip", "timestamp": "..."}' | python3 ~/.claude/scripts/sweetclaude/doctor.py record-action --archive-dir {archive_dir}
+echo '{"finding_id": "...", "action": "skip", "timestamp": "..."}' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py record-action --archive-dir {archive_dir}
 ```
 
 **On Suppress:**
@@ -643,12 +644,12 @@ the same `load_suppressions`/`save_suppressions` the scan reads, is idempotent (
 already-suppressed id is not duplicated), and preserves existing entries:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/doctor.py suppress --project-dir . --finding-id "{finding_id}" --reason "{user's reason}"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py suppress --project-dir . --finding-id "{finding_id}" --reason "{user's reason}"
 ```
 
 Record the action:
 ```bash
-echo '{"finding_id": "...", "action": "suppress", "reason": "...", "timestamp": "..."}' | python3 ~/.claude/scripts/sweetclaude/doctor.py record-action --archive-dir {archive_dir}
+echo '{"finding_id": "...", "action": "suppress", "reason": "...", "timestamp": "..."}' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py record-action --archive-dir {archive_dir}
 ```
 
 ---
@@ -696,13 +697,13 @@ For findings where `previously_suppressed` is true, note: "This finding was prev
 If no archive was created (zero-findings or "No fixes needed" path), create one for the persist record:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/doctor.py create-archive --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py create-archive --project-dir .
 ```
 
 Pipe the original scan findings to persist:
 
 ```bash
-echo '{scan_findings_json}' | python3 ~/.claude/scripts/sweetclaude/doctor.py persist --project-dir . --archive-dir {archive_dir} --menu-preference {choice_from_step_3} --safety-branch {branch_name_or_empty}
+echo '{scan_findings_json}' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py persist --project-dir . --archive-dir {archive_dir} --menu-preference {choice_from_step_3} --safety-branch {branch_name_or_empty}
 ```
 
 Count severities from the findings array: errors = findings where severity="error", warnings = severity="warning", info = severity="info". Get fix counts from the archive actions (auto_fixed, user_fixed, skipped).
@@ -723,7 +724,7 @@ If a git safety branch was created this run, add: ` The git safety branch \`{bra
 Prune old archives:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/doctor.py prune-archives --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py prune-archives --project-dir .
 ```
 
 Silent — do not report pruning results to the user.

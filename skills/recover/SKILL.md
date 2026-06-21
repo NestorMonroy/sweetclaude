@@ -5,6 +5,8 @@ description: "Recover or unblock SweetClaude projects left in bad update, migrat
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:recover"`
+
 # SweetClaude Recover
 
 Recover or unblock a SweetClaude project that was left in a bad update,
@@ -23,7 +25,7 @@ explicit script subcommands (`diagnose`, `plan`, `execute`, `resume`,
 ## Step 1: Locate The Recovery Script
 
 ```bash
-SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
 if [ ! -f "$SCRIPT" ]; then
   SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
 fi

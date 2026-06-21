@@ -5,6 +5,8 @@ description: "Consolidated onboarding skill."
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:setup"`
+
 # SweetClaude Setup
 
 Three branches. Detection is automatic.
@@ -51,7 +53,7 @@ try:
 except: print('unknown')
 " 2>/dev/null)
 
-SCRIPT=~/.claude/scripts/sweetclaude/sweetclaude-yaml-template.py
+SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/sweetclaude-yaml-template.py
 python3 "$SCRIPT" \
   --name "USER_PROVIDED_NAME" \
   --type "new" \
@@ -200,7 +202,7 @@ for subdir in ['backlog/done', 'roadmap/epics/done', 'roadmap/milestones', 'road
 
 # 3. Build initial cache (INDEX.md is no longer created — cache provides all views)
 import subprocess, os
-subprocess.run(['python3', os.path.expanduser('~/.claude/scripts/sweetclaude/cache.py'), '--project-dir', '.', '--rebuild'], capture_output=True)
+subprocess.run(['python3', os.path.expanduser('${CLAUDE_PLUGIN_ROOT}/scripts/cache.py'), '--project-dir', '.', '--rebuild'], capture_output=True)
 ```
 
 Whether these files end up tracked in the user's git tree depends on the user's `.gitignore`. In this dogfooding repo they are gitignored; the skill is verified against fixture projects for testing.

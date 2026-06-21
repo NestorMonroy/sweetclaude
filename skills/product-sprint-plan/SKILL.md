@@ -5,6 +5,7 @@ description: "Plan a sprint by selecting stories from the backlog, estimating sc
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:product-sprint-plan"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
@@ -26,7 +27,7 @@ Read `.sweetclaude/state/skills.yaml`.
 Drop `onboarded_at`/`offboarded_at`. Set `schema_version: 2`. Write atomically (see write protocol below).
 
 **Dependency check:**
-Read `~/.claude/config/sweetclaude/skills-registry.yaml`. Find `skills.product-sprint-plan.dependencies`: `[product-parking-lot]`.
+Read `${CLAUDE_PLUGIN_ROOT}/config/skills-registry.yaml`. Find `skills.product-sprint-plan.dependencies`: `[product-parking-lot]`.
 Read `skills.product-parking-lot.status` from `skills.yaml`. If it is not `active`:
 > "Sprint planning requires the parking lot to be active first. Run `/sweetclaude:product-parking-lot` to set it up." Stop.
 

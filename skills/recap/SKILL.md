@@ -5,6 +5,8 @@ description: "Produce a concise 'where we are' summary: current phase, active wo
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:recap"`
+
 # Recap
 
 This skill has been absorbed into `/sweetclaude:status`.

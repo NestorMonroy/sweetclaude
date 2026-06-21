@@ -4,6 +4,8 @@ description: Migrate v3 BL-NNN items to ISSUE-NNN format in .sweetclaude/product
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:migrate"`
+
 This skill is a thin orchestrator. The deterministic migration operations
 (validation, plan, execute, verify, finalize) are implemented in
 `scripts/migrate/migrate-v3-to-v4.py` and tested end-to-end by
@@ -13,7 +15,7 @@ preview rendering, failure handling.
 ## Step 0: Read-only safety preflight
 
 ```bash
-SCRIPT=~/.claude/scripts/sweetclaude/migrate/migrate-v3-to-v4.py
+SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/migrate/migrate-v3-to-v4.py
 if [ ! -f "$SCRIPT" ]; then
   SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -name 'migrate-v3-to-v4.py' 2>/dev/null | head -1)
 fi
@@ -192,7 +194,7 @@ The `execute` subcommand performs the per-file transformation and writes `MIGRAT
 ## Step 6: Rebuild cache
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild 2>/dev/null
 ```
 
 ## Step 7: Verify

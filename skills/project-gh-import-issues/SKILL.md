@@ -5,6 +5,8 @@ description: "Import open GitHub Issues into the local issue store as v4 story f
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-gh-import-issues"`
+
 ## MIGRATION GUARD
 
 Before any other work, check for legacy migration/recovery risk:
@@ -23,7 +25,7 @@ print('.sweetclaude/product')
 " 2>/dev/null || echo '.sweetclaude/product')
 LEGACY_FILES=$(find "${PRODUCT_BASE}" -maxdepth 4 -type f \( -name 'BL-*.md' -o -name 'STORY-*.md' -o -name 'BUG-*.md' -o -name 'DEBT-*.md' -o -name 'CHORE-*.md' \) 2>/dev/null | wc -l | tr -d ' ')
 if [ "$LEGACY_FILES" -gt 0 ]; then
-  SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+  SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
   if [ ! -f "$SCRIPT" ]; then
     SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
   fi
@@ -56,7 +58,7 @@ BACKLOG_BASE = pathlib.Path('.sweetclaude/product/backlog')
 def assign_new_id():
     import subprocess, json
     import os
-    r = subprocess.run(['python3', os.path.expanduser('~/.claude/scripts/sweetclaude/cache.py'), '--project-dir', '.', '--query', 'next-id', '--prefix', 'ISSUE'],
+    r = subprocess.run(['python3', os.path.expanduser('${CLAUDE_PLUGIN_ROOT}/scripts/cache.py'), '--project-dir', '.', '--query', 'next-id', '--prefix', 'ISSUE'],
         capture_output=True, text=True)
     return json.loads(r.stdout)['next_id']
 

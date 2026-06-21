@@ -288,94 +288,9 @@ print((d.get('framework') or {}).get('drift', {}).get('drift_count', 'missing'))
 # ---------------------------------------------------------------------------
 # Test 7: self-heal of versionless framework path
 # ---------------------------------------------------------------------------
-# Simulates the v3.67.0 -> v3.68.0 upgrade scenario: the v3.67.0 update
-# logic rsyncs scripts/ only into {installPath}/scripts/, never creating
-# ~/.claude/scripts/sweetclaude/. The new v3.68.0 skills (bootstrap and
-# update) include a self-heal block that backfills the versionless path
-# from the plugin cache on first run. This test verifies that block.
-
-echo "[7] self-heal versionless framework path"
-
-SH_TMPDIR=$(mktemp -d)
-trap "rm -rf $SH_TMPDIR" EXIT
-
-# Simulated user environment:
-#  - $SH_TMPDIR/.claude/plugins/installed_plugins.json  — points to installPath
-#  - $SH_TMPDIR/.claude/plugins/cache/.../1.0.0/scripts/  — has framework scripts
-#  - $SH_TMPDIR/.claude/plugins/cache/.../1.0.0/config/   — has framework config
-#  - $SH_TMPDIR/.claude/scripts/sweetclaude/             — MISSING (this is what self-heal creates)
-INSTALL_PATH="$SH_TMPDIR/.claude/plugins/cache/sweetclaude/sweetclaude/1.0.0"
-mkdir -p "$INSTALL_PATH/scripts/migrations"
-mkdir -p "$INSTALL_PATH/config"
-mkdir -p "$SH_TMPDIR/.claude/plugins"
-cp "$REPO_ROOT/scripts/migrations/runner.py" "$INSTALL_PATH/scripts/migrations/runner.py"
-cp "$REPO_ROOT/config/capability-manifest.yaml" "$INSTALL_PATH/config/capability-manifest.yaml"
-echo "print('marker-installed-from-plugin-cache')" > "$INSTALL_PATH/scripts/marker.py"
-cat > "$SH_TMPDIR/.claude/plugins/installed_plugins.json" << JSON
-{
-  "version": 2,
-  "plugins": {
-    "sweetclaude@sweetclaude": [
-      {
-        "scope": "user",
-        "installPath": "$INSTALL_PATH",
-        "version": "3.68.0"
-      }
-    ]
-  }
-}
-JSON
-
-# Pre-condition: versionless path does NOT exist yet.
-[ ! -d "$SH_TMPDIR/.claude/scripts/sweetclaude" ] \
-  && pass "pre-condition: versionless path absent before self-heal" \
-  || fail "pre-condition violated: versionless path already exists"
-
-# Run the exact self-heal block from bootstrap/update with HOME redirected
-# to the fake env so installed_plugins.json discovery hits our fixture.
-HOME="$SH_TMPDIR" bash -c '
-if [ ! -d ~/.claude/scripts/sweetclaude ]; then
-  IP=$(python3 -c "import json, os; d = json.load(open(os.path.expanduser(\"~/.claude/plugins/installed_plugins.json\"))); print(d[\"plugins\"].get(\"sweetclaude@sweetclaude\", [{}])[0].get(\"installPath\", \"\"))" 2>/dev/null)
-  if [ -n "$IP" ] && [ -d "$IP/scripts" ]; then
-    mkdir -p ~/.claude/scripts/sweetclaude
-    cp -R "$IP/scripts/"* ~/.claude/scripts/sweetclaude/
-    if [ -d "$IP/config" ]; then
-      mkdir -p ~/.claude/config/sweetclaude
-      cp -R "$IP/config/"* ~/.claude/config/sweetclaude/
-    fi
-  fi
-fi
-'
-
-# Post-condition: versionless path exists with the expected contents.
-[ -f "$SH_TMPDIR/.claude/scripts/sweetclaude/migrations/runner.py" ] \
-  && pass "self-heal backfilled runner.py to versionless path" \
-  || fail "runner.py not backfilled"
-
-[ -f "$SH_TMPDIR/.claude/scripts/sweetclaude/marker.py" ] \
-  && pass "self-heal backfilled non-migrations scripts too" \
-  || fail "marker.py not backfilled"
-
-[ -f "$SH_TMPDIR/.claude/config/sweetclaude/capability-manifest.yaml" ] \
-  && pass "self-heal backfilled capability manifest config" \
-  || fail "capability manifest config not backfilled"
-
-# Idempotency: running again should not error and should not duplicate.
-MTIME1=$(stat -f %m "$SH_TMPDIR/.claude/scripts/sweetclaude/migrations/runner.py" 2>/dev/null \
-  || stat -c %Y "$SH_TMPDIR/.claude/scripts/sweetclaude/migrations/runner.py")
-sleep 1
-HOME="$SH_TMPDIR" bash -c '
-if [ ! -d ~/.claude/scripts/sweetclaude ]; then
-  echo "WOULD COPY"
-fi
-' > "$SH_TMPDIR/idempotent.out"
-MTIME2=$(stat -f %m "$SH_TMPDIR/.claude/scripts/sweetclaude/migrations/runner.py" 2>/dev/null \
-  || stat -c %Y "$SH_TMPDIR/.claude/scripts/sweetclaude/migrations/runner.py")
-
-[ "$MTIME1" = "$MTIME2" ] \
-  && [ ! -s "$SH_TMPDIR/idempotent.out" ] \
-  && pass "self-heal is idempotent (no copy on second run)" \
-  || fail "self-heal not idempotent: mtime1=$MTIME1 mtime2=$MTIME2 out=$(cat $SH_TMPDIR/idempotent.out)"
+# Test 7: REMOVED — self-heal versionless framework path (legacy behavior
+# eliminated in ISSUE-207; plugin-only installs use CLAUDE_PLUGIN_ROOT directly)
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------

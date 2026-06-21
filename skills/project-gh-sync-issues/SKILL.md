@@ -5,6 +5,8 @@ description: "Bidirectional status sync between local issue files and GitHub Iss
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-gh-sync-issues"`
+
 ## MIGRATION GUARD
 
 Before any other work, check for legacy migration/recovery risk:
@@ -23,7 +25,7 @@ print('.sweetclaude/product')
 " 2>/dev/null || echo '.sweetclaude/product')
 LEGACY_FILES=$(find "${PRODUCT_BASE}" -maxdepth 4 -type f \( -name 'BL-*.md' -o -name 'STORY-*.md' -o -name 'BUG-*.md' -o -name 'DEBT-*.md' -o -name 'CHORE-*.md' \) 2>/dev/null | wc -l | tr -d ' ')
 if [ "$LEGACY_FILES" -gt 0 ]; then
-  SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+  SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
   if [ ! -f "$SCRIPT" ]; then
     SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
   fi
@@ -95,7 +97,7 @@ def close_issue_file(path):
     issue_id = fm.get('id') or path.stem
     gh_number = fm.get('github_issue_number')
     receipt_result = subprocess.run([
-        'python3', os.path.expanduser('~/.claude/scripts/sweetclaude/evidence.py'), 'write',
+        'python3', os.path.expanduser('${CLAUDE_PLUGIN_ROOT}/scripts/evidence.py'), 'write',
         '--project-dir', '.',
         '--subject-id', issue_id,
         '--receipt-type', 'external-close',
@@ -105,7 +107,7 @@ def close_issue_file(path):
         '--summary', f'GitHub issue {gh_number} is closed'
     ], capture_output=True, text=True, check=True)
     receipt = json.loads(receipt_result.stdout)['receipt']
-    subprocess.run(['python3', os.path.expanduser('~/.claude/scripts/sweetclaude/status.py'), 'set-terminal',
+    subprocess.run(['python3', os.path.expanduser('${CLAUDE_PLUGIN_ROOT}/scripts/status.py'), 'set-terminal',
         '--file', str(path), '--status', 'done',
         '--actor', 'project-gh-sync-issues', '--project-dir', '.',
         '--evidence-receipt', receipt])

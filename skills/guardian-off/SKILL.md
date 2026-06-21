@@ -5,6 +5,7 @@ description: "Disable the Protocol Guardian for the current session"
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:guardian-off"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # Protocol Guardian — Disable

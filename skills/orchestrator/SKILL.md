@@ -5,6 +5,8 @@ description: "Orchestrator main loop — executes tracked workflow steps via sub
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:orchestrator"`
+
 <preflight-state>
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh sweetclaude`
 </preflight-state>
@@ -28,7 +30,7 @@ Extract from the pre-loaded state:
 ```bash
 python3 -c "
 import json, sys, os
-sys.path.insert(0, os.path.expanduser('~/.claude/scripts/sweetclaude'))
+sys.path.insert(0, os.path.join(os.environ.get('CLAUDE_PLUGIN_ROOT', ''), 'scripts'))
 from orchestrator import find_active_workflows
 result = find_active_workflows('.')
 print(json.dumps(result))
@@ -49,7 +51,7 @@ If no active workflow found for this `workflow_id`, this is a new workflow — p
 ## Step 2: Run main loop
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/orchestrator_loop.py run \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator_loop.py run \
   --workflow-id "{workflow_id}" \
   --project-dir "." \
   --deference-level "{deference_level}" \
@@ -131,7 +133,7 @@ Map the user's AskUserQuestion selection to an action:
 - "Acknowledge" → `{"action": "acknowledge"}`
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/orchestrator_loop.py resume \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator_loop.py resume \
   --workflow-id "{workflow_id}" \
   --project-dir "." \
   --deference-level "{deference_level}" \

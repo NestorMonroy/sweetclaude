@@ -5,6 +5,8 @@ description: "Run verification before claiming work is complete."
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:code-verify"`
+
 # Code Verify
 
 **Core principle:** A claim without fresh verification evidence is a guess, not a result.
@@ -55,7 +57,7 @@ When every required check passes for a concrete work item, write a completion
 evidence receipt before making any completion, close, ship, or release claim:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/evidence.py write \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/evidence.py write \
   --project-dir . \
   --subject-id {WORK_ITEM_ID} \
   --receipt-type completion \

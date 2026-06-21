@@ -112,7 +112,7 @@ if [ "$(hours_since "$LAST_CONSISTENCY")" -ge 24 ]; then
     fi
 
     # Check sweetclaude rules files
-    RULES_DIR="$HOME/.claude/rules/sweetclaude"
+    RULES_DIR="${CLAUDE_PLUGIN_ROOT}/rules"
     for rules_file in interaction-model.md phase-gates.md tdd-levels.md; do
       if [ ! -f "$RULES_DIR/$rules_file" ]; then
         DRIFT="${DRIFT} rules:${rules_file}"

@@ -5,6 +5,7 @@ description: "Internal TDD process skill — invoked by code-feature, code-issue
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:code-tdd"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
@@ -75,6 +76,9 @@ Use AskUserQuestion with these options:
 - "Level 1: Light" — simple change, single-context RED-GREEN-REFACTOR
 - "Level 2: Standard" — separate test writer and implementer, tests committed before implementation
 - "Level 3: Full" — from Gherkin specs with QA caucus review
+
+After the user selects a level, record the selection:
+`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh tdd_level_selected "level={0|1|2|3}"`
 
 ## Level 0: Hotfix
 
