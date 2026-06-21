@@ -5,6 +5,7 @@ description: "Internal John Wick phase check-in subagent."
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:john-wick-checkin"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # John Wick Phase Check-in

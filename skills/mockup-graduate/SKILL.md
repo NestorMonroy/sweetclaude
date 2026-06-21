@@ -5,6 +5,7 @@ description: "Move an approved mockup from the sandbox into the main application
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:mockup-graduate"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude Mockup Graduate

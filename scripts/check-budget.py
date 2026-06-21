@@ -2,7 +2,7 @@
 """
 Deterministic context budget check for SweetClaude.
 
-Reads installed skills at ~/.claude/skills/sweetclaude/*/SKILL.md.
+Reads installed skills from the plugin cache.
 Sums character length of `description:` for skills WITHOUT
 `disable-model-invocation: true`. Compares to the configured budget.
 
@@ -14,7 +14,8 @@ import os
 import re
 import sys
 
-INSTALLED = os.path.expanduser('~/.claude/skills/sweetclaude/*/SKILL.md')
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+INSTALLED = os.path.join(os.path.dirname(_script_dir), 'skills', '*', 'SKILL.md')
 SETTINGS = os.path.expanduser('~/.claude/settings.json')
 
 CONTEXT_TOKENS = 200_000  # default Claude Code context

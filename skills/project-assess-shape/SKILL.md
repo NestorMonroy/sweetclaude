@@ -5,6 +5,8 @@ version: 1.0.0
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-assess-shape"`
+
 # project-assess-shape
 
 Recommend a project mode by interviewing the user. Called automatically from `/sweetclaude:setup` at init and available on demand.
@@ -65,7 +67,7 @@ Evaluate in order:
 
 **If yes:** write `mode: {mode_key}` to `.sweetclaude/state/sweetclaude.yaml`, then run:
 ```bash
-bash ~/.claude/scripts/sweetclaude/generate-effective-gates.sh
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/generate-effective-gates.sh
 ```
 Confirm: "Mode set to **{mode}**. Effective gates compiled."
 

@@ -5,10 +5,11 @@ description: "Sprint planning, activation, board view, and close."
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-sprints"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 
 # Load active sprint if one exists
 ACTIVE_SPRINT=$(python3 "${_sc_hooks}/sc-artifact-impl.py" \
@@ -65,7 +66,7 @@ Proceed only if `mode` is `agile` (or unset).
 If `ACTIVE_SPRINT` is `NONE`:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query sprint status=planned
 ```
 
@@ -79,7 +80,7 @@ If `ACTIVE_SPRINT` is set, run the **Board** operation (below).
 ## List
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_list sprint
 ```
 
@@ -100,7 +101,7 @@ SP-001  Sprint 1      complete  (none)     2026-04-08  2026-04-22  5
 Check for existing active sprint first:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query sprint status=active
 ```
 
@@ -112,7 +113,7 @@ Ask, one question at a time:
 2. **Milestone** — Load milestones first:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_list milestone
 ```
 
@@ -126,7 +127,7 @@ sc_artifact_list milestone
 Then load the backlog to suggest issues:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query issue sprint_id= status=backlog
 ```
 
@@ -135,7 +136,7 @@ Present the top 10 by priority. Ask: "Which of these should go into the sprint? 
 Once confirmed, create the sprint:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_create sprint '{
   "title": "<title>",
   "status": "planned",
@@ -150,7 +151,7 @@ sc_artifact_create sprint '{
 For each issue the user selected, promote via:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_write <issue_id> '{"sprint_id": "<new_sprint_id>", "status": "ready"}'
 ```
 
@@ -161,7 +162,7 @@ Confirm: `Sprint {SP-NNN} planned with {N} issues`
 ## Start (Activate)
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_read <SP-NNN>
 ```
 
@@ -170,7 +171,7 @@ Verify status is `planned`. If already `active`: "Already active." If `complete`
 Check no other sprint is active:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query sprint status=active
 ```
 
@@ -179,7 +180,7 @@ If another sprint is active: "Sprint {ID} is already running. Close it before st
 Load the sprint's issues:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query issue sprint_id=<SP-NNN>
 ```
 
@@ -188,7 +189,7 @@ Present issue count and goal. Confirm: "Start {SP-NNN} — {title}? Goal: {goal}
 On confirmation:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_write <SP-NNN> '{"status": "active"}'
 ```
 
@@ -199,7 +200,7 @@ Confirm: `Sprint {SP-NNN} is now active — {goal}`
 ## Board
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_read $ACTIVE_SPRINT
 sc_artifact_query issue sprint_id=$ACTIVE_SPRINT
 ```
@@ -238,7 +239,7 @@ After board:
 Move or update an issue on the active sprint. Accepts natural language.
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_read <ID>
 ```
 
@@ -250,7 +251,7 @@ Map the user's intent to a `sc_artifact_write` call. Common updates:
 - "descope I-NNN" → `sprint_id: null`, `status: backlog` (also append sprint_history outcome=descoped)
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_write <ID> '<json>'
 ```
 
@@ -263,7 +264,7 @@ Confirm the change in one line.
 Closes the active sprint. Requires `ACTIVE_SPRINT` to be set.
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_read $ACTIVE_SPRINT
 sc_artifact_query issue sprint_id=$ACTIVE_SPRINT
 ```
@@ -299,7 +300,7 @@ Ask: "Quick retro — what went well, what didn't, and one thing to change next 
 **Step 4: Close the sprint.**
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_write $ACTIVE_SPRINT '{
   "status": "complete",
   "velocity": <N>,
@@ -325,7 +326,7 @@ Run project-sprints new to plan the next sprint.
 Load the most recently completed sprint:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query sprint status=complete
 ```
 
@@ -348,7 +349,7 @@ If the retrospective field is empty or "skipped": "No retro was recorded for {SP
 
 Save the user's answer via:
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_write $SPRINT_ID '{"retrospective": "<text>"}'
 ```
 

@@ -5,6 +5,7 @@ description: "Define and maintain project scope."
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-scope"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash
@@ -141,7 +142,7 @@ PYEOF
 **Cascade review:** After any scope change, load open roadmap items and backlog issues and surface those that may conflict with the new scope:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query roadmap_item status=planned,in_progress
 sc_artifact_query issue status=backlog,ready,in_progress
 ```

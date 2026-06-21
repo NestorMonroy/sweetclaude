@@ -5,6 +5,8 @@ description: "Deploy local repo to installed locations and rebuild the project c
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:feature-setup"`
+
 # Feature Setup
 
 Sync the local SweetClaude repo to all installed locations and rebuild the project cache. Delegates all sync work (including phase gate, test gate, backup, and rollback) to `scripts/sync-to-installed.sh`.
@@ -83,7 +85,7 @@ echo "DIRS_READY"
 
 ```bash
 mkdir -p .sweetclaude/cache
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild 2>&1
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild 2>&1
 ```
 
 ## Step 5: Report
@@ -91,9 +93,9 @@ python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild 2>&1
 Query the cache:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query item-count 2>/dev/null
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query releases 2>/dev/null
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query active-epic 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query item-count 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query releases 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query active-epic 2>/dev/null
 ```
 
 Present:
@@ -101,7 +103,7 @@ Present:
 ```
 Local repo deployed.
 
-  Scripts:   ~/.claude/scripts/sweetclaude/
+  Scripts:   ${CLAUDE_PLUGIN_ROOT}/scripts/
   Cache:     .sweetclaude/cache/roadmap.db
 
   Items indexed:  {item_count}

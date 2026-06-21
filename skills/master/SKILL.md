@@ -5,6 +5,7 @@ description: "SweetClaude master skill — phase router, interaction model, and 
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:master"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude — Master Skill
@@ -25,13 +26,12 @@ If `.sweetclaude/disabled` exists:
 If the user says yes, invoke `sweetclaude:setup`. Otherwise stop — do not proceed with any SweetClaude skill or pipeline work.
 
 **Step 1: Check global installation.**
-- `~/.claude/skills/sweetclaude/SKILL.md` exists
-- `~/.claude/config/sweetclaude/phase-skills.yaml` exists
-- `~/.claude/rules/sweetclaude/interaction-model.md` exists
-- `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/hooks/sweetclaude}/test-guardian.sh` exists
+- `${CLAUDE_PLUGIN_ROOT}/config/phase-skills.yaml` exists
+- `${CLAUDE_PLUGIN_ROOT}/rules/interaction-model.md` exists
+- `${CLAUDE_PLUGIN_ROOT}/hooks/test-guardian.sh` exists
 
 If any are missing:
-> "SweetClaude is not fully installed. Missing: [list]. Run `install.sh` from the SweetClaude repo to fix this."
+> "SweetClaude is not fully installed. Missing: [list]. Reinstall the plugin from the SweetClaude repo."
 
 **Step 2: Check project configuration.**
 - Does `.sweetclaude/state/phase.yaml` exist in the project directory?
@@ -64,6 +64,9 @@ Runs after pre-flight passes.
    - "Collaborative" — stop after every sub-step
    - "Guided" — stop at major decisions
    - "Autonomous" — stop only at phase gates
+
+   After the user selects a deference level, record the selection:
+   `bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh deference_set "level={collaborative|guided|autonomous}"`
 
 4. **Re-orient if resuming.**
    - **If `active_work_item` fields are set:** Summarize where things stand:
@@ -106,7 +109,7 @@ Any work can shift buckets as understanding deepens. This is normal.
 
 When the user signals readiness to advance (never prompt for it), run the transition sequence:
 
-**Exit criteria reference.** For any work type and phase, read the authoritative exit criteria from `~/.claude/rules/sweetclaude/phase-gates.md` — find the section matching `active_work_item.type`, then the subsection for the current `active_work_item.phase`. The DISCOVER and DEFINE checks below are reference checklists for net-new-feature; always verify against `phase-gates.md` for the complete and authoritative criteria.
+**Exit criteria reference.** For any work type and phase, read the authoritative exit criteria from `${CLAUDE_PLUGIN_ROOT}/rules/phase-gates.md` — find the section matching `active_work_item.type`, then the subsection for the current `active_work_item.phase`. The DISCOVER and DEFINE checks below are reference checklists for net-new-feature; always verify against `phase-gates.md` for the complete and authoritative criteria.
 
 **Step 1: Pre-transition validation (Discover and Define only).**
 
@@ -151,7 +154,7 @@ Never push for phase transition. The user decides when to advance.
 
 ## Interaction Rules
 
-Follow `~/.claude/rules/sweetclaude/interaction-model.md` at all times:
+Follow `${CLAUDE_PLUGIN_ROOT}/rules/interaction-model.md` at all times:
 - Phase dwelling — never push advancement
 - Propose and challenge — do not just ask questions
 - Adaptive flow — follow the user's lead
@@ -162,7 +165,7 @@ Follow `~/.claude/rules/sweetclaude/interaction-model.md` at all times:
 
 ## Skill Surfacing
 
-Read `~/.claude/config/sweetclaude/phase-skills.yaml` to determine which skills are available. The config has nine domain buckets:
+Read `${CLAUDE_PLUGIN_ROOT}/config/phase-skills.yaml` to determine which skills are available. The config has nine domain buckets:
 
 - **`strategy:`** — strategic positioning, competitive analysis, research, messaging
 - **`product:`** — discovery, product definition, stories, scope, backlog, roadmap analysis

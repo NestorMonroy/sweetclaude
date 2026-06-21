@@ -5,6 +5,8 @@ description: "SweetClaude help and skill discovery."
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:help"`
+
 # SweetClaude Help
 
 Reference content lives in three sibling files:

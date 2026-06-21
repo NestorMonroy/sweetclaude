@@ -4,6 +4,8 @@ user-invocable: false
 description: "Session startup skill — pre-flight checks, drift/update offers, and initial routing."
 ---
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:bootstrap"`
+
 # SweetClaude
 
 Load state, then make a decision. Delegate.
@@ -18,38 +20,13 @@ If the output is `SC_YAML_NOT_FOUND`, the state file does not exist. Otherwise p
 
 ## Step 0: Pre-flight
 
-Ensure the versionless framework path is populated, then run the pre-flight helper.
+Run the pre-flight helper to resolve runner path, plugin state, and version-dir repair.
 
 ```bash
-if [ ! -f ~/.claude/scripts/sweetclaude/preflight.sh ]; then
-  IP=$(python3 -c "
-import json, os
-try:
-    d = json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json')))
-    entries = [e for versions in d.get('plugins', {}).values()
-               for e in versions if e.get('scope') == 'user']
-    entries.sort(key=lambda e: e.get('lastUpdated', ''), reverse=True)
-    for e in entries:
-        ip = e.get('installPath', '')
-        if ip and os.path.isdir(os.path.join(ip, 'scripts')):
-            print(ip)
-            break
-except Exception:
-    pass
-" 2>/dev/null)
-  if [ -n "$IP" ] && [ -d "$IP/scripts" ]; then
-    mkdir -p ~/.claude/scripts/sweetclaude
-    rsync -a "$IP/scripts/" ~/.claude/scripts/sweetclaude/ 2>/dev/null || true
-    if [ -d "$IP/config" ]; then
-      mkdir -p ~/.claude/config/sweetclaude
-      rsync -a "$IP/config/" ~/.claude/config/sweetclaude/ 2>/dev/null || true
-    fi
-  fi
-fi
-eval "$(bash ~/.claude/scripts/sweetclaude/preflight.sh 2>/dev/null)"
+eval "$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" 2>/dev/null)"
 ```
 
-`RUNNER` is now set (empty if not found). `SELF_HEAL=true` if the versionless path was just populated. `CONFIG_SYNCED=true` if versionless framework config was synced. `VERSION_DIR_HEALED=true` if the install directory was just repaired to a version-named path.
+`RUNNER` is now set (empty if not found). `VERSION_DIR_HEALED=true` if the install directory was just repaired to a version-named path.
 
 If `VERSION_DIR_HEALED=true`, print exactly this before continuing:
 
@@ -232,7 +209,7 @@ fi
 
 GUARD_STATUS=""
 if [ "$GUARD_MODE" != "none" ]; then
-  SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+  SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
   if [ ! -f "$SCRIPT" ]; then
     SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
   fi
@@ -390,9 +367,9 @@ Archive `.sweetclaude/` aside through the re-adopt script (reversible, no inline
 `mv`), then mirror any relocated artifact bases into the same legacy tree:
 
 ```bash
-RA=$(python3 ~/.claude/scripts/sweetclaude/recovery/re_adopt.py execute --project-dir .)
+RA=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/recovery/re_adopt.py execute --project-dir .)
 LEGACY=$(python3 -c "import json,sys;print(json.loads(sys.stdin.read())['legacy_path'])" <<<"$RA")
-python3 ~/.claude/scripts/sweetclaude/maintenance/archive-sweetclaude-dir.py "$LEGACY"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/maintenance/archive-sweetclaude-dir.py "$LEGACY"
 echo "Archived existing SweetClaude content to $LEGACY/ — init will use it as reference, not auto-migrate."
 ```
 
@@ -484,7 +461,7 @@ PY
   - Not now → write `declined: <available>` (the specific version declined), continue:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/maintenance/write-decline.py .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/maintenance/write-decline.py .
 ```
 
 ## Step 6b: Doctor checkup prompt

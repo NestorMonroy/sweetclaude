@@ -5,6 +5,7 @@ description: "Produce a complete, ordered story list for an epic."
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:epic-design"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # Epic Design
@@ -44,8 +45,7 @@ Stories write to `{product_base}/stories/`. Promise and contract artifacts write
 For `EP-NNN`: try loading via the artifact system:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"
-[ -f "${_sc_hooks}/sc-artifact.sh" ] && source "${_sc_hooks}/sc-artifact.sh" && sc_artifact_view epic "$ARGUMENTS" 2>/dev/null || echo "ARTIFACT_SYSTEM_UNAVAILABLE"
+[ -f "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh" ] && source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh" && sc_artifact_view epic "$ARGUMENTS" 2>/dev/null || echo "ARTIFACT_SYSTEM_UNAVAILABLE"
 ```
 
 If `ARTIFACT_SYSTEM_UNAVAILABLE`, ask the user: "Describe the epic in one sentence — what does it ship and for whom?"

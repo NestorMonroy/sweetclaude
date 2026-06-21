@@ -5,6 +5,8 @@ description: "View and manage the unscheduled issue backlog."
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-backlog"`
+
 ## MIGRATION GUARD
 
 Before any other work, check for legacy migration/recovery risk:
@@ -23,7 +25,7 @@ print('.sweetclaude/product')
 " 2>/dev/null || echo '.sweetclaude/product')
 LEGACY_FILES=$(find "${PRODUCT_BASE}" -maxdepth 4 -type f \( -name 'BL-*.md' -o -name 'STORY-*.md' -o -name 'BUG-*.md' -o -name 'DEBT-*.md' -o -name 'CHORE-*.md' \) 2>/dev/null | wc -l | tr -d ' ')
 if [ "$LEGACY_FILES" -gt 0 ]; then
-  SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+  SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
   if [ ! -f "$SCRIPT" ]; then
     SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
   fi
@@ -86,7 +88,7 @@ def write_issue_file(path, fm, body):
 
 def rebuild_cache():
     import subprocess, os
-    subprocess.run(['python3', os.path.expanduser('~/.claude/scripts/sweetclaude/cache.py'), '--project-dir', '.', '--rebuild'], capture_output=True)
+    subprocess.run(['python3', os.path.expanduser('${CLAUDE_PLUGIN_ROOT}/scripts/cache.py'), '--project-dir', '.', '--rebuild'], capture_output=True)
 
 # Load active backlog items (exclude done/ subdirs and metadata files)
 active_files = [
@@ -168,7 +170,7 @@ write_issue_file(path, fm, body)
 ```
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set --file {path} --status ready --actor project-backlog --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/status.py set --file {path} --status ready --actor project-backlog --project-dir .
 ```
 
 Confirm: `Promoted {ID} → {SP-NNN}`
@@ -180,7 +182,7 @@ Confirm: `Promoted {ID} → {SP-NNN}`
 Set issue status to `deferred`. Hides it from the default backlog view without closing it.
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set --file {path} --status deferred --actor project-backlog --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/status.py set --file {path} --status deferred --actor project-backlog --project-dir .
 ```
 
 Confirm: `Deferred <ID> — removed from active backlog`

@@ -5,6 +5,7 @@ description: "Manage the full document corpus pipeline — consolidate raw files
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:document-corpus"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
@@ -75,7 +76,7 @@ Read `.sweetclaude/state/skills.yaml`.
 Drop `onboarded_at`/`offboarded_at`. Set `schema_version: 2`. Write atomically (see write protocol below).
 
 **Dependency check:**
-Read `~/.claude/config/sweetclaude/skills-registry.yaml`. Find `skills.document-corpus.dependencies`. This skill has no dependencies — skip.
+Read `${CLAUDE_PLUGIN_ROOT}/config/skills-registry.yaml`. Find `skills.document-corpus.dependencies`. This skill has no dependencies — skip.
 
 **If `skills.yaml` does not exist, OR exists but has no entry for `skills.document-corpus`:**
 - Check whether `.sweetclaude/state/corpus-pipeline.yaml` exists

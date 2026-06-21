@@ -5,6 +5,8 @@ version: 1.0.0
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:sweetclaude-behavioral-regression"`
+
 # SweetClaude Behavioral Regression
 
 Run after implementing or modifying the modes system. Validates all three enforcement layers.

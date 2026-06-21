@@ -5,6 +5,8 @@ description: "Natural language classifier — maps user text to the right intern
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:_route"`
+
 # Route
 
 Classify `$ARGUMENTS` and invoke the matched skill. Do not ask the user for clarification first — make a call, then confirm if the match is non-obvious.

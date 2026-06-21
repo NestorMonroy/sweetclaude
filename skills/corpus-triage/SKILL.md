@@ -5,6 +5,7 @@ description: "Classify files in corpus/raw/inbox/ as keep-as-is, needs-reconcili
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:corpus-triage"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>

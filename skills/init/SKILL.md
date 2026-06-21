@@ -5,6 +5,8 @@ description: "Bootstrap the SweetClaude infrastructure for any project — new o
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:init"`
+
 # SweetClaude Init
 
 Infrastructure bootstrap. One job: create the `.sweetclaude/` state directory, strategy structure, and CLAUDE.md. Nothing more.
@@ -217,7 +219,7 @@ CLAUDE.md template:
 ## SweetClaude
 
 - Read `.sweetclaude/state/phase.yaml` and `.sweetclaude/state/improvement-register.md` at session start if they exist. If `.sweetclaude/state/phase.yaml` exists and `.sweetclaude/disabled` does not exist, invoke `sweetclaude:status` automatically at session start.
-- Follow the interaction model in `~/.claude/rules/sweetclaude/interaction-model.md`.
+- Follow the interaction model in `${CLAUDE_PLUGIN_ROOT}/rules/interaction-model.md`.
 - Respect the current deference level. Ask if not set.
 - Never push for phase advancement. The user decides when to move on.
 ```
@@ -261,8 +263,7 @@ If no conflicts are found, proceed immediately. If FATAL conflicts are found, re
 ## Step 8: Run generate-session-state
 
 ```bash
-bash ~/.claude/hooks/sweetclaude/generate-session-state.sh 2>/dev/null || \
-bash "$(git rev-parse --show-toplevel 2>/dev/null)/hooks/generate-session-state.sh" 2>/dev/null || \
+bash "${CLAUDE_PLUGIN_ROOT}/hooks/generate-session-state.sh" 2>/dev/null || \
 echo "SESSION_STATE_SKIPPED"
 ```
 

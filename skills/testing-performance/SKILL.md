@@ -5,6 +5,7 @@ description: "Define load scenarios, establish performance baselines, set thresh
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:testing-performance"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash
@@ -241,7 +242,7 @@ If a regression is detected: "Regression detected in {scenario}: {metric} increa
 On yes:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_create issue '{
   "title": "Performance regression: <scenario> — <metric> +<delta>",
   "type": "bug",

@@ -5,6 +5,7 @@ description: "Assess what to work on next and propose it."
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:go"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude Go
@@ -70,9 +71,9 @@ ls scratch/ 2>/dev/null | grep -iE "checkpoint|continue|resume|handoff" | head -
 Then rebuild the cache and read backlog + roadmap state:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild 2>/dev/null
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query backlog 2>/dev/null
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query active-epic 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query backlog 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query active-epic 2>/dev/null
 ```
 
 If cache.py is not found or fails, scan `.sweetclaude/product/backlog/` directly for markdown files with YAML frontmatter.
@@ -98,7 +99,7 @@ If old-format files are found, output:
 Run the recovery guard before recommending any migration:
 
 ```bash
-SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
 if [ ! -f "$SCRIPT" ]; then
   SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
 fi
@@ -148,7 +149,7 @@ Any backlog filename containing `bug`, `hotfix`, `security`, `p0`, `p1`, `critic
 The `active-epic` cache query returned a non-null result. Query its stories in sequence order:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query epic-stories --epic {EP-NNN} 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query epic-stories --epic {EP-NNN} 2>/dev/null
 ```
 
 Propose the first open story (lowest `epic_sequence`). This is the next work item for the active capability area.
@@ -420,13 +421,13 @@ Use the receipt created by `/sweetclaude:code-verify`; do not self-generate a
 passing receipt from memory or old output. Validate it first:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/evidence.py validate --receipt "{receipt_path}" --subject-id "{STORY-ID}"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/evidence.py validate --receipt "{receipt_path}" --subject-id "{STORY-ID}"
 ```
 
 If no valid receipt exists, stop and run `/sweetclaude:code-verify` first.
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file "{issue_file_path}" --status done --actor go --project-dir . --evidence-receipt "{receipt_path}"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/status.py set-terminal --file "{issue_file_path}" --status done --actor go --project-dir . --evidence-receipt "{receipt_path}"
 ```
 Report: `✓ {STORY-ID} → done/{filename}`
 

@@ -5,10 +5,11 @@ description: "Assess and shift project modes."
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-mode"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 
 CURRENT_MODE=$(python3 -c "
 import yaml
@@ -201,7 +202,7 @@ If shifting away from `agile` or `agile_enterprise`:
 - Move their issues back to backlog (sprint_id=null, status=backlog)
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query sprint status=planned
 ```
 
@@ -249,7 +250,7 @@ PYEOF
 **Step 6: Regenerate effective gates.**
 
 ```bash
-bash ~/.claude/scripts/sweetclaude/generate-effective-gates.sh
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/generate-effective-gates.sh
 ```
 
 Output: "Mode set to **{mode}**. Effective gates compiled."

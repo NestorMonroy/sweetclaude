@@ -5,10 +5,11 @@ description: "WCAG 2.1 Level AA audit."
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:testing-accessibility"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 
 ls .sweetclaude/testing/accessibility/A11Y-*.md 2>/dev/null | wc -l | xargs -I{} echo "AUDIT_COUNT={}"
 ls .sweetclaude/testing/accessibility/A11Y-*.md 2>/dev/null | tail -3
@@ -195,7 +196,7 @@ Findings ({N} total)
 For each Critical and Serious finding, ask: "File as issue?" On yes:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_create issue '{
   "title": "A11y: <finding title>",
   "type": "bug",
@@ -239,7 +240,7 @@ Filed:     {N} issues
 Load open issues tagged `accessibility` or `a11y`:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query issue status=backlog,ready,in_progress
 ```
 

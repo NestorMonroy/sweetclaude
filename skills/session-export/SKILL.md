@@ -5,6 +5,7 @@ description: "Export a Claude.ai session as a complete, portable package."
 ---
 
 
+!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:session-export"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # Session Export Skill
