@@ -78,14 +78,13 @@ try:
     if read_ack_fingerprint(project, workflow_id) == fingerprint:
         sys.exit(0)
 
-    summary = str(status.get("allowed_summary") or "Large-story workflow is not complete.")
     block(
-        f"Large-story workflow {workflow_id} is still open and NOT complete "
-        f"(phase: {phase}). {summary} Tell the user in one plain sentence that this "
-        "story is paused mid-flight — not done, not failed — and that progress is "
-        "saved. Do not paste raw controller JSON or describe the story as done, "
-        "finished, or successful. Then stop again to confirm the pause; the guard "
-        "will stay silent about it on later turns until the story progresses or closes."
+        f"Workflow checkpoint — {workflow_id} is paused in {phase}. Progress is saved. "
+        "To resume: keep working on this story. "
+        "To pause: stop again to confirm (guard stays silent until story progresses). "
+        "To save for later: /sweetclaude:hibernate. "
+        "Relay this to the user as a checkpoint, not an error. Do not paste raw JSON "
+        "or claim the story is done."
     )
 except SystemExit:
     raise
@@ -94,10 +93,9 @@ except BaseException as exc:  # noqa: BLE001 — workflow state exists; fail clo
         # A deliberate pause is always honored, even if evaluation failed.
         sys.exit(0)
     block(
-        "Large-story stop guard failed closed: could not evaluate workflow "
-        f"completion ({exc}). A large-story workflow state file exists in this "
-        "project. Summarize the status in one line before stopping; stop again to "
-        "pause anyway."
+        f"Workflow checkpoint — could not read workflow status ({exc}). "
+        "A large-story workflow exists in this project. Stop again to pause. "
+        "Tell the user their progress is saved and they can stop again to confirm."
     )
 PYEOF
 exit 0
