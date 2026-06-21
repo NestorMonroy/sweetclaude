@@ -4,6 +4,23 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.19-beta] — 2026-06-21 (4.x beta channel)
+
+### Fixed — legacy path elimination and stop guard UX (ISSUE-207, ISSUE-208)
+
+All path resolution now uses `${CLAUDE_PLUGIN_ROOT}` instead of the five
+legacy versionless mirror directories (`~/.claude/{skills,hooks,scripts,
+config,rules}/sweetclaude/`). Self-heal and mirror-sync logic removed from
+bootstrap and update. A cleanup script
+(`scripts/maintenance/cleanup-legacy-paths.py`) detects, backs up, and
+removes legacy directories for users migrating from older installs.
+
+Stop guard messages rewritten as checkpoint notifications with clear options
+(resume, pause, hibernate) instead of alarming "error" / "blocked" language
+that provided no actionable guidance.
+
+---
+
 ## [4.2.18-beta] — 2026-06-21 (4.x beta channel)
 
 ### Fixed — controller state cross-validation gaps (ISSUE-206)
