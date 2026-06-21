@@ -1285,13 +1285,73 @@ def _any_small_story_workflow_exists(project: Path) -> bool:
     return False
 
 
+def _completed_workflow_protected_paths(
+    project: Path,
+) -> tuple[set[Path], set[Path]]:
+    """Return (protected_files, protected_dir_prefixes) for completed stories.
+
+    protected_files: exact relative paths that are immutable (workflow YAML,
+        ledger, closeout).
+    protected_dir_prefixes: directory prefixes whose entire subtree is
+        immutable (per-story report dirs like reports/small-story/ISSUE-048/).
+    """
+    protected_files: set[Path] = set()
+    protected_dirs: set[Path] = set()
+    workflows_dir = project / ".sweetclaude" / "state" / "workflows"
+    if not workflows_dir.exists():
+        return protected_files, protected_dirs
+    for candidate in sorted(workflows_dir.glob("*.yaml")):
+        state = _load_yaml_dict(candidate)
+        if not state.get("requires_success_criteria_contract"):
+            continue
+        if state.get("status") != "complete":
+            continue
+        wf_id = state.get("workflow_id") if isinstance(state.get("workflow_id"), str) else candidate.stem
+        protected_files.add(PROTECTED_WORKFLOWS_REL / f"{wf_id}.yaml")
+        report_dir = PROTECTED_REPORTS_REL / "small-story" / wf_id
+        protected_dirs.add(report_dir)
+        closeout_path = state.get("ship_closeout_artifact_path")
+        if closeout_path:
+            protected_files.add(Path(closeout_path))
+        ledger_path = state.get("success_criteria_ledger_path")
+        if ledger_path:
+            protected_files.add(Path(ledger_path))
+    return protected_files, protected_dirs
+
+
+def _is_protected_by_completed_stories(
+    rel: Path,
+    protected_files: set[Path],
+    protected_dirs: set[Path],
+) -> bool:
+    """Check if a project-relative path is protected by completed story history."""
+    if rel in protected_files:
+        return True
+    for pdir in protected_dirs:
+        if pdir in rel.parents or rel == pdir:
+            return True
+    return False
+
+
+_BASH_WRITE_TOKENS = re.compile(
+    r"\b(?:rm|mv|cp|tee|sed\s+-i|>"
+    r"|write_text|write_bytes|>>)\b"
+    r"|(?:^|[|;&])\s*(?:cat|printf|echo)\s+.*>"
+)
+
+
 def _gate_terminal_history(
     project: Path,
     tool: str,
     file_path: str | None,
     command: str | None,
 ) -> dict[str, Any]:
-    """Gate decisions when only completed small-story workflows exist."""
+    """Gate decisions when only completed small-story workflows exist.
+
+    Protects specific completed-story files, not shared parent directories.
+    New stories can be authored in the same directory structure.
+    """
+    protected_files, protected_dirs = _completed_workflow_protected_paths(project)
 
     def _decision(allow: bool, reason: str, decision: str | None = None) -> dict[str, Any]:
         return {
@@ -1314,29 +1374,20 @@ def _gate_terminal_history(
         rel = _project_relative(project, file_path)
         if rel is None:
             return _decision(True, "Target is outside the project; terminal-history gate does not apply.")
-        if (
-            PROTECTED_REPORTS_REL in rel.parents
-            or rel == PROTECTED_REPORTS_REL
-            or PROTECTED_WORKFLOWS_REL in rel.parents
-            or rel == PROTECTED_WORKFLOWS_REL
-        ):
+        if _is_protected_by_completed_stories(rel, protected_files, protected_dirs):
             return _decision(False, f"{history_message} {rel} is closed-story evidence.")
-        if PROTECTED_CONTRACTS_REL in rel.parents or rel == PROTECTED_CONTRACTS_REL:
-            return _decision(
-                False,
-                "The success criteria contract belongs to a completed story "
-                "and may not be modified by the model. Closed history is "
-                "immutable; draft the next story's contract (init-contract) "
-                "instead.",
-                decision="deny",
-            )
         return _decision(True, "Project files are unrestricted after story completion.")
     if tool == "Bash" and command:
+        if not _BASH_WRITE_TOKENS.search(command):
+            return _decision(True, "Read-only command; terminal-history gate does not apply.")
         lowered = command.lower()
-        for token in (".sweetclaude/reports", ".sweetclaude/state/workflows", ".sweetclaude/contracts"):
-            if token in lowered:
-                return _decision(False, f"{history_message} Command references {token}.")
-        return _decision(True, "Command does not reference closed-story history.")
+        for pf in protected_files:
+            if str(pf) in lowered:
+                return _decision(False, f"{history_message} Command targets completed-story file `{pf}`.")
+        for pd in protected_dirs:
+            if str(pd) in lowered:
+                return _decision(False, f"{history_message} Command targets completed-story directory `{pd}`.")
+        return _decision(True, "Command does not target closed-story history.")
     return _decision(True, "Tool is not gated after story completion.")
 
 
