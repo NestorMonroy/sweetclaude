@@ -149,6 +149,11 @@ def _contract(story_id="STORY-001"):
 
 
 def _project(tmp_path):
+    backlog_dir = tmp_path / "docs" / "product" / "backlog"
+    backlog_dir.mkdir(parents=True, exist_ok=True)
+    (backlog_dir / "STORY-001-test.md").write_text(
+        "---\nid: STORY-001\nstatus: new\n---\nTest.\n", encoding="utf-8",
+    )
     cp = tmp_path / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml"
     cp.parent.mkdir(parents=True, exist_ok=True)
     cp.write_text(yaml.safe_dump(_contract(), sort_keys=False), encoding="utf-8")

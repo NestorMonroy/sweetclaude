@@ -772,6 +772,39 @@ def _workflow_recovery_hint(stage: str, error: str) -> str:
     return "Do not claim completion. Re-run validation after correcting success-criteria artifacts."
 
 
+def find_backlog_file(
+    project: Path, item_id: str, *, exclude_done: bool = False,
+) -> Path | None:
+    """Search product backlog directories for a file matching {item_id}-*.md.
+
+    When *exclude_done* is True the ``done/`` subdirectory is skipped so that
+    completed items cannot be used to re-initialize workflows or contracts.
+    """
+    product_bases: list[Path] = []
+    privacy_path = project / ".sweetclaude" / "artifact-privacy.yaml"
+    if privacy_path.exists():
+        try:
+            data = yaml.safe_load(privacy_path.read_text(encoding="utf-8")) or {}
+            base = (data.get("categories") or {}).get("product", {}).get("base_path", "")
+            if base:
+                product_bases.append(project / base.rstrip("/"))
+        except yaml.YAMLError:
+            pass
+    product_bases.extend([
+        project / "docs" / "product",
+        project / ".sweetclaude" / "product",
+    ])
+    subdirs = ("backlog", "backlog/archived") if exclude_done else ("backlog", "done", "backlog/archived")
+    for base in product_bases:
+        for subdir in subdirs:
+            search_dir = base / subdir
+            if search_dir.is_dir():
+                matches = list(search_dir.glob(f"{item_id}-*.md"))
+                if matches:
+                    return matches[0]
+    return None
+
+
 def _active_workflow_exists(project: Path) -> bool:
     workflows_dir = project / ".sweetclaude" / "state" / "workflows"
     if not workflows_dir.exists():
@@ -834,6 +867,15 @@ def init_contract(
                 "init-contract is blocked: an active large-story workflow exists. "
                 "Frozen contract amendment is human-gated; do not regenerate the "
                 "contract under an active workflow."
+            ),
+        }
+    if find_backlog_file(project, story_id, exclude_done=True) is None:
+        return {
+            "ok": False,
+            "error": (
+                f"init-contract is blocked: no backlog file found for {story_id}. "
+                "A backlog item must exist before a success criteria contract can "
+                "be scaffolded. Create the backlog file first."
             ),
         }
     if contract_path.exists() and contract_path.stat().st_size > 0 and not force:

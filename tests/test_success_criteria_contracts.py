@@ -427,6 +427,11 @@ def test_verify_cli_accepts_list_of_criterion_results(tmp_path):
     contract = _valid_contract()
     contract["success_criteria"] = [contract["success_criteria"][0]]
     contract["contract_freeze"]["contract_hash"] = compute_success_criteria_contract_hash(contract)
+    backlog_dir = tmp_path / "docs" / "product" / "backlog"
+    backlog_dir.mkdir(parents=True, exist_ok=True)
+    (backlog_dir / "STORY-123-test.md").write_text(
+        "---\nid: STORY-123\nstatus: new\n---\nTest.\n", encoding="utf-8",
+    )
     cp = tmp_path / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml"
     cp.parent.mkdir(parents=True, exist_ok=True)
     cp.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")

@@ -19,6 +19,7 @@ except ImportError:
 from success_criteria_contracts import (
     DEFAULT_CONTRACT_PATH,
     DEFAULT_LEDGER_PATH,
+    find_backlog_file,
     validate_success_criteria_contract,
     validate_success_criteria_workflow,
 )
@@ -124,6 +125,16 @@ CONTRACT_AMENDMENT_MESSAGE = (
 )
 
 VALID_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+
+
+def _record_event(project: Path, event_type: str, **kwargs: str) -> None:
+    import subprocess
+    script = Path(__file__).resolve().parent / "record-event.sh"
+    if not script.is_file():
+        return
+    args = ["bash", str(script), event_type]
+    args.extend(f"{k}={v}" for k, v in kwargs.items())
+    subprocess.run(args, cwd=str(project), capture_output=True, timeout=5)  # noqa: S603
 
 ROUTE_SURFACES = {"/sweetclaude:go", "sweetclaude:find-skill", "sweetclaude:_route"}
 POST_SHIP_STAGES = {"terminal_review"}
@@ -263,6 +274,8 @@ def enter_design_phase(
         encoding="utf-8",
     )
     _set_workflow_phase(project, resolved_workflow_id, "DESIGN")
+    _record_event(project, "phase_gate_check", phase="DEFINE", result="pass", workflow=resolved_workflow_id)
+    _record_event(project, "phase_transition", **{"from": "DEFINE", "to": "DESIGN"}, workflow=resolved_workflow_id)
     return {
         "ok": True,
         "status": "design",
@@ -362,6 +375,8 @@ def enter_plan_phase(
         encoding="utf-8",
     )
     _set_workflow_phase(project, resolved_workflow_id, "PLAN")
+    _record_event(project, "phase_gate_check", phase="DESIGN", result="pass", workflow=resolved_workflow_id)
+    _record_event(project, "phase_transition", **{"from": "DESIGN", "to": "PLAN"}, workflow=resolved_workflow_id)
     return {
         "ok": True,
         "status": "plan",
@@ -502,6 +517,8 @@ def enter_implement_phase(
         encoding="utf-8",
     )
     _set_workflow_phase(project, resolved_workflow_id, "IMPLEMENT")
+    _record_event(project, "phase_gate_check", phase="PLAN", result="pass", workflow=resolved_workflow_id)
+    _record_event(project, "phase_transition", **{"from": "PLAN", "to": "IMPLEMENT"}, workflow=resolved_workflow_id)
     return {
         "ok": True,
         "status": "implement",
@@ -733,6 +750,8 @@ def enter_verify_phase(
             "next_allowed_stage": "blocked",
         }
     _set_workflow_phase(project, resolved_workflow_id, "VERIFY")
+    _record_event(project, "phase_gate_check", phase="IMPLEMENT", result="pass", workflow=resolved_workflow_id)
+    _record_event(project, "phase_transition", **{"from": "IMPLEMENT", "to": "VERIFY"}, workflow=resolved_workflow_id)
     return {
         "ok": True,
         "status": "verify",
@@ -798,7 +817,10 @@ def enter_ship_phase(
     }
     closeout_path.write_text(json.dumps(closeout, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     _write_workflow_terminal_state(project, resolved_workflow_id, closeout_rel)
-    _sync_phase_yaml(project, resolved_workflow_id, "SHIP")
+    _clear_phase_yaml_active_item(project, resolved_workflow_id)
+    _clear_sweetclaude_yaml_active(project, resolved_workflow_id)
+    _record_event(project, "phase_gate_check", phase="VERIFY", result="pass", workflow=resolved_workflow_id)
+    _record_event(project, "phase_transition", **{"from": "VERIFY", "to": "SHIP"}, workflow=resolved_workflow_id)
     return {
         "ok": True,
         "status": "ship",
@@ -903,6 +925,12 @@ def init_workflow(
             f"{VALID_ID_RE.pattern} (no path separators or traversal).",
         )
     project = Path(project_dir).expanduser().resolve(strict=False)
+    if find_backlog_file(project, workflow_id, exclude_done=True) is None:
+        return _failure(
+            "blocked_init_failed",
+            f"Large-story init is blocked: no backlog file found for {workflow_id}. "
+            "A backlog item must exist before a workflow can start.",
+        )
     existing = [
         (existing_id, state)
         for existing_id, state in _active_large_story_workflows(project)
@@ -952,6 +980,7 @@ def init_workflow(
         encoding="utf-8",
     )
     _sync_phase_yaml(project, workflow_id, "DEFINE")
+    _sync_sweetclaude_yaml_active(project, workflow_id, "DEFINE")
     return {
         "ok": True,
         "status": "define",
@@ -1089,7 +1118,13 @@ def record_evidence(
             "Evidence recording is blocked: workflow_id is invalid.",
         )
     else:
-        state = _load_yaml_dict(_workflow_state_path(project, resolved_workflow_id))
+        wf_path = _workflow_state_path(project, resolved_workflow_id)
+        if not wf_path.exists():
+            return _failure(
+                "blocked_no_active_workflow",
+                f"Evidence recording is blocked: no workflow state file for {resolved_workflow_id}.",
+            )
+        state = _load_yaml_dict(wf_path)
 
     entry: dict[str, Any] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1190,11 +1225,17 @@ def arm_enforcement_probe(
     resolved = workflow_id or _workflow_id_from_state(project)
     if not _valid_workflow_id(resolved):
         return _failure("blocked_enforcement_probe", "Enforcement probe is blocked: workflow_id is required.")
+    wf_path = _workflow_state_path(project, resolved)
+    if not wf_path.exists():
+        return _failure(
+            "blocked_enforcement_probe",
+            f"Enforcement probe is blocked: no workflow state file for {resolved}.",
+        )
     for rel in (ENFORCEMENT_CONTROL_REL, ENFORCEMENT_CANARY_REL):
         target = project / rel
         if target.exists():
             target.unlink()
-    state = _load_yaml_dict(_workflow_state_path(project, resolved))
+    state = _load_yaml_dict(wf_path)
     state["enforcement_verified"] = False
     _write_workflow_dict(project, resolved, state)
     return {
@@ -1220,6 +1261,12 @@ def check_enforcement_probe(
     resolved = workflow_id or _workflow_id_from_state(project)
     if not _valid_workflow_id(resolved):
         return _failure("blocked_enforcement_probe", "Enforcement probe is blocked: workflow_id is required.")
+    wf_path = _workflow_state_path(project, resolved)
+    if not wf_path.exists():
+        return _failure(
+            "blocked_enforcement_probe",
+            f"Enforcement probe is blocked: no workflow state file for {resolved}.",
+        )
     control_present = (project / ENFORCEMENT_CONTROL_REL).exists()
     canary_present = (project / ENFORCEMENT_CANARY_REL).exists()
     if not control_present:
@@ -1440,6 +1487,45 @@ def _sync_phase_yaml(project: Path, workflow_id: str, phase: str) -> None:
     active_item.update({"id": workflow_id, "phase": phase, "entry_category": "large-story"})
     data["active_work_item"] = active_item
     phase_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def _clear_phase_yaml_active_item(project: Path, workflow_id: str) -> None:
+    phase_path = project / ".sweetclaude" / "state" / "phase.yaml"
+    if not phase_path.exists():
+        return
+    data = _load_yaml_dict(phase_path)
+    active_item = data.get("active_work_item")
+    if isinstance(active_item, dict) and active_item.get("id") == workflow_id:
+        data["active_work_item"] = None
+        phase_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def _sync_sweetclaude_yaml_active(project: Path, workflow_id: str, phase: str) -> None:
+    sc_path = project / ".sweetclaude" / "state" / "sweetclaude.yaml"
+    sc_path.parent.mkdir(parents=True, exist_ok=True)
+    data = _load_yaml_dict(sc_path)
+    work = data.setdefault("work", {})
+    active = work.get("active")
+    if not isinstance(active, dict):
+        active = {}
+    active.update({"id": workflow_id, "phase": phase})
+    work["active"] = active
+    data["work"] = work
+    sc_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def _clear_sweetclaude_yaml_active(project: Path, workflow_id: str) -> None:
+    sc_path = project / ".sweetclaude" / "state" / "sweetclaude.yaml"
+    if not sc_path.exists():
+        return
+    data = _load_yaml_dict(sc_path)
+    work = data.get("work")
+    if not isinstance(work, dict):
+        return
+    active = work.get("active")
+    if isinstance(active, dict) and active.get("id") == workflow_id:
+        work["active"] = None
+        sc_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
 
 def _set_workflow_phase(project: Path, workflow_id: str, phase: str) -> None:
