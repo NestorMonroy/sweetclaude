@@ -805,7 +805,8 @@ def find_backlog_file(
     return None
 
 
-def _active_workflow_exists(project: Path) -> bool:
+def _active_workflow_for_different_story(project: Path, story_id: str) -> bool:
+    """True if an active workflow exists for a DIFFERENT story than story_id."""
     workflows_dir = project / ".sweetclaude" / "state" / "workflows"
     if not workflows_dir.exists():
         return False
@@ -818,6 +819,7 @@ def _active_workflow_exists(project: Path) -> bool:
             isinstance(state, dict)
             and state.get("requires_success_criteria_contract")
             and state.get("status") != "complete"
+            and state.get("workflow_id") != story_id
         ):
             return True
     return False
@@ -860,13 +862,13 @@ def init_contract(
     """
     project = Path(project_dir).expanduser().resolve(strict=False)
     contract_path = project / DEFAULT_CONTRACT_PATH
-    if _active_workflow_exists(project):
+    if _active_workflow_for_different_story(project, story_id):
         return {
             "ok": False,
             "error": (
-                "init-contract is blocked: an active large-story workflow exists. "
+                "init-contract is blocked: an active workflow exists for a different story. "
                 "Frozen contract amendment is human-gated; do not regenerate the "
-                "contract under an active workflow."
+                "contract while another story's workflow is active."
             ),
         }
     if find_backlog_file(project, story_id, exclude_done=True) is None:

@@ -1298,7 +1298,13 @@ def _write_workflow_dict(project: Path, workflow_id: str, state: dict[str, Any])
 
 
 def _workflow_state_path(project: Path, workflow_id: str) -> Path:
-    return project / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+    active = project / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+    if active.exists():
+        return active
+    archived = project / ".sweetclaude" / "state" / "workflows" / "archived" / f"{workflow_id}.yaml"
+    if archived.exists():
+        return archived
+    return active
 
 
 def _load_yaml_dict(path: Path) -> dict[str, Any]:
@@ -1328,10 +1334,15 @@ def _any_small_story_workflow_exists(project: Path) -> bool:
     workflows_dir = project / ".sweetclaude" / "state" / "workflows"
     if not workflows_dir.exists():
         return False
-    for candidate in workflows_dir.glob("*.yaml"):
-        state = _load_yaml_dict(candidate)
-        if state.get("state_owner") == "small_story_controller" and state.get("requires_success_criteria_contract"):
-            return True
+    scan_dirs = [workflows_dir]
+    archived = workflows_dir / "archived"
+    if archived.exists():
+        scan_dirs.append(archived)
+    for scan_dir in scan_dirs:
+        for candidate in scan_dir.glob("*.yaml"):
+            state = _load_yaml_dict(candidate)
+            if state.get("state_owner") == "small_story_controller" and state.get("requires_success_criteria_contract"):
+                return True
     return False
 
 
@@ -1350,24 +1361,29 @@ def _completed_workflow_protected_paths(
     workflows_dir = project / ".sweetclaude" / "state" / "workflows"
     if not workflows_dir.exists():
         return protected_files, protected_dirs
-    for candidate in sorted(workflows_dir.glob("*.yaml")):
-        state = _load_yaml_dict(candidate)
-        if state.get("state_owner") != "small_story_controller":
-            continue
-        if not state.get("requires_success_criteria_contract"):
-            continue
-        if state.get("status") != "complete":
-            continue
-        wf_id = state.get("workflow_id") if isinstance(state.get("workflow_id"), str) else candidate.stem
-        protected_files.add(PROTECTED_WORKFLOWS_REL / f"{wf_id}.yaml")
-        report_dir = PROTECTED_REPORTS_REL / "small-story" / wf_id
-        protected_dirs.add(report_dir)
-        closeout_path = state.get("ship_closeout_artifact_path")
-        if closeout_path:
-            protected_files.add(Path(closeout_path))
-        ledger_path = state.get("success_criteria_ledger_path")
-        if ledger_path:
-            protected_files.add(Path(ledger_path))
+    scan_dirs = [workflows_dir]
+    archived = workflows_dir / "archived"
+    if archived.exists():
+        scan_dirs.append(archived)
+    for scan_dir in scan_dirs:
+        for candidate in sorted(scan_dir.glob("*.yaml")):
+            state = _load_yaml_dict(candidate)
+            if state.get("state_owner") != "small_story_controller":
+                continue
+            if not state.get("requires_success_criteria_contract"):
+                continue
+            if state.get("status") != "complete":
+                continue
+            wf_id = state.get("workflow_id") if isinstance(state.get("workflow_id"), str) else candidate.stem
+            protected_files.add(PROTECTED_WORKFLOWS_REL / "archived" / f"{wf_id}.yaml")
+            report_dir = PROTECTED_REPORTS_REL / "small-story" / wf_id
+            protected_dirs.add(report_dir)
+            closeout_path = state.get("ship_closeout_artifact_path")
+            if closeout_path:
+                protected_files.add(Path(closeout_path))
+            ledger_path = state.get("success_criteria_ledger_path")
+            if ledger_path:
+                protected_files.add(Path(ledger_path))
     return protected_files, protected_dirs
 
 
@@ -1735,6 +1751,14 @@ def _validate_ship_closeout(project: Path, workflow_id: str, contract_hash: str)
     }
 
 
+def _archive_terminal_workflow(workflow_path: Path) -> None:
+    """Move a completed workflow file to the archived/ subdirectory."""
+    archived_dir = workflow_path.parent / "archived"
+    archived_dir.mkdir(parents=True, exist_ok=True)
+    import shutil
+    shutil.move(str(workflow_path), str(archived_dir / workflow_path.name))
+
+
 def _write_workflow_terminal_state(project: Path, workflow_id: str, closeout_rel: Path) -> None:
     workflow_path = project / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
     workflow_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1754,6 +1778,7 @@ def _write_workflow_terminal_state(project: Path, workflow_id: str, closeout_rel
         }
     )
     workflow_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    _archive_terminal_workflow(workflow_path)
 
 
 def _status_details(

@@ -667,7 +667,7 @@ def test_gate_denies_history_writes_after_terminal_closeout(tmp_path):
     for path in (
         ".sweetclaude/reports/success-criteria-ledger.json",
         ".sweetclaude/reports/large-story/STORY-001/ship/closeout.json",
-        ".sweetclaude/state/workflows/STORY-001.yaml",
+        ".sweetclaude/state/workflows/archived/STORY-001.yaml",
     ):
         result = gate_tool_use(project_dir=project, tool="Write", file_path=path)
         assert result["allow"] is False, path

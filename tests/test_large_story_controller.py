@@ -841,11 +841,9 @@ def test_ship_writes_controller_owned_closeout_artifact_and_state(tmp_path):
 
     closeout_path = project / result["closeout_artifact_path"]
     closeout = json.loads(closeout_path.read_text(encoding="utf-8"))
-    workflow = yaml.safe_load(
-        (project / ".sweetclaude" / "state" / "workflows" / "STORY-001.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
+    archived_path = project / ".sweetclaude" / "state" / "workflows" / "archived" / "STORY-001.yaml"
+    assert archived_path.exists(), "Completed workflow should be archived"
+    workflow = yaml.safe_load(archived_path.read_text(encoding="utf-8"))
 
     assert closeout_path.exists()
     assert closeout["generated_by"] == "large_story_controller"
