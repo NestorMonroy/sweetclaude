@@ -1318,6 +1318,7 @@ def _valid_workflow_id(value: Any) -> bool:
 def _is_active_workflow_state(state: dict[str, Any]) -> bool:
     return bool(
         state
+        and state.get("state_owner") == "small_story_controller"
         and state.get("requires_success_criteria_contract")
         and state.get("status") != "complete"
     )
@@ -1328,7 +1329,8 @@ def _any_small_story_workflow_exists(project: Path) -> bool:
     if not workflows_dir.exists():
         return False
     for candidate in workflows_dir.glob("*.yaml"):
-        if _load_yaml_dict(candidate).get("requires_success_criteria_contract"):
+        state = _load_yaml_dict(candidate)
+        if state.get("state_owner") == "small_story_controller" and state.get("requires_success_criteria_contract"):
             return True
     return False
 
@@ -1350,6 +1352,8 @@ def _completed_workflow_protected_paths(
         return protected_files, protected_dirs
     for candidate in sorted(workflows_dir.glob("*.yaml")):
         state = _load_yaml_dict(candidate)
+        if state.get("state_owner") != "small_story_controller":
+            continue
         if not state.get("requires_success_criteria_contract"):
             continue
         if state.get("status") != "complete":

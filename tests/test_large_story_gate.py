@@ -444,6 +444,7 @@ def test_gate_fails_closed_with_multiple_active_workflows(tmp_path):
             {
                 "workflow_id": "STORY-999",
                 "phase": "DEFINE",
+                "state_owner": "large_story_controller",
                 "requires_success_criteria_contract": True,
             }
         ),
