@@ -77,6 +77,11 @@ def _contract(story_id: str = "STORY-001") -> dict:
 
 
 def _project_with_workflow(tmp_path: Path, story_id: str = "STORY-001") -> Path:
+    backlog_dir = tmp_path / "docs" / "product" / "backlog"
+    backlog_dir.mkdir(parents=True, exist_ok=True)
+    (backlog_dir / f"{story_id}-test.md").write_text(
+        f"---\nid: {story_id}\nstatus: new\n---\nTest.\n", encoding="utf-8",
+    )
     contract_path = tmp_path / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml"
     contract_path.parent.mkdir(parents=True, exist_ok=True)
     contract_path.write_text(yaml.safe_dump(_contract(story_id), sort_keys=False), encoding="utf-8")

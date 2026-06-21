@@ -195,6 +195,11 @@ def test_full_fresh_disposable_sequence_with_real_hooks_and_cli(tmp_path):
     app_files = ["app.py", "templates/index.html", "models.db"]
 
     # --- DEFINE: contract first; app writes physically denied -----------------
+    backlog_dir = project / "docs" / "product" / "backlog"
+    backlog_dir.mkdir(parents=True, exist_ok=True)
+    (backlog_dir / f"{STORY_ID}-test.md").write_text(
+        f"---\nid: {STORY_ID}\nstatus: new\n---\nTest.\n", encoding="utf-8",
+    )
     _write_contract(project)
     init = _controller(project, "init", "--workflow-id", STORY_ID)
     assert init["ok"], init
@@ -290,12 +295,21 @@ def test_full_fresh_disposable_sequence_with_real_hooks_and_cli(tmp_path):
     assert _stop_attempt(project) is None
 
 
+def _create_backlog_file(project: Path, story_id: str) -> None:
+    backlog_dir = project / "docs" / "product" / "backlog"
+    backlog_dir.mkdir(parents=True, exist_ok=True)
+    (backlog_dir / f"{story_id}-test.md").write_text(
+        f"---\nid: {story_id}\nstatus: new\n---\nTest.\n", encoding="utf-8",
+    )
+
+
 def test_task008_artifact_state_is_unreachable(tmp_path):
     """The exact observed TASK-008 end state (app artifacts + DEFINE/VERIFY
     state contradiction + no ledger) cannot be reproduced through the gated
     path, and if produced by external tampering it is detected, not masked."""
     project = tmp_path / "tampered"
     project.mkdir()
+    _create_backlog_file(project, STORY_ID)
     _write_contract(project)
     assert _controller(project, "init", "--workflow-id", STORY_ID)["ok"]
     assert _controller(project, "design", "--workflow-id", STORY_ID, "--design-summary", "d")["ok"]
@@ -320,6 +334,7 @@ def test_verify_without_observed_evidence_is_blocked_via_cli(tmp_path):
     """Skipping the evidence hook (e.g. hooks disabled) fails closed at VERIFY."""
     project = tmp_path / "no-evidence"
     project.mkdir()
+    _create_backlog_file(project, STORY_ID)
     _write_contract(project)
     assert _controller(project, "init", "--workflow-id", STORY_ID)["ok"]
     assert _controller(project, "design", "--workflow-id", STORY_ID, "--design-summary", "d")["ok"]

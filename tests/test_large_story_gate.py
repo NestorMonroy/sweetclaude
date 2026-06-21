@@ -77,7 +77,17 @@ def _write_contract(project: Path, contract: dict) -> Path:
     return contract_path
 
 
+def _create_backlog_file(project: Path, story_id: str) -> None:
+    backlog_dir = project / "docs" / "product" / "backlog"
+    backlog_dir.mkdir(parents=True, exist_ok=True)
+    (backlog_dir / f"{story_id}-test.md").write_text(
+        f"---\nid: {story_id}\nstatus: new\n---\nTest backlog item.\n",
+        encoding="utf-8",
+    )
+
+
 def _init_project(tmp_path: Path, story_id: str = "STORY-001") -> Path:
+    _create_backlog_file(tmp_path, story_id)
     _write_contract(tmp_path, _contract(story_id))
     result = init_workflow(project_dir=tmp_path, workflow_id=story_id)
     assert result["ok"], result
@@ -124,6 +134,7 @@ def test_init_workflow_writes_controller_owned_state(tmp_path):
 
 
 def test_init_workflow_fails_without_contract(tmp_path):
+    _create_backlog_file(tmp_path, "STORY-001")
     result = init_workflow(project_dir=tmp_path, workflow_id="STORY-001")
     assert result["ok"] is False
 
@@ -445,6 +456,7 @@ def test_gate_fails_closed_with_multiple_active_workflows(tmp_path):
 
 def test_init_workflow_refuses_second_active_workflow(tmp_path):
     project = _init_project(tmp_path)
+    _create_backlog_file(project, "STORY-002")
     result = init_workflow(project_dir=project, workflow_id="STORY-002")
     assert result["ok"] is False
     assert "active" in result["message"].lower()
@@ -502,6 +514,7 @@ def test_summary_heading_injection_cannot_break_evidence_merge(tmp_path):
 
 
 def test_verify_blocked_when_ledger_contradicts_contract_artifact_paths(tmp_path):
+    _create_backlog_file(tmp_path, "STORY-001")
     _write_contract(
         tmp_path,
         _contract(evidence_artifact=".sweetclaude/reports/large-story/OTHER/evidence/SC-001.json"),
@@ -569,6 +582,7 @@ def test_gate_denies_bash_referencing_contracts(tmp_path):
 def test_init_contract_skeleton_freezes_and_validates(tmp_path):
     from success_criteria_contracts import freeze_contract, init_contract
 
+    _create_backlog_file(tmp_path, "WI-001")
     created = init_contract(project_dir=tmp_path, story_id="WI-001", criteria_count=3)
     assert created["ok"], created
     frozen = freeze_contract(project_dir=tmp_path)
@@ -584,6 +598,7 @@ def test_init_contract_skeleton_freezes_and_validates(tmp_path):
 def test_init_contract_evidence_paths_match_controller_format(tmp_path):
     from success_criteria_contracts import init_contract
 
+    _create_backlog_file(tmp_path, "WI-001")
     init_contract(project_dir=tmp_path, story_id="WI-001", criteria_count=2)
     contract = yaml.safe_load(
         (tmp_path / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml").read_text(encoding="utf-8")
@@ -608,6 +623,7 @@ def test_init_contract_refuses_overwrite_when_workflow_active(tmp_path):
 def test_init_contract_requires_force_to_overwrite_draft(tmp_path):
     from success_criteria_contracts import init_contract
 
+    _create_backlog_file(tmp_path, "WI-001")
     assert init_contract(project_dir=tmp_path, story_id="WI-001")["ok"]
     again = init_contract(project_dir=tmp_path, story_id="WI-001")
     assert again["ok"] is False
@@ -618,6 +634,7 @@ def test_init_contract_requires_force_to_overwrite_draft(tmp_path):
 def test_freeze_contract_recomputes_hash_after_edit(tmp_path):
     from success_criteria_contracts import freeze_contract, init_contract
 
+    _create_backlog_file(tmp_path, "WI-001")
     init_contract(project_dir=tmp_path, story_id="WI-001", criteria_count=1)
     first = freeze_contract(project_dir=tmp_path)
     contract_path = tmp_path / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml"

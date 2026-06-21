@@ -71,7 +71,17 @@ def _write_contract(project: Path, contract: dict) -> Path:
     return contract_path
 
 
+def _create_backlog_file(project: Path, story_id: str) -> None:
+    backlog_dir = project / "docs" / "product" / "backlog"
+    backlog_dir.mkdir(parents=True, exist_ok=True)
+    (backlog_dir / f"{story_id}-test.md").write_text(
+        f"---\nid: {story_id}\nstatus: new\n---\nTest backlog item.\n",
+        encoding="utf-8",
+    )
+
+
 def _init_project(tmp_path: Path, story_id: str = "STORY-001") -> Path:
+    _create_backlog_file(tmp_path, story_id)
     _write_contract(tmp_path, _contract(story_id))
     result = init_workflow(project_dir=tmp_path, workflow_id=story_id)
     assert result["ok"], result
