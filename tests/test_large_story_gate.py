@@ -656,7 +656,8 @@ def test_gate_denies_history_writes_after_terminal_closeout(tmp_path):
         assert result["decision"] == "deny"
 
 
-def test_gate_denies_contract_edit_after_terminal_closeout(tmp_path):
+def test_gate_allows_contract_reuse_after_terminal_closeout(tmp_path):
+    """Contract at the default path is a reusable draft, not permanent evidence."""
     project = _init_project(tmp_path)
     _ship_story(project)
     result = gate_tool_use(
@@ -664,8 +665,7 @@ def test_gate_denies_contract_edit_after_terminal_closeout(tmp_path):
         tool="Write",
         file_path=".sweetclaude/contracts/success-criteria-contract.yaml",
     )
-    assert result["allow"] is False
-    assert result["decision"] == "deny"
+    assert result["allow"] is True
 
 
 def test_gate_allows_app_and_phase_writes_after_terminal_closeout(tmp_path):
@@ -678,6 +678,62 @@ def test_gate_allows_app_and_phase_writes_after_terminal_closeout(tmp_path):
 
 
 def test_gate_denies_bash_history_tampering_after_terminal_closeout(tmp_path):
+    project = _init_project(tmp_path)
+    _ship_story(project)
+    result = gate_tool_use(
+        project_dir=project,
+        tool="Bash",
+        command="echo '{}' > .sweetclaude/reports/success-criteria-ledger.json",
+    )
+    assert result["allow"] is False
+
+
+def test_gate_allows_new_story_contract_after_first_completes(tmp_path):
+    """Regression: completing one story must not lock out authoring the next."""
+    project = _init_project(tmp_path)
+    _ship_story(project)
+    new_contract = ".sweetclaude/contracts/success-criteria-contract.yaml"
+    (project / new_contract).parent.mkdir(parents=True, exist_ok=True)
+    (project / new_contract).write_text("story_id: STORY-002\n", encoding="utf-8")
+    result = gate_tool_use(project_dir=project, tool="Write", file_path=new_contract)
+    assert result["allow"] is True, f"New story contract should be writable: {result['reason']}"
+    result = gate_tool_use(project_dir=project, tool="Edit", file_path=new_contract)
+    assert result["allow"] is True, f"New story contract should be editable: {result['reason']}"
+
+
+def test_gate_allows_new_story_reports_after_first_completes(tmp_path):
+    """New story reports dir must be writable even with completed stories."""
+    project = _init_project(tmp_path)
+    _ship_story(project)
+    new_report = ".sweetclaude/reports/large-story/STORY-002/design/notes.md"
+    result = gate_tool_use(project_dir=project, tool="Write", file_path=new_report)
+    assert result["allow"] is True, f"New story report should be writable: {result['reason']}"
+
+
+def test_gate_allows_new_workflow_yaml_after_first_completes(tmp_path):
+    """New workflow state file must be writable after completion."""
+    project = _init_project(tmp_path)
+    _ship_story(project)
+    new_workflow = ".sweetclaude/state/workflows/STORY-002.yaml"
+    result = gate_tool_use(project_dir=project, tool="Write", file_path=new_workflow)
+    assert result["allow"] is True, f"New workflow YAML should be writable: {result['reason']}"
+
+
+def test_gate_allows_readonly_bash_after_terminal_closeout(tmp_path):
+    """Read-only commands mentioning protected paths must not be denied."""
+    project = _init_project(tmp_path)
+    _ship_story(project)
+    for cmd in (
+        "ls .sweetclaude/reports/large-story/STORY-001/",
+        "cat .sweetclaude/state/workflows/STORY-001.yaml",
+        "grep -r contract .sweetclaude/contracts/",
+    ):
+        result = gate_tool_use(project_dir=project, tool="Bash", command=cmd)
+        assert result["allow"] is True, f"Read-only Bash should be allowed: {cmd}"
+
+
+def test_gate_denies_bash_write_to_completed_story_files(tmp_path):
+    """Write commands targeting completed-story files must be denied."""
     project = _init_project(tmp_path)
     _ship_story(project)
     result = gate_tool_use(
