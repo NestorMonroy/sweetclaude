@@ -108,6 +108,33 @@ def _ship_story(project, story_id="STORY-001"):
     assert enter_ship_phase(project_dir=project, workflow_id=story_id)["ok"]
 
 
+# --- Active workflow: read-only Bash allowed ----------------------------------
+
+
+def test_gate_allows_readonly_bash_during_active_workflow(tmp_path):
+    """Read-only commands referencing protected paths must not be denied."""
+    project = _init_project(tmp_path)
+    for cmd in (
+        "cat .sweetclaude/state/phase.yaml",
+        "ls .sweetclaude/state/workflows/",
+        "grep status .sweetclaude/state/workflows/STORY-001.yaml",
+        "python3 scripts/small_story_controller.py render-status",
+    ):
+        result = gate_tool_use(project_dir=project, tool="Bash", command=cmd)
+        assert result["allow"] is True, f"Read-only Bash denied during active workflow: {cmd}"
+
+
+def test_gate_denies_write_bash_to_protected_during_active_workflow(tmp_path):
+    """Write commands targeting protected paths must be denied."""
+    project = _init_project(tmp_path)
+    result = gate_tool_use(
+        project_dir=project,
+        tool="Bash",
+        command="sed -i '' 's/phase: DEFINE/phase: SHIP/' .sweetclaude/state/phase.yaml",
+    )
+    assert result["allow"] is False
+
+
 # --- Terminal gate: completed-story files are protected -----------------------
 
 
