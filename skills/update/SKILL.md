@@ -246,9 +246,9 @@ Run cleanup. Stop.
 
 > "Found {orphan_count} orphaned work item file(s). How would you like to handle them?"
 
+- **Acknowledge all — stop flagging these files**
 - **Re-onboard all as new ISSUE items**
 - **Review by group**
-- **Review one by one**
 - **Archive all**
 
 For each action, call the appropriate `migrate-v3-to-v4.py` subcommand using the

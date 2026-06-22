@@ -526,17 +526,20 @@ def scan_orphans(project_dir: pathlib.Path) -> dict:
 
     findings: list[dict] = []
     seen: set[str] = set()
+    acknowledged = _load_orphan_registry(project_dir)
 
     def _add(path: pathlib.Path, category: str, detail: str) -> None:
         key = str(path.resolve())
         if key in seen or str(path) in expected_files:
             return
-        seen.add(key)
-        fm = _sniff_frontmatter(path)
         try:
             rel = str(path.relative_to(project_dir))
         except ValueError:
             rel = str(path)
+        if rel in acknowledged:
+            return
+        seen.add(key)
+        fm = _sniff_frontmatter(path)
         findings.append({
             "file": rel,
             "category": category,
@@ -587,7 +590,6 @@ def scan_orphans(project_dir: pathlib.Path) -> dict:
     #    that weren't matched by steps 1-3 and have a work-item-shaped ID
     #    (prefixed with letters + hyphen + digits). Product docs, specs,
     #    briefs, and scratch files are not work items.
-    acknowledged = _load_orphan_registry(project_dir)
     backlog_roots = []
     for root in search_roots:
         bl = root / "backlog"
@@ -597,9 +599,6 @@ def scan_orphans(project_dir: pathlib.Path) -> dict:
         for p in bl_root.rglob("*.md"):
             key = str(p.resolve())
             if key in seen or str(p) in expected_files:
-                continue
-            rel = str(p.relative_to(project_dir))
-            if rel in acknowledged:
                 continue
             fm = _sniff_frontmatter(p)
             if fm is not None:

@@ -974,7 +974,7 @@ def check_migration_currency(state: ProjectState) -> list[Finding]:
             )
             if r.returncode == 0:
                 orphan_data = json.loads(r.stdout)
-                orphans = orphan_data.get("orphans", [])
+                orphans = orphan_data.get("findings", [])
                 if orphans:
                     findings.append(Finding(
                         id="migration-currency:orphans:scan",
