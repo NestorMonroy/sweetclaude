@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SweetClaude Skill Tracker Hook
-# PostToolUse — records skill invocations to session-guardian.json and metrics/events.log
+# PostToolUse — records skill invocations to session-guardian.json and via record-event.sh
 
 TOOL="$CLAUDE_TOOL_NAME"
 
@@ -19,9 +19,6 @@ fi
 STATE_DIR="$PROJECT_DIR/.sweetclaude/state"
 GUARDIAN_FLAG="$STATE_DIR/guardian-enabled"
 SESSION_FILE="$STATE_DIR/session-guardian.json"
-METRICS_CONFIG="$PROJECT_DIR/.sweetclaude/metrics/config.yaml"
-EVENTS_LOG="$PROJECT_DIR/.sweetclaude/metrics/events.log"
-
 # Parse skill name from stdin JSON (field is tool_input.skill)
 INPUT=$(cat)
 SKILL_NAME=$(echo "$INPUT" | jq -r '.tool_input.skill' 2>/dev/null)
@@ -41,8 +38,8 @@ if [ -f "$GUARDIAN_FLAG" ] && [ -f "$SESSION_FILE" ]; then
 fi
 
 # ── Metrics recording ─────────────────────────────────────────────────────────
-if [ -f "$METRICS_CONFIG" ] && grep -q "enabled: true" "$METRICS_CONFIG" 2>/dev/null; then
-  TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+RECORD_SCRIPT="$(dirname "$(dirname "$0")")/scripts/record-event.sh"
+if [ -x "$RECORD_SCRIPT" ]; then
   PHASE=$(python3 -c "
 import yaml
 try:
@@ -51,8 +48,7 @@ try:
 except Exception:
     print('none')
 " 2>/dev/null || echo "none")
-  printf -- '---\ntimestamp: %s\nevent: skill_invoked\nskill: %s\nphase: %s\n' \
-    "$TIMESTAMP" "$SKILL_NAME" "$PHASE" >> "$EVENTS_LOG"
+  bash "$RECORD_SCRIPT" skill_invoked "skill=$SKILL_NAME" "phase=$PHASE"
 fi
 
 exit 0
