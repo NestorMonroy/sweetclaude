@@ -4,6 +4,29 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.3.3-beta] — 2026-06-22 (4.x beta channel)
+
+### Fixed — orphan scanner, workflow cleanup, and gate bypass
+
+Orphan scanner now respects the acknowledgment registry for all file
+categories. Previously, legacy-prefix files (US-*, EPIC-*, BL-*) bypassed
+the registry entirely and were re-flagged on every update with no way to
+silence them. The update skill now offers "Acknowledge all" as the first
+menu option. Doctor's orphan scan was also reading the wrong key from the
+scanner output and never finding results.
+
+Story workflow cleanup on SHIP now removes stop-ack pause markers and
+archives the workflow file on all code paths, including the "already
+complete" early-return. Previously, completed workflows left stale files
+that blocked new work.
+
+The bash gate now blocks controller mutation commands (record-evidence)
+regardless of whether the command contains shell write tokens. Previously,
+invoking controller commands via python3 was classified as read-only and
+allowed through the gate unchecked.
+
+---
+
 ## [4.3.2-beta] — 2026-06-22 (4.x beta channel)
 
 ### Changed — dashboard readability improvements
