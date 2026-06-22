@@ -4,6 +4,21 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.21-beta] — 2026-06-21 (4.x beta channel)
+
+### Fixed — large-story gate blocks read-only Bash commands
+
+The active-workflow Bash gate used a substring match against protected paths,
+denying any command that mentioned `.sweetclaude/contracts` or
+`.sweetclaude/reports` — including `ls`, `cat`, `find`, and other read-only
+operations. The terminal-history gate already had the correct pattern (checking
+for write tokens before denying), but the active-workflow gate never got the
+same treatment. Read-only commands now pass through; only commands with write
+tokens (`rm`, `mv`, `cp`, `sed -i`, redirects, etc.) are checked against
+protected paths.
+
+---
+
 ## [4.2.20-beta] — 2026-06-21 (4.x beta channel)
 
 ### HOTFIX — all skills bricked by missing record-event.sh
