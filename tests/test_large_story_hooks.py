@@ -352,7 +352,7 @@ def test_stop_hook_blocks_nonterminal_workflow(tmp_path):
     data = json.loads(result.stdout)
     assert data["decision"] == "block"
     assert "STORY-001" in data["reason"]
-    assert "complete" in data["reason"].lower()
+    assert "checkpoint" in data["reason"].lower()
 
 
 def test_stop_hook_respects_stop_hook_active(tmp_path):

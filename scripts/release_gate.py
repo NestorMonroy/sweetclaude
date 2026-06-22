@@ -1040,6 +1040,107 @@ def generate_release_evidence(
     }
 
 
+def _previous_tag(project_dir: Path, tag: str, channel: str) -> str | None:
+    version = _version_from_tag(tag)
+    is_beta = channel == "beta"
+    result = _git(project_dir, "tag", "--list", "--sort=-version:refname", check=False)
+    if result.returncode != 0:
+        return None
+    for candidate in result.stdout.splitlines():
+        candidate = candidate.strip()
+        if not candidate or candidate == tag:
+            continue
+        try:
+            cv = _version_from_tag(candidate)
+        except ValueError:
+            continue
+        if is_beta and _has_prerelease(cv) and _major(cv) == _major(version):
+            return candidate
+        if not is_beta and not _has_prerelease(cv) and _major(cv) == _major(version):
+            return candidate
+    return None
+
+
+_ISSUE_PATTERN = re.compile(r"ISSUE-\d+")
+
+
+def _extract_issue_ids_from_commits(
+    project_dir: Path, from_ref: str, to_ref: str
+) -> set[str]:
+    result = _git(
+        project_dir, "log", "--format=%s%n%b", f"{from_ref}..{to_ref}", check=False
+    )
+    if result.returncode != 0:
+        return set()
+    return set(_ISSUE_PATTERN.findall(result.stdout))
+
+
+def _resolve_product_base(project_dir: Path) -> Path:
+    ap_path = project_dir / ".sweetclaude" / "artifact-privacy.yaml"
+    try:
+        import yaml
+        with open(ap_path, encoding="utf-8") as f:
+            ap = yaml.safe_load(f) or {}
+        base = (ap.get("categories") or {}).get("product", {}).get("base_path", "")
+        if base:
+            base = base.rstrip("/")
+            if Path(base).is_absolute():
+                return Path(base)
+            return project_dir / base
+    except Exception:
+        pass
+    return project_dir / ".sweetclaude" / "product"
+
+
+def _issue_is_terminal(project_dir: Path, issue_id: str) -> bool:
+    product_base = _resolve_product_base(project_dir)
+    backlog_dir = product_base / "backlog"
+    for subdir in ("done", "archived", ""):
+        search_dir = backlog_dir / subdir if subdir else backlog_dir
+        if not search_dir.is_dir():
+            continue
+        for candidate in search_dir.iterdir():
+            if not candidate.name.startswith(issue_id):
+                continue
+            if not candidate.name.endswith(".md"):
+                continue
+            if subdir in ("done", "archived"):
+                return True
+            try:
+                import yaml
+                text = candidate.read_text(encoding="utf-8")
+                if text.startswith("---"):
+                    end = text.index("---", 3)
+                    fm = yaml.safe_load(text[3:end]) or {}
+                    status = fm.get("status", "")
+                    if status in ("done", "declined", "abandoned", "superseded"):
+                        return True
+            except Exception:
+                pass
+            return False
+    return False
+
+
+def _validate_issue_closeout(project_dir: Path, tag: str, channel: str) -> dict:
+    prev_tag = _previous_tag(project_dir, tag, channel)
+    if prev_tag is None:
+        return {"checked": True, "skipped": True, "reason": "no-previous-tag"}
+    issue_ids = _extract_issue_ids_from_commits(project_dir, prev_tag, tag)
+    if not issue_ids:
+        return {"checked": True, "issues": [], "unclosed": []}
+    unclosed = sorted(
+        issue_id for issue_id in issue_ids
+        if not _issue_is_terminal(project_dir, issue_id)
+    )
+    if unclosed:
+        raise ValueError(
+            "Release blocked: merged issues not closed out: "
+            + ", ".join(unclosed)
+            + ". Run closeout for each before releasing."
+        )
+    return {"checked": True, "issues": sorted(issue_ids), "unclosed": []}
+
+
 def check_release_readiness(
     project_dir: Path,
     *,
@@ -1079,6 +1180,7 @@ def check_release_readiness(
         control_lint_receipt_path=control_lint_receipt_path,
         expected_commit=actual_commit,
     )
+    issue_closeout = _validate_issue_closeout(project_dir, tag, channel)
     return {
         "ok": True,
         "tag": tag,
@@ -1088,6 +1190,7 @@ def check_release_readiness(
         "git": git_state,
         "control_lint": control_lint,
         "control_lint_receipt": control_lint.get("receipt"),
+        "issue_closeout": issue_closeout,
         "receipt": str(Path(receipt_path)),
         "checks": sorted(str(c.get("name", "")) for c in receipt.get("checks", [])),
     }

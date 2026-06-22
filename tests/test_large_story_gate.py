@@ -444,6 +444,7 @@ def test_gate_fails_closed_with_multiple_active_workflows(tmp_path):
             {
                 "workflow_id": "STORY-999",
                 "phase": "DEFINE",
+                "state_owner": "large_story_controller",
                 "requires_success_criteria_contract": True,
             }
         ),
@@ -666,7 +667,7 @@ def test_gate_denies_history_writes_after_terminal_closeout(tmp_path):
     for path in (
         ".sweetclaude/reports/success-criteria-ledger.json",
         ".sweetclaude/reports/large-story/STORY-001/ship/closeout.json",
-        ".sweetclaude/state/workflows/STORY-001.yaml",
+        ".sweetclaude/state/workflows/archived/STORY-001.yaml",
     ):
         result = gate_tool_use(project_dir=project, tool="Write", file_path=path)
         assert result["allow"] is False, path
@@ -868,3 +869,36 @@ def test_gate_allows_control_path(tmp_path):
         project_dir=project, tool="Write", file_path=".sweetclaude/.enforcement-control"
     )
     assert result["allow"] is True
+
+
+# --- Regression: cross-controller contamination (ISSUE-211) -------------------
+
+
+def test_gate_ignores_small_story_workflow(tmp_path):
+    """ISSUE-211 regression: a small-story workflow must not block the large-story gate."""
+    from small_story_controller import init_workflow as small_init
+
+    project = tmp_path
+    _create_backlog_file(project, "SMALL-001")
+    _write_contract(project, _contract("SMALL-001"))
+    small_result = small_init(project_dir=project, workflow_id="SMALL-001")
+    assert small_result["ok"], small_result
+
+    result = gate_tool_use(project_dir=project, tool="Write", file_path="app.py")
+    assert result["allow"] is True, (
+        f"Large-story gate should not be blocked by a small-story workflow: {result['reason']}"
+    )
+
+
+# --- Regression: init without backlog story (ISSUE-215) -----------------------
+
+
+def test_init_workflow_fails_without_backlog_file(tmp_path):
+    """ISSUE-215 regression: init must refuse if no backlog file exists."""
+    project = tmp_path
+    _write_contract(project, _contract("PHANTOM-001"))
+    result = init_workflow(project_dir=project, workflow_id="PHANTOM-001")
+    assert result["ok"] is False
+    assert result["code"] == "blocked_init_no_story"
+    wf_path = project / ".sweetclaude" / "state" / "workflows" / "PHANTOM-001.yaml"
+    assert not wf_path.exists(), "No workflow state should be written without a backlog story"
