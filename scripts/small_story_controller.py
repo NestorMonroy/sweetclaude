@@ -779,6 +779,22 @@ def enter_ship_phase(
         return _failure("blocked_assistant_terminal_state_mutation", BLOCKED_TERMINAL_MUTATION_MESSAGE)
 
     project = Path(project_dir).expanduser().resolve(strict=False)
+
+    resolved_workflow_id = workflow_id or _workflow_id_from_state(project)
+    if resolved_workflow_id and _valid_workflow_id(resolved_workflow_id):
+        wf_state = _load_yaml_dict(_workflow_state_path(project, resolved_workflow_id))
+        if wf_state.get("status") == "complete":
+            _clear_phase_yaml_active_item(project, resolved_workflow_id)
+            _clear_sweetclaude_yaml_active(project, resolved_workflow_id)
+            return {
+                "ok": True,
+                "status": "ship",
+                "workflow_id": resolved_workflow_id,
+                "completion_claim_allowed": True,
+                "next_allowed_stage": "complete",
+                "message": "Small-story already complete; cleared stale active work item.",
+            }
+
     completion_gate = _completion_gate_result(project_dir=project, workflow_id=workflow_id)
     if not completion_gate.get("ok"):
         result = {**completion_gate, "next_allowed_stage": "blocked"}
@@ -1068,6 +1084,15 @@ def gate_tool_use(
             or PROTECTED_REPORTS_REL in rel.parents
             or rel == PROTECTED_REPORTS_REL
         ):
+            if rel == PROTECTED_PHASE_REL:
+                return _decision(
+                    False,
+                    f"{BLOCKED_GATE_MESSAGE} {rel} is controller-owned state. "
+                    "To complete the workflow and clear the active work item, "
+                    "run `python3 scripts/small_story_controller.py ship "
+                    f"--workflow-id {workflow_id}` via Bash instead of editing "
+                    "phase.yaml directly.",
+                )
             return _decision(
                 False,
                 f"{BLOCKED_GATE_MESSAGE} {rel} is controller-owned state or evidence.",
@@ -1087,6 +1112,14 @@ def gate_tool_use(
         lowered = command.lower()
         for token in PROTECTED_BASH_TOKENS:
             if token in lowered:
+                if "phase.yaml" in token:
+                    return _decision(
+                        False,
+                        f"{BLOCKED_GATE_MESSAGE} Command references controller-owned "
+                        "phase.yaml. To complete the workflow and clear the active "
+                        "work item, run `python3 scripts/small_story_controller.py "
+                        f"ship --workflow-id {workflow_id}` instead.",
+                    )
                 return _decision(
                     False,
                     f"{BLOCKED_GATE_MESSAGE} Command references controller-owned path or command {token}.",
@@ -1563,6 +1596,8 @@ def _set_workflow_phase(project: Path, workflow_id: str, phase: str) -> None:
 
 def _check_state_phase_consistency(project: Path, workflow_id: str) -> dict[str, Any] | None:
     workflow_state = _load_yaml_dict(_workflow_state_path(project, workflow_id))
+    if workflow_state.get("status") == "complete":
+        return None
     workflow_phase = workflow_state.get("phase")
     phase_data = _load_yaml_dict(project / ".sweetclaude" / "state" / "phase.yaml")
     active_item = phase_data.get("active_work_item")
