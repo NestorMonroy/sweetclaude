@@ -16,7 +16,7 @@ preview rendering, failure handling.
 ```bash
 SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/migrate/migrate-v3-to-v4.py
 if [ ! -f "$SCRIPT" ]; then
-  SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -name 'migrate-v3-to-v4.py' 2>/dev/null | head -1)
+  SCRIPT=$(find "$(dirname "${CLAUDE_PLUGIN_ROOT}")" -type f -name 'migrate-v3-to-v4.py' 2>/dev/null | sort -V | tail -1)
 fi
 if [ -z "$SCRIPT" ] || [ ! -f "$SCRIPT" ]; then
   echo "ERROR: migrate-v3-to-v4.py not found. Run /sweetclaude:update first."

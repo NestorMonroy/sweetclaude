@@ -26,7 +26,7 @@ explicit script subcommands (`diagnose`, `plan`, `execute`, `resume`,
 ```bash
 SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
 if [ ! -f "$SCRIPT" ]; then
-  SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+  SCRIPT=$(find "$(dirname "${CLAUDE_PLUGIN_ROOT}")" -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | sort -V | tail -1)
 fi
 if [ -z "$SCRIPT" ] || [ ! -f "$SCRIPT" ]; then
   echo "ERROR: recover_project.py not found. Run /sweetclaude:update first."

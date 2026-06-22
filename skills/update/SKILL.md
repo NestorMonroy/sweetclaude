@@ -371,6 +371,15 @@ if [ -n "$NEW_VER" ] && [ "$VERSION_DIR" != "{installPath}" ]; then
   mkdir -p "$VERSION_DIR/skills" "$VERSION_DIR/hooks"
   rsync -a --delete $SOURCE_DIR/skills/ "$VERSION_DIR/skills/"
   rsync -a --delete $SOURCE_DIR/hooks/ "$VERSION_DIR/hooks/"
+  if [ -d "$SOURCE_DIR/scripts" ]; then
+    rsync -a --delete $SOURCE_DIR/scripts/ "$VERSION_DIR/scripts/"
+  fi
+  if [ -d "$SOURCE_DIR/rules" ]; then
+    rsync -a --delete $SOURCE_DIR/rules/ "$VERSION_DIR/rules/"
+  fi
+  if [ -d "$SOURCE_DIR/config" ]; then
+    rsync -a --delete $SOURCE_DIR/config/ "$VERSION_DIR/config/"
+  fi
   rsync -a $SOURCE_DIR/.claude-plugin/ "$VERSION_DIR/.claude-plugin/"
   for f in CLAUDE.md package.json LICENSE CHANGELOG.md; do
     [ -f "$SOURCE_DIR/$f" ] && cp "$SOURCE_DIR/$f" "$VERSION_DIR/"
@@ -540,7 +549,7 @@ Scan for work item files that may have been lost, abandoned, or orphaned from pr
 ORPHAN_COUNT=0
 MIGRATE_SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/migrate/migrate-v3-to-v4.py
 if [ ! -f "$MIGRATE_SCRIPT" ]; then
-  MIGRATE_SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -name 'migrate-v3-to-v4.py' 2>/dev/null | head -1)
+  MIGRATE_SCRIPT=$(find "$(dirname "${CLAUDE_PLUGIN_ROOT}")" -type f -name 'migrate-v3-to-v4.py' 2>/dev/null | sort -V | tail -1)
 fi
 if [ -f .sweetclaude/state/sweetclaude.yaml ] && [ -n "$MIGRATE_SCRIPT" ] && [ -f "$MIGRATE_SCRIPT" ]; then
   ORPHAN_OUT=$(python3 "$MIGRATE_SCRIPT" scan-orphans --project-dir . 2>/dev/null)
