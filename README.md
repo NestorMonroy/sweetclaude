@@ -2,7 +2,7 @@
 
 # SweetClaude
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.2.22--beta-blue)](https://github.com/carson-sweet/sweetclaude/releases/tag/v4.2.22-beta) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/4.x-beta/behavioral-contracts.md)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.2.23--beta-blue)](https://github.com/carson-sweet/sweetclaude/releases/tag/v4.2.23-beta) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/4.x-beta/behavioral-contracts.md)
 
 ## TL;DR
 

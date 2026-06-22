@@ -4,6 +4,22 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.23-beta] — 2026-06-22 (4.x beta channel)
+
+### Fixed — update sync missing scripts in version-named cache directory
+
+The update process synced skills and hooks to the version-named plugin cache
+directory but omitted scripts, rules, and config. When Claude Code loaded from
+the version-named directory, script references through CLAUDE_PLUGIN_ROOT
+resolved to missing paths. A fallback search could locate scripts from a
+different plugin channel, running outdated code against current project data.
+
+Scripts, rules, and config are now included in the version-named directory
+sync. The fallback search path in 11 skills now derives from the active
+plugin root instead of a hardcoded directory name.
+
+---
+
 ## [4.2.22-beta] — 2026-06-21 (4.x beta channel)
 
 ### Fixed — small-story gate enforcement not active
