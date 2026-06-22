@@ -4,7 +4,31 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
-## [4.2.19-beta] — 2026-06-21 (4.x beta channel)
+## [4.2.20-beta] — 2026-06-21 (4.x beta channel)
+
+### HOTFIX — all skills bricked by missing record-event.sh
+
+v4.2.19-beta shipped bang preambles in 116 skill files referencing
+`scripts/record-event.sh` without including the script. Every skill
+invocation hard-failed. Release v4.2.19-beta has been pulled.
+
+Removed all skill-level bang preamble event recording. Usage tracking
+events are recorded by hooks and controllers directly.
+
+### Fixed — controller workflow discipline (ISSUE-210, 211, 212, 213, 214, 215)
+
+- Controllers filter workflows by `state_owner`, preventing cross-contamination
+  between large-story and small-story workflows (ISSUE-211, ISSUE-213)
+- Completed workflows archived to `workflows/archived/`, all scan functions
+  check both directories (ISSUE-212)
+- Controller init refuses to start without a backlog story file, offering
+  three actionable paths (ISSUE-215)
+- Release gate blocks when merged issues lack closeout (ISSUE-214)
+- Centralized event recording via `scripts/record-event.sh` (ISSUE-210)
+
+---
+
+## [4.2.19-beta] — 2026-06-21 — PULLED (4.x beta channel)
 
 ### Fixed — legacy path elimination and stop guard UX (ISSUE-207, ISSUE-208)
 
