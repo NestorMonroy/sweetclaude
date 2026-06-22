@@ -228,6 +228,29 @@ else
   exit 0
 fi
 
+# ── Step 12b: Record session_start event ─────────────────────────────────────
+
+RECORD_SCRIPT="$(dirname "$HOOK_DIR")/scripts/record-event.sh"
+if [ -x "$RECORD_SCRIPT" ]; then
+  _SC_PHASE=$(python3 -c "
+import yaml
+try:
+    d = yaml.safe_load(open('$PROJECT_DIR/.sweetclaude/state/sweetclaude.yaml')) or {}
+    print(d.get('work', {}).get('active', {}).get('phase') or 'none')
+except Exception:
+    print('none')
+" 2>/dev/null || echo "none")
+  _SC_DEF=$(python3 -c "
+import yaml
+try:
+    d = yaml.safe_load(open('$PROJECT_DIR/.sweetclaude/state/sweetclaude.yaml')) or {}
+    print(d.get('deference') or 'not_set')
+except Exception:
+    print('not_set')
+" 2>/dev/null || echo "not_set")
+  bash "$RECORD_SCRIPT" session_start "phase=$_SC_PHASE" "deference=$_SC_DEF"
+fi
+
 # ── Step 13: Determine state file ────────────────────────────────────────────
 
 if [ "$EXPECTED_SC_VERSION" = "v2" ]; then
