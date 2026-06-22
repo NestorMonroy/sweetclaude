@@ -4,6 +4,26 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.3.0-beta] — 2026-06-22 (4.x beta channel)
+
+### Added — update orchestrator script (phase 1 of 2)
+
+New Python script (`scripts/update.py`) that consolidates update logic into
+eight discrete subcommands, each accepting explicit arguments and returning
+JSON. This replaces the model-threaded shell variable approach that caused
+reversed plugin keys, incorrect script paths, and false orphan reports.
+
+This release ships the script only. The existing update skill continues to
+drive updates unchanged. The next release will ship the thin skill wrapper
+that calls this script, completing the transition. The two-phase approach
+ensures every user has the script in place before any skill depends on it.
+
+Subcommands: preflight, check, safety-check, major-gate, sync, metadata,
+project-check, cleanup. Security hardening includes symlink-aware path
+validation in cleanup and FileNotFoundError handling for missing binaries.
+
+---
+
 ## [4.2.23-beta] — 2026-06-22 (4.x beta channel)
 
 ### Fixed — update sync missing scripts in version-named cache directory
