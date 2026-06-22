@@ -4,6 +4,24 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.3.1-beta] — 2026-06-22 (4.x beta channel)
+
+### Changed — update skill now uses orchestrator script (phase 2 of 2)
+
+The update skill is now a thin wrapper that calls `scripts/update.py`
+subcommands in sequence instead of embedding 800+ lines of bash logic.
+Each subcommand takes explicit arguments and returns JSON, eliminating
+model-threaded shell variables that caused reversed plugin keys, incorrect
+script paths, and false orphan reports.
+
+Includes a recovery fallback: if the script is missing after a partial
+update, the skill directs the user to reinstall via `/plugin update`. Also
+documents the argument compatibility contract — the subcommand interface
+must remain backward-compatible across releases since the skill file from
+one version may call the script from a newer version after mid-update sync.
+
+---
+
 ## [4.3.0-beta] — 2026-06-22 (4.x beta channel)
 
 ### Added — update orchestrator script (phase 1 of 2)
