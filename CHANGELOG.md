@@ -4,6 +4,22 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.2.22-beta] — 2026-06-21 (4.x beta channel)
+
+### Fixed — small-story gate enforcement not active
+
+The small-story gate, evidence, and stop-guard hook scripts existed but were
+not registered in `hooks.json`. Small-story workflows had no gate enforcement
+— the controller's protected-state checks, phase consistency validation, and
+Bash write-token filtering never fired. All three hooks are now registered.
+
+Also added the read-only Bash early-return to the small-story controller's
+gate (matching the large-story controller fix from 4.2.21), and improved gate
+deny messages in both controllers to redirect to the correct `ship` command
+instead of leaving the assistant without a recovery path.
+
+---
+
 ## [4.2.21-beta] — 2026-06-21 (4.x beta channel)
 
 ### Fixed — large-story gate blocks read-only Bash commands
