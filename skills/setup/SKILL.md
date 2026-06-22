@@ -5,7 +5,6 @@ description: "Consolidated onboarding skill."
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:setup"`
 
 # SweetClaude Setup
 

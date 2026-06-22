@@ -5,7 +5,6 @@ description: "Survey the solution field — what exists commercially and open so
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:product-research"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # Product Research

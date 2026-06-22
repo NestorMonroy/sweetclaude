@@ -5,7 +5,6 @@ description: "Bidirectional status sync between local issue files and GitHub Iss
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-gh-sync-issues"`
 
 ## MIGRATION GUARD
 

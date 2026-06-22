@@ -5,7 +5,6 @@ description: "Consistency scan and version check."
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:_health"`
 
 # Health Check
 

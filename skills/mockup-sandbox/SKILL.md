@@ -5,7 +5,6 @@ description: "Create and iterate on interactive UI mockups in an isolated Vite +
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:mockup-sandbox"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude Mockup Sandbox

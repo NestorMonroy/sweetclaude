@@ -5,7 +5,6 @@ description: "View and manage the unscheduled issue backlog."
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-backlog"`
 
 ## MIGRATION GUARD
 

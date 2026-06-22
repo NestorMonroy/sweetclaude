@@ -5,7 +5,6 @@ description: "WCAG 2.1 Level AA audit."
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:testing-accessibility"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash

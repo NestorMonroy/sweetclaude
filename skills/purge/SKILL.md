@@ -5,7 +5,6 @@ description: "Delete all SweetClaude artifacts from the current project."
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:purge"`
 
 # Purge SweetClaude
 

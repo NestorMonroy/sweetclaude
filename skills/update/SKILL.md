@@ -5,7 +5,6 @@ description: "Update SweetClaude to the latest version from GitHub (or a local r
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:update"`
 
 # Update SweetClaude
 

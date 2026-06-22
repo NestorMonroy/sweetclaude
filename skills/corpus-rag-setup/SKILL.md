@@ -5,7 +5,6 @@ description: "Configure and run local semantic search on project documents using
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:corpus-rag-setup"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>

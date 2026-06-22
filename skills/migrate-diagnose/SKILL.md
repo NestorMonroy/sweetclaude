@@ -4,7 +4,6 @@ description: "Redirects to sweetclaude:doctor. File diagnostics are now part of 
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:migrate-diagnose"`
 
 # Migrate Diagnose
 

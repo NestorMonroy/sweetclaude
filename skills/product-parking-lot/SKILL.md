@@ -6,7 +6,6 @@ category: product
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:product-parking-lot"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>

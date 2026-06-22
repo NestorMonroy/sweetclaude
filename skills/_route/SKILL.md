@@ -5,7 +5,6 @@ description: "Natural language classifier — maps user text to the right intern
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:_route"`
 
 # Route
 

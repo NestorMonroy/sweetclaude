@@ -5,7 +5,6 @@ description: "Show the full project at a glance — roadmap pipeline with milest
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:big-picture"`
 
 # Big Picture
 

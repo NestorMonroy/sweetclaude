@@ -5,7 +5,6 @@ description: "Run verification before claiming work is complete."
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:code-verify"`
 
 # Code Verify
 

@@ -5,7 +5,6 @@ description: "Diagnostic scan, repair, and rollback. Checks 8 categories (state 
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:doctor"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>

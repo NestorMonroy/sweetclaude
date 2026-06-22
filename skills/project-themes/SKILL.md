@@ -5,7 +5,6 @@ description: "Manage themes — optional domain-grouping labels on stories."
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-themes"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash

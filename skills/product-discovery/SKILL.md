@@ -5,7 +5,6 @@ description: "Establish what is being built, for whom, and why — at the depth 
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:product-discovery"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # Product Discovery

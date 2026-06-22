@@ -5,7 +5,6 @@ description: "Migration orchestrator. Wraps the runner with snapshot, recovery m
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:_migrate"`
 
 # SweetClaude Migration
 

@@ -5,7 +5,6 @@ version: 1.0.0
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-assess-shape"`
 
 # project-assess-shape
 

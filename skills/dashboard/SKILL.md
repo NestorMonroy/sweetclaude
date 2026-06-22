@@ -5,7 +5,6 @@ description: "Launch a local web dashboard showing roadmap, releases, epics, bac
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:dashboard"`
 
 # Dashboard
 

@@ -5,7 +5,6 @@ description: "Import open GitHub Issues into the local issue store as v4 story f
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-gh-import-issues"`
 
 ## MIGRATION GUARD
 

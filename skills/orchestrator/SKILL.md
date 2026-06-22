@@ -5,7 +5,6 @@ description: "Orchestrator main loop — executes tracked workflow steps via sub
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:orchestrator"`
 
 <preflight-state>
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh sweetclaude`

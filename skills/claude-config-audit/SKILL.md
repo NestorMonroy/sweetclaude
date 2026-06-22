@@ -5,7 +5,6 @@ description: "Redirects to sweetclaude:doctor. Config compatibility checks are n
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:claude-config-audit"`
 
 # Claude Config Audit
 

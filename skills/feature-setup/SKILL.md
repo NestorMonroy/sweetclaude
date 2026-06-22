@@ -5,7 +5,6 @@ description: "Deploy local repo to installed locations and rebuild the project c
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:feature-setup"`
 
 # Feature Setup
 

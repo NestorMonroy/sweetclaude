@@ -5,7 +5,6 @@ description: "RICE scoring and stack-rank analysis for roadmap items."
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:product-roadmap-analysis"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash

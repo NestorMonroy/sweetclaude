@@ -5,7 +5,6 @@ description: "SweetClaude master skill — phase router, interaction model, and 
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:master"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude — Master Skill
@@ -66,7 +65,6 @@ Runs after pre-flight passes.
    - "Autonomous" — stop only at phase gates
 
    After the user selects a deference level, record the selection:
-   `bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh deference_set "level={collaborative|guided|autonomous}"`
 
 4. **Re-orient if resuming.**
    - **If `active_work_item` fields are set:** Summarize where things stand:

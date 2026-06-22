@@ -5,7 +5,6 @@ description: "Define load scenarios, establish performance baselines, set thresh
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:testing-performance"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash

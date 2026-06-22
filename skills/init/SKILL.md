@@ -5,7 +5,6 @@ description: "Bootstrap the SweetClaude infrastructure for any project — new o
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:init"`
 
 # SweetClaude Init
 

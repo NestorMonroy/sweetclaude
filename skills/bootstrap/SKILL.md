@@ -4,7 +4,6 @@ user-invocable: false
 description: "Session startup skill — pre-flight checks, drift/update offers, and initial routing."
 ---
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:bootstrap"`
 
 # SweetClaude
 

@@ -5,7 +5,6 @@ description: "Guided milestone planning workshop."
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:product-milestone-planning"`
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude Milestone Planning

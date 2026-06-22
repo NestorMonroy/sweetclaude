@@ -5,7 +5,6 @@ description: "Manage project issues — list, view, create, update, and close."
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-issues"`
 
 ## MIGRATION GUARD
 

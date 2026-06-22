@@ -4,7 +4,6 @@ description: Migrate v3 BL-NNN items to ISSUE-NNN format in .sweetclaude/product
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:migrate"`
 
 This skill is a thin orchestrator. The deterministic migration operations
 (validation, plan, execute, verify, finalize) are implemented in

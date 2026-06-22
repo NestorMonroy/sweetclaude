@@ -5,7 +5,6 @@ description: "Recover or unblock SweetClaude projects left in bad update, migrat
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:recover"`
 
 # SweetClaude Recover
 

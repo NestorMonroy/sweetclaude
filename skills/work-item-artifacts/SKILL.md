@@ -5,7 +5,6 @@ description: "Co-locate all artifacts per story, epic, and milestone into .sweet
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:work-item-artifacts"`
 
 # Work-Item Artifact Directories
 

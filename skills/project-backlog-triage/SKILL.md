@@ -5,7 +5,6 @@ description: "Structured backlog grooming session."
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-backlog-triage"`
 
 ## MIGRATION GUARD
 

@@ -5,7 +5,6 @@ description: "Redirects to sweetclaude:doctor. This skill has been absorbed into
 ---
 
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:fix-sweetclaude"`
 
 # Fix SweetClaude
 

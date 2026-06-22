@@ -4,7 +4,6 @@ user-invocable: true
 description: "DEPRECATED — use /sweetclaude:epics instead. Redirects automatically."
 ---
 
-!`bash ${CLAUDE_SKILL_DIR}/../../scripts/record-event.sh skill_invoked "skill=sweetclaude:project-epics"`
 
 # Project Epics (Deprecated)
 
