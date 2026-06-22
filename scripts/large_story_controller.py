@@ -106,11 +106,13 @@ CANONICAL_LEDGER_REL = Path(DEFAULT_LEDGER_PATH)
 PROTECTED_WORKFLOWS_REL = Path(".sweetclaude") / "state" / "workflows"
 PROTECTED_PHASE_REL = Path(".sweetclaude") / "state" / "phase.yaml"
 PROTECTED_REPORTS_REL = Path(".sweetclaude") / "reports"
-PROTECTED_BASH_TOKENS = (
+PROTECTED_BASH_WRITE_TOKENS = (
     ".sweetclaude/state/workflows",
     ".sweetclaude/state/phase.yaml",
     ".sweetclaude/reports",
     ".sweetclaude/contracts",
+)
+PROTECTED_BASH_COMMAND_TOKENS = (
     "record-evidence",
 )
 PROTECTED_CONTRACTS_REL = Path(".sweetclaude") / "contracts"
@@ -1112,10 +1114,16 @@ def gate_tool_use(
         )
 
     if tool == "Bash" and command:
+        lowered = command.lower()
+        for token in PROTECTED_BASH_COMMAND_TOKENS:
+            if token in lowered:
+                return _decision(
+                    False,
+                    f"{BLOCKED_GATE_MESSAGE} Command references controller-owned command {token}.",
+                )
         if not _BASH_WRITE_TOKENS.search(command):
             return _decision(True, "Read-only command; protected paths are readable.")
-        lowered = command.lower()
-        for token in PROTECTED_BASH_TOKENS:
+        for token in PROTECTED_BASH_WRITE_TOKENS:
             if token in lowered:
                 if "phase.yaml" in token:
                     return _decision(
