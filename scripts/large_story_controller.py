@@ -783,6 +783,10 @@ def enter_ship_phase(
     if resolved_workflow_id and _valid_workflow_id(resolved_workflow_id):
         wf_state = _load_yaml_dict(_workflow_state_path(project, resolved_workflow_id))
         if wf_state.get("status") == "complete":
+            wf_path = _workflow_state_path(project, resolved_workflow_id)
+            if wf_path.exists():
+                _archive_terminal_workflow(wf_path)
+            _cleanup_stop_ack(project, resolved_workflow_id)
             _clear_phase_yaml_active_item(project, resolved_workflow_id)
             _clear_sweetclaude_yaml_active(project, resolved_workflow_id)
             return {
@@ -1798,6 +1802,11 @@ def _archive_terminal_workflow(workflow_path: Path) -> None:
     shutil.move(str(workflow_path), str(archived_dir / workflow_path.name))
 
 
+def _cleanup_stop_ack(project: Path, workflow_id: str) -> None:
+    ack_path = project / ".sweetclaude" / "state" / "workflows" / f".stop-ack-{workflow_id}.json"
+    ack_path.unlink(missing_ok=True)
+
+
 def _write_workflow_terminal_state(project: Path, workflow_id: str, closeout_rel: Path) -> None:
     workflow_path = project / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
     workflow_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1818,6 +1827,7 @@ def _write_workflow_terminal_state(project: Path, workflow_id: str, closeout_rel
     )
     workflow_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     _archive_terminal_workflow(workflow_path)
+    _cleanup_stop_ack(project, workflow_id)
 
 
 def _status_details(
