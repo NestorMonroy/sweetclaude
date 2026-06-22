@@ -1109,6 +1109,8 @@ def gate_tool_use(
         )
 
     if tool == "Bash" and command:
+        if not _BASH_WRITE_TOKENS.search(command):
+            return _decision(True, "Read-only command; protected paths are readable.")
         lowered = command.lower()
         for token in PROTECTED_BASH_TOKENS:
             if token in lowered:

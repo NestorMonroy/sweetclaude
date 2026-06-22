@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# SweetClaude Large-Story Gate Hook (Track C TASK-C2)
+# SweetClaude Small-Story Gate Hook
 # PreToolUse Write|Edit|NotebookEdit|Bash — deterministic deny outside the
 # controller-permitted phase. Policy lives in scripts/small_story_controller.py
 # gate_tool_use; this script is a protocol adapter.
