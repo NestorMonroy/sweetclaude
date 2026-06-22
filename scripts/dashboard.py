@@ -477,6 +477,7 @@ def build_api_data(project_dir):
         },
         'events': query_events(project_dir),
         'generated_at': datetime.utcnow().isoformat() + 'Z',
+        'project_name': os.path.basename(os.path.realpath(project_dir)),
     }
 
 
@@ -485,7 +486,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SweetClaude Dashboard</title>
+<title>SweetClaude Dashboard</title><!-- updated by JS -->
 <style>
 :root {
   --bg: #1a1a2e;
@@ -1438,7 +1439,7 @@ body {
 </head>
 <body>
 <div class="header">
-  <h1><span>SweetClaude</span> Dashboard</h1>
+  <h1 id="header-title"><span>SweetClaude</span> Dashboard</h1>
   <div class="header-meta">
     <span class="branch-badge" id="branch-badge"></span>
     <span id="generated-at"></span>
@@ -1555,6 +1556,11 @@ function render() {
   renderActivity();
   document.getElementById('branch-badge').textContent = DATA.git.status.branch;
   document.getElementById('generated-at').textContent = DATA.generated_at.replace('T',' ').split('.')[0] + ' UTC';
+  if (DATA.project_name) {
+    const pn = DATA.project_name;
+    document.title = 'SweetClaude Dashboard: ' + pn;
+    document.getElementById('header-title').innerHTML = '<span>SweetClaude</span> Dashboard: ' + pn;
+  }
 }
 
 function renderSummary() {
@@ -1616,7 +1622,7 @@ function renderRoadmap() {
     const totalStories = ms.epics.reduce((a, e) => a + e.stories.length, 0);
     const doneStories = ms.epics.reduce((a, e) => a + e.stories.filter(s => TERMINAL.has(s.status)).length, 0);
 
-    html += `<div class="roadmap-section" id="ms-section-${ms.id}">`;
+    html += `<div class="roadmap-section${isDone ? ' collapsed' : ''}" id="ms-section-${ms.id}">`;
     html += `<div class="release-header${ms.epics.length ? '' : ' standalone'}" onclick="toggleMilestone('${ms.id}')">`;
     html += `<div class="release-title">`;
     html += `<span class="ms-chevron">&#9660;</span><span class="release-id">${ms.id}</span> ${esc(ms.title)}`;
@@ -1630,8 +1636,18 @@ function renderRoadmap() {
     html += `</div></div>`;
 
     if (ms.epics.length) {
+      const openEpics = ms.epics.filter(e => !TERMINAL.has(e.status));
+      const doneEpics = ms.epics.filter(e => TERMINAL.has(e.status));
       html += `<div class="epic-tree">`;
-      html += ms.epics.map((ep, i) => renderEpicNode(ep, i, ms.id)).join('');
+      html += openEpics.map((ep, i) => renderEpicNode(ep, i, ms.id)).join('');
+      if (doneEpics.length > 0) {
+        const deid = 'done-epics-' + ms.id;
+        html += `<div class="hidden-section" id="${deid}">`;
+        html += `<a class="toggle-hidden-link show-link" onclick="event.stopPropagation(); toggleHidden('${deid}')">(+${doneEpics.length} done epic${doneEpics.length > 1 ? 's' : ''}, not shown)</a>`;
+        html += `<div class="hidden-items">${doneEpics.map((ep, i) => renderEpicNode(ep, openEpics.length + i, ms.id)).join('')}`;
+        html += `<a class="toggle-hidden-link hide-link" onclick="event.stopPropagation(); toggleHidden('${deid}')">Hide done epics</a></div>`;
+        html += `</div>`;
+      }
       html += `</div>`;
     }
     html += `</div>`;

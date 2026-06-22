@@ -4,6 +4,19 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.3.2-beta] — 2026-06-22 (4.x beta channel)
+
+### Changed — dashboard readability improvements
+
+Done milestones now render collapsed by default, and done epics within
+expanded milestones are grouped behind a toggle link instead of displayed
+inline. This reduces visual noise on projects with significant completed
+work. The dashboard title and browser tab now show the project name
+(e.g., "SweetClaude Dashboard: myproject"), derived from the root
+directory of the project Claude Code is operating from.
+
+---
+
 ## [4.3.1-beta] — 2026-06-22 (4.x beta channel)
 
 ### Changed — update skill now uses orchestrator script (phase 2 of 2)
