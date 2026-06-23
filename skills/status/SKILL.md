@@ -45,35 +45,20 @@ Parse the JSON output.
 - If `status` is `supported-migration-available`: output
   `This project has a typed legacy backlog layout that can be migrated. Run /sweetclaude:migrate to convert to the unified ISSUE-NNN taxonomy.`
   Stop.
-- If `status` is `compatibility-mode`: render the compatibility status below
-  and stop. Do not recommend migration.
+- If `status` is `compatibility-mode`: output
+  `This project is in compatibility mode. Run /sweetclaude:migrate to convert to v4 layout, or /sweetclaude:recover to check graduation eligibility.`
+  Stop.
 - If `status` is `missing-product-base` or `guard-unavailable`: output the
   guard `message` and stop. Do not recommend migration.
 - If `standard_product_dir_exists` is false and `product_base` is not
-  `.sweetclaude/product`, render the compatibility status below and stop.
+  `.sweetclaude/product`: output
+  `This project's product layout is at a non-standard path. Run /sweetclaude:migrate to convert to v4 layout, or /sweetclaude:recover to check graduation eligibility.`
+  Stop.
 - If `status` is `migration-may-be-needed`: output
   `Old-format work items were found. This appears to be a simple migration candidate, but review /sweetclaude:migrate before executing it; for any duplicate IDs, typed backlog folders, pending doctor prompt, or stale migration state, run /sweetclaude:recover instead.`
   Stop.
 - If `status` is `ok`: proceed.
 
-Compatibility status is intentionally limited to session state and git so that
-legacy or external product layouts are not forced through unsafe taxonomy
-migration:
-
-```bash
-git log --oneline -3 2>/dev/null || echo "NO_GIT"
-git status --short 2>/dev/null | wc -l | tr -d ' '
-git branch --show-current 2>/dev/null || echo ""
-tail -10 .sweetclaude/state/checkpoint.md 2>/dev/null || echo "NO_CHECKPOINT"
-```
-
-Output the normal 5-7 line session view from Step 4c using the pre-loaded
-session state and git output, then append:
-
-> Full roadmap/backlog drill-downs require a fully supported v4 product cache.
-> This project's current product layout is being treated as compatibility mode.
-> Do not run `/sweetclaude:migrate` unless `/sweetclaude:recover` or a future
-> layout-specific migration plan explicitly says it is safe.
 
 ## Step 3: Parse argument
 

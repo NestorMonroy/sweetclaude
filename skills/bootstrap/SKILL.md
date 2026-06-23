@@ -280,11 +280,10 @@ taxonomy — it handles typed backlog folders (stories/, bugs/, debt/, chores/)
 and creates a rollback snapshot before writing anything." Stop in hard-stop
 mode; in advisory mode offer migration or continue.
 
-**`compatibility-mode`** — structural blockers (old taxonomy prefixes or
-non-standard layout) that only a layout-specific migration plan can clear.
-Print one line: "This project is in compatibility mode; migration stays
-blocked until a layout-specific plan exists. Everything else works normally."
-Do not present a fix — none exists. In advisory mode continue the session.
+**`compatibility-mode`** — legacy taxonomy layout that can be migrated.
+Print one line: "This project is in compatibility mode. Run
+`/sweetclaude:migrate` to convert to v4 layout, or `/sweetclaude:recover`
+to check graduation eligibility." In advisory mode continue the session.
 
 **`manual-review`** — the guard cannot classify the project safely. Print the
 guard `message`, then: "Run `/sweetclaude:doctor` for a full diagnostic scan —
@@ -302,8 +301,8 @@ this." Stop in hard-stop mode.
 
 **`ok`** — nothing to do; continue to Step 5c.
 
-Recommend `/sweetclaude:migrate` for statuses `migration-may-be-needed` and
-`supported-migration-available`. Do not recommend it for other statuses.
+Recommend `/sweetclaude:migrate` for statuses `migration-may-be-needed`,
+`supported-migration-available`, and `compatibility-mode`.
 
 ## Step 5c: Artifact-format drift check (hard demand)
 

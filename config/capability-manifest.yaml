@@ -142,6 +142,7 @@ capabilities:
       module: migrate.migrate_taxonomy
     supports_project_shapes:
       - typed_legacy_backlog
+      - accepted_legacy_taxonomy
     mutation_class: planned_write
     mutates_project: true
     requires_approval: true
@@ -150,7 +151,7 @@ capabilities:
       command: "python3 scripts/migrate/migrate_taxonomy.py --rollback --project-dir <project>"
       limitations: []
     required_preconditions:
-      - project shape is typed_legacy_backlog
+      - project shape is typed_legacy_backlog or accepted_legacy_taxonomy
       - no real duplicate ids present
     snapshot_scope_hints:
       - docs/product/
@@ -303,9 +304,9 @@ project_shapes:
 
   accepted_legacy_taxonomy:
     guard_status: compatibility-mode
-    migrate_allowed: false
-    message: "This project has an accepted legacy taxonomy layout. Do not run /sweetclaude:migrate unless a future layout-specific migration plan explicitly allows it."
-    doctor_capability: doctor.compatibility_mode
+    migrate_allowed: true
+    message: "This project has a legacy taxonomy layout. Run /sweetclaude:migrate to convert to v4, or /sweetclaude:recover to check graduation eligibility."
+    migration_capability: migrate.typed_legacy_backlog
     graduation_capability: recover.graduate_from_compatibility
 
   graduation_candidate:
