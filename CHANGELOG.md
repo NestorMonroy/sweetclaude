@@ -4,6 +4,21 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.3.5-beta] — 2026-06-23 (4.x beta channel)
+
+### Fixed — compatibility-mode projects can now migrate
+
+Projects classified as `accepted_legacy_taxonomy` were shown a warning to not
+run `/sweetclaude:migrate`, with no alternative path forward. The migration
+code could handle these layouts, but the routing layer refused to offer it.
+
+The migrate skill now dispatches to the taxonomy migrator for typed-legacy and
+accepted-legacy projects. The status and bootstrap skills offer migration
+instead of a dead-end warning. The capability manifest allows migration for
+this project shape.
+
+---
+
 ## [4.3.4-beta] — 2026-06-23 (4.x beta channel)
 
 ### Added — missing incident-response and operations skills
