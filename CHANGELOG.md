@@ -4,6 +4,22 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.3.4-beta] — 2026-06-23 (4.x beta channel)
+
+### Added — missing incident-response and operations skills
+
+Five skills that were referenced by other skills but never implemented:
+`postmortem`, `hotfix`, `rollback-revert`, `security-patch`, and
+`course-correction`. The `something-broke` skill pointed users at
+`/sweetclaude:hotfix` and `/sweetclaude:rollback-revert` during incident
+resolution, and at `/sweetclaude:postmortem` for follow-up — all three now
+exist. The `security-patch` skill adds the mandatory security review hard
+gate defined in phase-gates. The `course-correction` skill handles strategic
+pivots with in-flight work triage. Routing tables updated to reflect the new
+skills.
+
+---
+
 ## [4.3.3-beta] — 2026-06-22 (4.x beta channel)
 
 ### Fixed — orphan scanner, workflow cleanup, and gate bypass
