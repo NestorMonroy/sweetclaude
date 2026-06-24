@@ -4,6 +4,22 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.3.6-beta] — 2026-06-24 (4.x beta channel)
+
+### Added — story init precondition checks
+
+Both small and large story controllers now verify three preconditions before
+allowing a new workflow to start: the repo must be on the main branch, the
+working tree must be clean, and no other workflow (of either controller type)
+may already be active. Non-git directories and repos without commits skip
+these checks gracefully.
+
+Subprocess failures in branch detection fail open (matching the non-git
+passthrough), while `git status` failures fail closed to prevent starting
+on a dirty tree.
+
+---
+
 ## [4.3.5-beta] — 2026-06-23 (4.x beta channel)
 
 ### Fixed — compatibility-mode projects can now migrate
