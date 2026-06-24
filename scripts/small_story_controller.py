@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -934,6 +935,127 @@ def render_small_story_status(
     }
 
 
+def _detect_main_branch(project: Path) -> str:
+    try:
+        r = subprocess.run(
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+            cwd=str(project), capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            ref = r.stdout.strip()
+            return ref.removeprefix("refs/remotes/origin/")
+    except Exception:
+        pass
+    for candidate in ("main", "master"):
+        try:
+            r = subprocess.run(
+                ["git", "rev-parse", "--verify", candidate],
+                cwd=str(project), capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode == 0:
+                return candidate
+        except Exception:
+            pass
+    return "main"
+
+
+def _is_git_repo(project: Path) -> bool:
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(project), capture_output=True, text=True, timeout=5,
+        )
+        return r.returncode == 0 and r.stdout.strip() == "true"
+    except Exception:
+        return False
+
+
+def _has_commits(project: Path) -> bool:
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(project), capture_output=True, text=True, timeout=5,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _check_init_preconditions(project: Path) -> dict[str, Any] | None:
+    if not _is_git_repo(project):
+        return None
+
+    if not _has_commits(project):
+        return None
+
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=str(project), capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode != 0:
+            return None
+        current_branch = r.stdout.strip()
+    except Exception:
+        return None
+
+    main_branch = _detect_main_branch(project)
+    if not current_branch or current_branch != main_branch:
+        display = current_branch if current_branch and current_branch != "HEAD" else "(detached)"
+        return _failure(
+            "blocked_not_on_main",
+            f"Small-story init is blocked: current branch is '{display}', "
+            f"not '{main_branch}'. Switch to {main_branch} before starting a new story: "
+            f"git checkout {main_branch}",
+        )
+
+    try:
+        r = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(project), capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return _failure(
+                "blocked_dirty_tree",
+                "Small-story init is blocked: working tree has uncommitted changes. "
+                "Commit, stash, or discard changes before starting a new story.",
+            )
+        if r.returncode != 0:
+            return _failure(
+                "blocked_dirty_tree",
+                "Small-story init is blocked: git status failed. "
+                "Resolve any git index issues before starting a new story.",
+            )
+    except Exception:
+        return _failure(
+            "blocked_dirty_tree",
+            "Small-story init is blocked: git status failed. "
+            "Resolve any git index issues before starting a new story.",
+        )
+
+    workflows_dir = project / ".sweetclaude" / "state" / "workflows"
+    if workflows_dir.exists():
+        for candidate in sorted(workflows_dir.glob("*.yaml")):
+            state = _load_yaml_dict(candidate)
+            wf_id = state.get("workflow_id") if isinstance(state.get("workflow_id"), str) else candidate.stem
+            if not _valid_workflow_id(wf_id):
+                continue
+            owner = state.get("state_owner", "")
+            if (
+                state
+                and state.get("requires_success_criteria_contract")
+                and state.get("status") != "complete"
+            ):
+                return _failure(
+                    "blocked_inflight_workflow",
+                    f"Small-story init is blocked: active workflow {wf_id} ({owner}) "
+                    "is still in progress. Complete, ship, or close it out before "
+                    "starting another story.",
+                )
+
+    return None
+
+
 def init_workflow(
     *,
     project_dir: str | Path = ".",
@@ -948,6 +1070,9 @@ def init_workflow(
             f"{VALID_ID_RE.pattern} (no path separators or traversal).",
         )
     project = Path(project_dir).expanduser().resolve(strict=False)
+    precondition_failure = _check_init_preconditions(project)
+    if precondition_failure is not None:
+        return precondition_failure
     if find_backlog_file(project, workflow_id, exclude_done=True) is None:
         return _failure(
             "blocked_init_no_story",
