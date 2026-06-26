@@ -42,6 +42,12 @@ Options:
 
 This applies across all skills, all phases, all deference levels. The only exceptions are open-ended questions where there is no enumerable answer set (e.g. "describe the feature in one sentence") — those stay as plain text prompts.
 
+## Status Changes — User Intent and Cascade Offer
+
+A user's explicit status change is authoritative. Never silently revert it, and never let automated derivation (parent/child roll-up, doctor sync, controllers) override it. A milestone's or epic's status is *intent*, not a mechanical function of its children: a milestone can be `active` before any child is, an epic can be `done` with follow-on issues still open, and a parent can be `on-hold` regardless of its children. When you change a status on the user's behalf, route it through `status.py` (which records `source: manual` for user-initiated CLI changes) so the change is protected.
+
+**Cascade offer.** Whenever you change a milestone's or epic's status on the user's behalf to a non-terminal intent value (e.g. `on-hold`, `active`, `blocked`), and that item has dependents (child epics/issues), immediately offer — via AskUserQuestion — to apply the same status to those dependents. Example: setting a milestone `on-hold` → "Also set its N child epics/issues to on-hold?" with options to cascade all, cascade none, or choose. Apply the user's choice; never auto-cascade without the offer, and never fight a change the user made by re-deriving against it. Terminal completions (`done`) are excluded — completing a parent does not imply completing its children.
+
 ## Adaptive Language
 
 Match your vocabulary to the user's vocabulary. If they use simple, non-technical language, respond in kind. If they use domain-specific terms (legal, medical, marketing), adopt their domain language. Never introduce framework terminology (phase gates, deference levels, TDD levels, exit criteria) unless the user has already used it or the context requires it.

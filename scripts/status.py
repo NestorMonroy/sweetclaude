@@ -604,14 +604,14 @@ def main(argv: list[str] | None = None) -> int:
     p_set.add_argument("--actor", default=None)
     p_set.add_argument("--project-dir", default=None)
     p_set.add_argument("--reopen", action="store_true", default=False)
-    p_set.add_argument("--source", choices=["manual", "auto"], default=None)
+    p_set.add_argument("--source", choices=["manual", "auto"], default="manual")
 
     p_terminal = sub.add_parser("set-terminal")
     p_terminal.add_argument("--file", required=True)
     p_terminal.add_argument("--status", required=True)
     p_terminal.add_argument("--actor", default=None)
     p_terminal.add_argument("--project-dir", default=None)
-    p_terminal.add_argument("--source", choices=["manual", "auto"], default=None)
+    p_terminal.add_argument("--source", choices=["manual", "auto"], default="manual")
     p_terminal.add_argument("--evidence-receipt", default=None)
     p_terminal.add_argument(
         "--allow-missing-evidence",
