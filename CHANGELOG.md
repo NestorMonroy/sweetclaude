@@ -4,6 +4,24 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.3.8-beta] — 2026-06-26 (4.x beta channel)
+
+### Fixed — your status changes are no longer silently reverted
+
+When you set a work item's status deliberately, automated derivation could
+quietly change it back — most visibly, a milestone or epic status you set
+being overwritten to match a mechanical roll-up of its children. Status
+changes you make through the skills are now recorded as deliberate (manual)
+intent, so the parent-status sync and the doctor leave them alone; they report
+a divergence for you to decide on rather than reverting it.
+
+The interaction model also now requires that, when a milestone or epic status
+is changed on your behalf to a non-terminal state (e.g. on-hold), you are
+offered the choice to cascade that status to its dependents — rather than
+leaving them to drift or be re-derived against your intent.
+
+---
+
 ## [4.3.7-beta] — 2026-06-26 (4.x beta channel)
 
 ### Fixed — story close-out now records completion reliably
