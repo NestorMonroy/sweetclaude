@@ -4,6 +4,32 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.3.7-beta] — 2026-06-26 (4.x beta channel)
+
+### Fixed — story close-out now records completion reliably
+
+When a story was closed out, the active-work pointers were cleared but the
+"last completed item" records were not advanced: `last_work_item_id` in
+`phase.yaml` and `work.last_item_id` / `work_history` in `sweetclaude.yaml`
+could stay stale, and the backlog item was not always marked done. Advancing
+`last_work_item_id` had been left to a manual instruction in the ship skill,
+which could be skipped.
+
+Both story controllers and the orchestrator now route close-out through a
+single deterministic routine that advances the last-completed records, appends
+a work-history entry, marks the item done, and clears the active pointers — so
+orchestrated and non-orchestrated close-out produce the same state. A guard
+prevents a close-out from disturbing a different in-progress item.
+
+### Added — configurable trunk branch for story init
+
+Story-init preconditions assumed the integration branch was always the
+repository default (`origin/HEAD`). Projects that develop on a different
+branch can now set `project.trunk_branch` in `sweetclaude.yaml`; init validates
+against it. When unset, behavior is unchanged.
+
+---
+
 ## [4.3.6-beta] — 2026-06-24 (4.x beta channel)
 
 ### Added — story init precondition checks
