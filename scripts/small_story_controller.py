@@ -934,7 +934,29 @@ def render_small_story_status(
     }
 
 
+def _configured_trunk_branch(project: Path) -> str | None:
+    sc_yaml = project / ".sweetclaude" / "state" / "sweetclaude.yaml"
+    if not sc_yaml.exists():
+        return None
+    try:
+        data = yaml.safe_load(sc_yaml.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    project_block = data.get("project")
+    if not isinstance(project_block, dict):
+        return None
+    trunk = project_block.get("trunk_branch")
+    if not isinstance(trunk, str) or not trunk.strip():
+        return None
+    return trunk
+
+
 def _detect_main_branch(project: Path) -> str:
+    configured = _configured_trunk_branch(project)
+    if configured is not None:
+        return configured
     try:
         r = subprocess.run(
             ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
