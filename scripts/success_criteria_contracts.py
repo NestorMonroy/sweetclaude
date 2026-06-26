@@ -816,13 +816,31 @@ def record_workflow_closeout(
     """Write the full deterministic close-out state for a completed workflow.
 
     Writes phase.yaml, sweetclaude.yaml, and the item file status. Guard:
-    if active_work_item / work.active points at a DIFFERENT workflow, the
-    active pointer and last_work_item_id are left untouched.
+    if active_work_item / work.active in EITHER state file points at a DIFFERENT
+    workflow, the close-out is blocked — no record is advanced in either file
+    and the item file is left untouched. When not blocked, both files are
+    advanced identically (whether their active pointer was None or matching), so
+    the two files can never disagree about the last completed item.
     """
-    import status as _status_mod
     import datetime as _dt
 
+    # Defensive: this library may be imported by a caller that has not put the
+    # sibling scripts/ dir on sys.path. The status module lives alongside us.
+    _scripts_dir = str(Path(__file__).resolve().parent)
+    if _scripts_dir not in sys.path:
+        sys.path.insert(0, _scripts_dir)
+    import status as _status_mod
+
     project = Path(project)
+
+    # A successful completion is "complete" in workflow vocabulary; map the
+    # done item-status outcome back to it so controller and orchestrator paths
+    # record the same value.
+    result_val = (
+        _legacy_result
+        if _legacy_result is not None
+        else ("complete" if outcome == "done" else outcome)
+    )
 
     # --- Resolve title (fall back to backlog file frontmatter, then workflow_id) ---
     item_file = find_backlog_file(project, workflow_id)
@@ -839,45 +857,52 @@ def record_workflow_closeout(
     if resolved_title is None:
         resolved_title = workflow_id
 
-    # --- phase.yaml ---
+    # --- Load both state files up front so the guard sees the whole picture ---
     phase_path = project / ".sweetclaude" / "state" / "phase.yaml"
+    phase_data: dict[str, Any] = {}
     if phase_path.exists():
         try:
-            phase_data = yaml.safe_load(phase_path.read_text(encoding="utf-8")) or {}
+            loaded = yaml.safe_load(phase_path.read_text(encoding="utf-8")) or {}
         except yaml.YAMLError:
-            phase_data = {}
-        if not isinstance(phase_data, dict):
-            phase_data = {}
-        active_item = phase_data.get("active_work_item")
-        if isinstance(active_item, dict) and active_item.get("id") == workflow_id:
-            phase_data["active_work_item"] = None
-            phase_data["last_work_item_id"] = workflow_id
-            phase_path.write_text(yaml.safe_dump(phase_data, sort_keys=False), encoding="utf-8")
+            loaded = {}
+        if isinstance(loaded, dict):
+            phase_data = loaded
 
-    # --- sweetclaude.yaml ---
     sc_path = project / ".sweetclaude" / "state" / "sweetclaude.yaml"
-    sc_path.parent.mkdir(parents=True, exist_ok=True)
+    sc_data: dict[str, Any] = {}
     if sc_path.exists():
         try:
-            sc_data = yaml.safe_load(sc_path.read_text(encoding="utf-8")) or {}
+            loaded = yaml.safe_load(sc_path.read_text(encoding="utf-8")) or {}
         except yaml.YAMLError:
-            sc_data = {}
-        if not isinstance(sc_data, dict):
-            sc_data = {}
-    else:
-        sc_data = {}
+            loaded = {}
+        if isinstance(loaded, dict):
+            sc_data = loaded
 
     work = sc_data.setdefault("work", {})
     if not isinstance(work, dict):
         work = {}
         sc_data["work"] = work
 
-    sc_active = work.get("active")
-    active_id = sc_active.get("id") if isinstance(sc_active, dict) else None
+    # --- Unified no-clobber guard: blocked if EITHER file's active points
+    #     at a different workflow. Otherwise advance both identically. ---
+    def _points_elsewhere(active: Any) -> bool:
+        return isinstance(active, dict) and active.get("id") not in (None, workflow_id)
 
-    if active_id is None or active_id == workflow_id:
-        work["active"] = None
-        work["last_item_id"] = workflow_id
+    blocked = _points_elsewhere(phase_data.get("active_work_item")) or _points_elsewhere(
+        work.get("active")
+    )
+    if blocked:
+        return
+
+    # --- phase.yaml ---
+    if phase_path.exists():
+        phase_data["active_work_item"] = None
+        phase_data["last_work_item_id"] = workflow_id
+        phase_path.write_text(yaml.safe_dump(phase_data, sort_keys=False), encoding="utf-8")
+
+    # --- sweetclaude.yaml ---
+    work["active"] = None
+    work["last_item_id"] = workflow_id
 
     history = sc_data.setdefault("work_history", [])
     if not isinstance(history, list):
@@ -894,14 +919,28 @@ def record_workflow_closeout(
             "completed": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "outcome": outcome,
             "title": resolved_title,
-            "result": _legacy_result if _legacy_result is not None else outcome,
+            "result": result_val,
         })
 
+    sc_path.parent.mkdir(parents=True, exist_ok=True)
     sc_path.write_text(yaml.safe_dump(sc_data, sort_keys=False), encoding="utf-8")
 
-    # --- item file ---
-    if item_file is None:
+    # --- item file: only mark terminal for an actual completion ---
+    if item_file is None or outcome != "done":
         return
+    current_status = None
+    try:
+        raw = item_file.read_text(encoding="utf-8-sig")
+        parts = raw.split("---", 2)
+        if len(parts) >= 3:
+            current_status = (yaml.safe_load(parts[1]) or {}).get("status")
+    except Exception:
+        current_status = None
+    if current_status in getattr(_status_mod, "TERMINAL_STATUSES", set()):
+        return  # already terminal — nothing to do
+    # The item-file status is a best-effort secondary write: a malformed or
+    # legacy item file must not crash close-out (the state-file writes above
+    # are the primary job). But failures are surfaced, not silently swallowed.
     try:
         _status_mod.set_terminal(
             str(item_file),
@@ -910,8 +949,11 @@ def record_workflow_closeout(
             project_dir=str(project),
             _from_sync=True,
         )
-    except (FileNotFoundError, FileExistsError, ValueError):
-        pass
+    except (FileNotFoundError, FileExistsError, ValueError) as exc:
+        print(
+            f"WARNING: close-out could not set {item_file} to done: {exc}",
+            file=sys.stderr,
+        )
 
 
 def _active_workflow_for_different_story(project: Path, story_id: str) -> bool:

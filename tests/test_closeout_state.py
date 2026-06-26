@@ -71,6 +71,7 @@ if _SCRIPTS_DIR not in sys.path:
 import small_story_controller
 import large_story_controller
 import orchestrator_loop
+from success_criteria_contracts import record_workflow_closeout
 
 
 # ---------------------------------------------------------------------------
@@ -672,6 +673,114 @@ class TestCloseoutGuards:
             f"got {sc_active!r}"
         )
 
+    def test_phase_active_other_sweetclaude_none_no_split_brain(self, tmp_path):
+        """
+        Regression (review #2): when phase.yaml active points at a DIFFERENT
+        workflow Y but sweetclaude.yaml work.active is None, closing X must NOT
+        advance EITHER file to X. The two files must not disagree (split brain):
+        phase stays at Y; sweetclaude must not record X as last/ in history.
+        """
+        workflow_x = "ISSUE-921"
+        workflow_y = "ISSUE-922"
+        _build_ship_ready_project(tmp_path, workflow_x, story_type="small")
+
+        state_dir = tmp_path / ".sweetclaude" / "state"
+        (state_dir / "phase.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "schema_version": 2,
+                    "active_work_item": {
+                        "id": workflow_y,
+                        "phase": "IMPLEMENT",
+                        "entry_category": "small-story",
+                    },
+                    "last_work_item_id": None,
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        (state_dir / "sweetclaude.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "schema_version": 2,
+                    "work": {"active": None, "last_item_id": None},
+                    "work_history": [],
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+
+        record_workflow_closeout(tmp_path, workflow_x)
+
+        phase = _read_phase_yaml(tmp_path)
+        sc = _read_sweetclaude_yaml(tmp_path)
+        work = sc.get("work", {})
+
+        # phase.yaml: Y preserved, X not recorded as last
+        active_item = phase.get("active_work_item")
+        assert isinstance(active_item, dict) and active_item.get("id") == workflow_y, (
+            f"phase.yaml active must still be {workflow_y!r}; got {active_item!r}"
+        )
+        assert phase.get("last_work_item_id") != workflow_x, (
+            f"phase.yaml last_work_item_id must NOT advance to {workflow_x!r} "
+            f"while {workflow_y!r} is active; got {phase.get('last_work_item_id')!r}"
+        )
+        # sweetclaude.yaml: must NOT advance to X either (no split brain)
+        assert work.get("last_item_id") != workflow_x, (
+            f"sweetclaude work.last_item_id must NOT advance to {workflow_x!r} "
+            f"while phase.yaml shows {workflow_y!r} active; "
+            f"got {work.get('last_item_id')!r}"
+        )
+        assert not any(
+            isinstance(h, dict) and h.get("id") == workflow_x
+            for h in sc.get("work_history", [])
+        ), f"work_history must not record {workflow_x!r} when close-out is blocked"
+
+    def test_reentry_with_cleared_active_still_records_last(self, tmp_path):
+        """
+        Regression (review #6): on a re-entry / idempotency close-out where the
+        active pointer is already None in BOTH files (not pointing at any other
+        item), record_workflow_closeout must still advance last_work_item_id /
+        work.last_item_id to X — the record must not be lost.
+        """
+        workflow_x = "ISSUE-923"
+        _build_ship_ready_project(tmp_path, workflow_x, story_type="small")
+
+        state_dir = tmp_path / ".sweetclaude" / "state"
+        (state_dir / "phase.yaml").write_text(
+            yaml.safe_dump(
+                {"schema_version": 2, "active_work_item": None, "last_work_item_id": None},
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        (state_dir / "sweetclaude.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "schema_version": 2,
+                    "work": {"active": None, "last_item_id": None},
+                    "work_history": [],
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+
+        record_workflow_closeout(tmp_path, workflow_x)
+
+        phase = _read_phase_yaml(tmp_path)
+        sc = _read_sweetclaude_yaml(tmp_path)
+        assert phase.get("last_work_item_id") == workflow_x, (
+            f"phase.yaml last_work_item_id must advance to {workflow_x!r} even when "
+            f"active was already None; got {phase.get('last_work_item_id')!r}"
+        )
+        assert sc.get("work", {}).get("last_item_id") == workflow_x, (
+            f"sweetclaude work.last_item_id must advance to {workflow_x!r} even when "
+            f"active was already None; got {sc.get('work', {}).get('last_item_id')!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestPathParity
@@ -806,6 +915,17 @@ class TestPathParity:
             )
             assert required_key in norm_orch, (
                 f"orchestrator work_history entry missing key {required_key!r}"
+            )
+
+        # Regression (review #5): shared keys must carry IDENTICAL values across
+        # paths, not just identical key sets. A successful close-out is the same
+        # event regardless of which path ran it.
+        for shared_key in set(norm_ctrl) & set(norm_orch):
+            if shared_key == "id":
+                continue
+            assert norm_ctrl[shared_key] == norm_orch[shared_key], (
+                f"work_history entry value mismatch for {shared_key!r} between paths: "
+                f"controller={norm_ctrl[shared_key]!r} orchestrator={norm_orch[shared_key]!r}"
             )
 
         # --- item file parity ---
