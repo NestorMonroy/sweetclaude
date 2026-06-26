@@ -21,6 +21,7 @@ from success_criteria_contracts import (
     DEFAULT_CONTRACT_PATH,
     DEFAULT_LEDGER_PATH,
     find_backlog_file,
+    record_workflow_closeout,
     validate_success_criteria_contract,
     validate_success_criteria_workflow,
 )
@@ -790,8 +791,7 @@ def enter_ship_phase(
             if wf_path.exists():
                 _archive_terminal_workflow(wf_path)
             _cleanup_stop_ack(project, resolved_workflow_id)
-            _clear_phase_yaml_active_item(project, resolved_workflow_id)
-            _clear_sweetclaude_yaml_active(project, resolved_workflow_id)
+            record_workflow_closeout(project, resolved_workflow_id)
             return {
                 "ok": True,
                 "status": "ship",
@@ -840,8 +840,7 @@ def enter_ship_phase(
     }
     closeout_path.write_text(json.dumps(closeout, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     _write_workflow_terminal_state(project, resolved_workflow_id, closeout_rel)
-    _clear_phase_yaml_active_item(project, resolved_workflow_id)
-    _clear_sweetclaude_yaml_active(project, resolved_workflow_id)
+    record_workflow_closeout(project, resolved_workflow_id)
     _record_event(project, "phase_gate_check", phase="VERIFY", result="pass", workflow=resolved_workflow_id)
     _record_event(project, "phase_transition", **{"from": "VERIFY", "to": "SHIP"}, workflow=resolved_workflow_id)
     return {
