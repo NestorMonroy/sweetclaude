@@ -805,6 +805,115 @@ def find_backlog_file(
     return None
 
 
+def record_workflow_closeout(
+    project: Path,
+    workflow_id: str,
+    *,
+    title: str | None = None,
+    outcome: str = "done",
+    _legacy_result: str | None = None,
+) -> None:
+    """Write the full deterministic close-out state for a completed workflow.
+
+    Writes phase.yaml, sweetclaude.yaml, and the item file status. Guard:
+    if active_work_item / work.active points at a DIFFERENT workflow, the
+    active pointer and last_work_item_id are left untouched.
+    """
+    import status as _status_mod
+    import datetime as _dt
+
+    project = Path(project)
+
+    # --- Resolve title (fall back to backlog file frontmatter, then workflow_id) ---
+    item_file = find_backlog_file(project, workflow_id)
+    resolved_title = title
+    if resolved_title is None and item_file is not None:
+        try:
+            text = item_file.read_text(encoding="utf-8")
+            parts = text.split("---", 2)
+            if len(parts) >= 3:
+                fm = yaml.safe_load(parts[1]) or {}
+                resolved_title = fm.get("title") or None
+        except Exception:
+            pass
+    if resolved_title is None:
+        resolved_title = workflow_id
+
+    # --- phase.yaml ---
+    phase_path = project / ".sweetclaude" / "state" / "phase.yaml"
+    if phase_path.exists():
+        try:
+            phase_data = yaml.safe_load(phase_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            phase_data = {}
+        if not isinstance(phase_data, dict):
+            phase_data = {}
+        active_item = phase_data.get("active_work_item")
+        if isinstance(active_item, dict) and active_item.get("id") == workflow_id:
+            phase_data["active_work_item"] = None
+            phase_data["last_work_item_id"] = workflow_id
+            phase_path.write_text(yaml.safe_dump(phase_data, sort_keys=False), encoding="utf-8")
+
+    # --- sweetclaude.yaml ---
+    sc_path = project / ".sweetclaude" / "state" / "sweetclaude.yaml"
+    sc_path.parent.mkdir(parents=True, exist_ok=True)
+    if sc_path.exists():
+        try:
+            sc_data = yaml.safe_load(sc_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            sc_data = {}
+        if not isinstance(sc_data, dict):
+            sc_data = {}
+    else:
+        sc_data = {}
+
+    work = sc_data.setdefault("work", {})
+    if not isinstance(work, dict):
+        work = {}
+        sc_data["work"] = work
+
+    sc_active = work.get("active")
+    active_id = sc_active.get("id") if isinstance(sc_active, dict) else None
+
+    if active_id is None or active_id == workflow_id:
+        work["active"] = None
+        work["last_item_id"] = workflow_id
+
+    history = sc_data.setdefault("work_history", [])
+    if not isinstance(history, list):
+        history = []
+        sc_data["work_history"] = history
+
+    already = any(
+        isinstance(h, dict) and h.get("id") == workflow_id and h.get("outcome") == outcome
+        for h in history
+    )
+    if not already:
+        history.append({
+            "id": workflow_id,
+            "completed": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "outcome": outcome,
+            "title": resolved_title,
+            "result": _legacy_result if _legacy_result is not None else outcome,
+        })
+
+    sc_path.write_text(yaml.safe_dump(sc_data, sort_keys=False), encoding="utf-8")
+
+    # --- item file ---
+    if item_file is None:
+        return
+    try:
+        _status_mod.set_terminal(
+            str(item_file),
+            "done",
+            "controller",
+            project_dir=str(project),
+            _from_sync=True,
+        )
+    except (FileNotFoundError, FileExistsError, ValueError):
+        pass
+
+
 def _active_workflow_for_different_story(project: Path, story_id: str) -> bool:
     """True if an active workflow exists for a DIFFERENT story than story_id."""
     workflows_dir = project / ".sweetclaude" / "state" / "workflows"

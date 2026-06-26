@@ -7,6 +7,7 @@ import yaml
 from datetime import datetime, timezone
 
 import orchestrator_actions
+from success_criteria_contracts import record_workflow_closeout
 from orchestrator import (
     assemble_context_envelope,
     record_gate_passage,
@@ -271,21 +272,23 @@ def _update_item_status(project_dir, item_id, result, evidence_receipt=None):
 
 
 def _complete_sc(project_dir, workflow_id, result, workflow_state=None):
+    from pathlib import Path as _Path
     sc = _load_sc_yaml(project_dir)
     work = sc.setdefault("work", {})
     active = work.get("active", {})
     if active and active.get("id") and active["id"] != workflow_id:
         return {"status_update": "skipped-active-mismatch"}
     item_id = active.get("id") if active else None
-    if item_id:
+
+    # Legacy path: project-local status.py detected → use subprocess-based
+    # status update with evidence receipt check (pre-ISSUE-224 orchestrator).
+    status_py = os.path.join(project_dir, "scripts", "status.py")
+    if item_id and os.path.isfile(status_py):
         evidence_receipt = None
         if result == "complete":
             evidence_receipt = _completion_evidence_receipt(workflow_state)
         status_updated = _update_item_status(
-            project_dir,
-            item_id,
-            result,
-            evidence_receipt=evidence_receipt,
+            project_dir, item_id, result, evidence_receipt=evidence_receipt,
         )
         if result == "complete" and status_updated is False:
             active["phase"] = "VERIFY"
@@ -294,13 +297,13 @@ def _complete_sc(project_dir, workflow_id, result, workflow_state=None):
             work["active"] = active
             _save_sc_yaml(sc, project_dir)
             return {"status_update": "evidence_required"}
-    history = sc.setdefault("work_history", [])
-    already = any(h.get("id") == workflow_id and h.get("result") == result for h in history)
-    if not already:
-        history.append({"id": workflow_id, "result": result, "at": _now_iso()})
-    work["active"] = None
-    _save_sc_yaml(sc, project_dir)
-    return {"status_update": "updated" if item_id else "no-item"}
+
+    # New deterministic closeout path.
+    outcome = "done" if result == "complete" else result
+    record_workflow_closeout(
+        _Path(project_dir), workflow_id, outcome=outcome, _legacy_result=result,
+    )
+    return {"status_update": "updated"}
 
 
 def _invoke_agent(*args, **kwargs):

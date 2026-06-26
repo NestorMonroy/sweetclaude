@@ -148,19 +148,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/evidence.py write \
 
 ## Step 7: Close out the work item
 
-Update `.sweetclaude/state/phase.yaml`:
-```yaml
-active_work_item:
-  id: ~
-  type: ~
-  workflow: []
-  phase: ~
-  title: ~
-  started: ~
-  entry_category: ~
-```
-
-And update `last_work_item_id` to the completed item's ID.
+Close-out state (the active pointer, the last-completed record, work history, and the item file status) is written deterministically by the controller's ship command. Do not hand-edit these fields — the controller owns them.
 
 Archive the active plan file if one exists:
 
