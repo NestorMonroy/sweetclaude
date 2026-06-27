@@ -3,6 +3,7 @@
 Mirrors the large-story gate tests for the terminal history lockout bug:
 completing one story must not prevent starting the next.
 """
+import json
 import sys
 from pathlib import Path
 
@@ -346,3 +347,222 @@ def test_init_contract_defaults_to_large_story(tmp_path):
     assert contract["success_criteria"][0]["evidence_artifact"] == (
         ".sweetclaude/reports/large-story/STORY-001/evidence/SC-001.json"
     )
+
+
+# --- Small-story contract amendment path --------------------------------------
+#
+# Parity with the large-story approval-gated amendment flow. A frozen small-story
+# contract must be amendable in-flight under a single-use, scoped, audited
+# approval — without re-initializing the workflow (which is blocked while active).
+
+
+def _write_amendable_small_story(tmp_path: Path, story_id: str = "STORY-001") -> Path:
+    project = tmp_path / "proj"
+    project.mkdir()
+    contract = _contract(story_id)
+    cdir = project / ".sweetclaude" / "contracts"
+    cdir.mkdir(parents=True)
+    (cdir / "success-criteria-contract.yaml").write_text(
+        yaml.safe_dump(contract, sort_keys=False), encoding="utf-8"
+    )
+    wfdir = project / ".sweetclaude" / "state" / "workflows"
+    wfdir.mkdir(parents=True)
+    (wfdir / f"{story_id}.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "workflow_id": story_id,
+                "phase": "DESIGN",
+                "state_owner": "small_story_controller",
+                "requires_success_criteria_contract": True,
+                "status": "design",
+                "success_criteria_contract_path": ".sweetclaude/contracts/success-criteria-contract.yaml",
+                "success_criteria_contract_hash": contract["contract_freeze"]["contract_hash"],
+                "criterion_ids": ["SC-001"],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return project
+
+
+def test_small_story_approve_amendment_records_scoped_single_use_token(tmp_path):
+    from small_story_controller import approve_amendment
+
+    project = _write_amendable_small_story(tmp_path)
+    res = approve_amendment(
+        project_dir=project,
+        workflow_id="STORY-001",
+        criterion_id="SC-001",
+        reason="SC-001 encodes the wrong mechanism",
+    )
+    assert res["ok"] is True, res
+    assert res["approval_ref"]
+    receipt = json.loads((project / res["receipt_path"]).read_text())
+    assert receipt["consumed"] is False
+    assert receipt["workflow_id"] == "STORY-001"
+    assert receipt["criterion_id"] == "SC-001"
+    assert receipt["single_use"] is True
+
+
+def test_small_story_approve_amendment_rejects_unknown_criterion(tmp_path):
+    from small_story_controller import approve_amendment
+
+    project = _write_amendable_small_story(tmp_path)
+    res = approve_amendment(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-999", reason="x"
+    )
+    assert res["ok"] is False
+
+
+def test_small_story_amend_contract_applies_refreezes_rebinds_and_audits(tmp_path):
+    from small_story_controller import amend_contract, approve_amendment
+
+    project = _write_amendable_small_story(tmp_path)
+    cpath = project / ".sweetclaude/contracts/success-criteria-contract.yaml"
+    wpath = project / ".sweetclaude/state/workflows/STORY-001.yaml"
+    old_hash = yaml.safe_load(wpath.read_text())["success_criteria_contract_hash"]
+    ref = approve_amendment(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001", reason="wrong mechanism"
+    )["approval_ref"]
+
+    res = amend_contract(
+        project_dir=project,
+        workflow_id="STORY-001",
+        criterion_id="SC-001",
+        approval_ref=ref,
+        fields={"statement": "Amended statement."},
+    )
+    assert res["ok"] is True, res
+    assert res["new_contract_hash"] and res["new_contract_hash"] != old_hash
+
+    sc1 = next(
+        c for c in yaml.safe_load(cpath.read_text())["success_criteria"] if c["id"] == "SC-001"
+    )
+    assert sc1["statement"] == "Amended statement."
+
+    # workflow rebound to new hash, phase preserved (NOT reset to DEFINE)
+    wstate = yaml.safe_load(wpath.read_text())
+    assert wstate["success_criteria_contract_hash"] == res["new_contract_hash"]
+    assert wstate["phase"] == "DESIGN"
+
+    audit = json.loads((project / res["receipt_path"]).read_text())
+    assert audit["old_contract_hash"] == old_hash
+    assert audit["new_contract_hash"] == res["new_contract_hash"]
+    assert audit["field_diff"]["statement"]["new"] == "Amended statement."
+
+
+def test_small_story_amend_contract_token_is_single_use(tmp_path):
+    from small_story_controller import amend_contract, approve_amendment
+
+    project = _write_amendable_small_story(tmp_path)
+    ref = approve_amendment(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001", reason="x"
+    )["approval_ref"]
+    first = amend_contract(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001",
+        approval_ref=ref, fields={"statement": "A"},
+    )
+    assert first["ok"] is True
+    second = amend_contract(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001",
+        approval_ref=ref, fields={"statement": "B"},
+    )
+    assert second["ok"] is False
+    assert second["code"] == "blocked_amend_consumed"
+
+
+def test_small_story_amend_contract_without_approval_is_blocked(tmp_path):
+    from small_story_controller import amend_contract
+
+    project = _write_amendable_small_story(tmp_path)
+    res = amend_contract(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001",
+        approval_ref="deadbeefdeadbeef", fields={"statement": "A"},
+    )
+    assert res["ok"] is False
+    assert res["code"] == "blocked_amend_no_approval"
+
+
+def test_small_story_amend_contract_rejects_non_amendable_field(tmp_path):
+    from small_story_controller import amend_contract, approve_amendment
+
+    project = _write_amendable_small_story(tmp_path)
+    ref = approve_amendment(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001", reason="x"
+    )["approval_ref"]
+    res = amend_contract(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001",
+        approval_ref=ref, fields={"id": "SC-XYZ"},
+    )
+    assert res["ok"] is False
+    assert res["code"] == "blocked_amend_fields"
+
+
+def test_small_story_amendment_cli_end_to_end(tmp_path):
+    """The approve-amendment and amend-contract CLI subcommands are wired."""
+    import subprocess
+
+    project = _write_amendable_small_story(tmp_path)
+    controller = str(SCRIPTS_DIR / "small_story_controller.py")
+
+    approve = subprocess.run(
+        [
+            sys.executable, controller, "--project-dir", str(project),
+            "approve-amendment", "--workflow-id", "STORY-001",
+            "--criterion", "SC-001", "--reason", "CLI wiring check",
+        ],
+        capture_output=True, text=True,
+    )
+    assert approve.returncode == 0, approve.stderr
+    ref = json.loads(approve.stdout)["approval_ref"]
+
+    amend = subprocess.run(
+        [
+            sys.executable, controller, "--project-dir", str(project),
+            "amend-contract", "--workflow-id", "STORY-001", "--criterion", "SC-001",
+            "--approval-ref", ref, "--fields", json.dumps({"statement": "CLI amended."}),
+        ],
+        capture_output=True, text=True,
+    )
+    assert amend.returncode == 0, amend.stderr
+    out = json.loads(amend.stdout)
+    assert out["ok"] is True
+    assert out["status"] == "amended"
+
+
+def test_small_story_amend_inflight_then_complete_verify(tmp_path):
+    """Rebind-in-flight replaces the blocked re-init path end to end.
+
+    Scaffold via init_contract, init the workflow, amend a criterion in-flight
+    (no re-init), then advance through implementation — which binds the rebound
+    hash — and confirm VERIFY clears against the amended contract.
+    """
+    from small_story_controller import amend_contract, approve_amendment
+    from success_criteria_contracts import freeze_contract, init_contract
+
+    project = tmp_path
+    _create_backlog_file(project, "STORY-001")
+    assert init_contract(
+        project_dir=project, story_id="STORY-001", criteria_count=1,
+        workflow_type="small-story",
+    )["ok"]
+    assert freeze_contract(project_dir=project)["ok"]
+    assert init_workflow(project_dir=project, workflow_id="STORY-001")["ok"]
+
+    ref = approve_amendment(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001",
+        reason="tighten the predicate before building",
+    )["approval_ref"]
+    amended = amend_contract(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001",
+        approval_ref=ref,
+        fields={"statement": "The amended observable behavior holds."},
+    )
+    assert amended["ok"] is True, amended
+
+    _advance_to_implement(project, "STORY-001")
+    record_evidence(project_dir=project, tool="Write", file_path="app.py", workflow_id="STORY-001")
+    result = enter_verify_phase(project_dir=project, workflow_id="STORY-001")
+    assert result["ok"], result
+    assert result["success_criteria_contract_hash"] == amended["new_contract_hash"]
