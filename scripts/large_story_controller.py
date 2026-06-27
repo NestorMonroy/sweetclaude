@@ -8,6 +8,7 @@ import json
 import re
 import subprocess
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from success_criteria_contracts import (
     DEFAULT_CONTRACT_PATH,
     DEFAULT_LEDGER_PATH,
     find_backlog_file,
+    freeze_contract,
     record_workflow_closeout,
     validate_success_criteria_contract,
     validate_success_criteria_workflow,
@@ -119,13 +121,17 @@ PROTECTED_BASH_COMMAND_TOKENS = (
 )
 PROTECTED_CONTRACTS_REL = Path(".sweetclaude") / "contracts"
 CONTRACT_AMENDMENT_MESSAGE = (
-    "Frozen success criteria contract amendment is blocked. The contract was "
-    "frozen at workflow init and is human-gated (amendment_policy: "
-    "human_approved_only); the model may not edit it. To amend, the USER must "
-    "run the contract commands directly (edit the YAML, then "
-    "`success_criteria_contracts.py freeze-contract` and "
-    "`large_story_controller.py init`) to rebind the workflow to the new "
-    "hash. Otherwise route the concern to backlog or a new story."
+    "Direct edits to the frozen success criteria contract are blocked "
+    "(amendment_policy: human_approved_only). Do NOT hand-edit the YAML. To "
+    "amend with recorded user approval: (1) get explicit user approval for the "
+    "specific criterion change, (2) record it — `python3 "
+    "scripts/large_story_controller.py approve-amendment --workflow-id <id> "
+    "--criterion <SC-NNN> --reason <why>` (returns an approval ref), then "
+    "(3) apply it atomically — `python3 scripts/large_story_controller.py "
+    "amend-contract --workflow-id <id> --criterion <SC-NNN> --approval-ref "
+    "<ref> --fields <json|@file>`. The controller edits, re-freezes, rebinds, "
+    "and writes an audit record in one step. Without a valid approval ref the "
+    "amendment stays blocked."
 )
 
 VALID_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
@@ -1001,7 +1007,9 @@ def _has_commits(project: Path) -> bool:
         return False
 
 
-def _check_init_preconditions(project: Path) -> dict[str, Any] | None:
+def _check_init_preconditions(
+    project: Path, *, workflow_id: str | None = None
+) -> dict[str, Any] | None:
     if not _is_git_repo(project):
         return None
 
@@ -1060,6 +1068,10 @@ def _check_init_preconditions(project: Path) -> dict[str, Any] | None:
             wf_id = state.get("workflow_id") if isinstance(state.get("workflow_id"), str) else candidate.stem
             if not _valid_workflow_id(wf_id):
                 continue
+            if workflow_id is not None and wf_id == workflow_id:
+                # Re-init/rebind of the SAME workflow is permitted (e.g. after an
+                # approved contract amendment); only a DIFFERENT in-flight workflow blocks.
+                continue
             owner = state.get("state_owner", "")
             if (
                 state
@@ -1090,7 +1102,7 @@ def init_workflow(
             f"{VALID_ID_RE.pattern} (no path separators or traversal).",
         )
     project = Path(project_dir).expanduser().resolve(strict=False)
-    precondition_failure = _check_init_preconditions(project)
+    precondition_failure = _check_init_preconditions(project, workflow_id=workflow_id)
     if precondition_failure is not None:
         return precondition_failure
     if find_backlog_file(project, workflow_id, exclude_done=True) is None:
@@ -1128,8 +1140,38 @@ def init_workflow(
 
     contract_hash = str(contract_result.get("contract_hash") or "")
     criterion_ids = list(contract_result.get("criterion_ids") or [])
+    contract_path_value = str(
+        resolved_contract.relative_to(project)
+        if resolved_contract.is_relative_to(project)
+        else resolved_contract
+    )
     workflow_path = _workflow_state_path(project, workflow_id)
     workflow_path.parent.mkdir(parents=True, exist_ok=True)
+
+    existing_state = _load_yaml_dict(workflow_path) if workflow_path.exists() else {}
+    if existing_state and _is_active_workflow_state(existing_state):
+        # Re-init of an already-active workflow is a REBIND, not a reset: update
+        # only the contract binding and preserve phase + all other controller
+        # state. (A reset to DEFINE here would silently destroy in-flight progress.)
+        phase_value = str(existing_state.get("phase") or "DEFINE")
+        rebound = dict(existing_state)
+        rebound["success_criteria_contract_path"] = contract_path_value
+        rebound["success_criteria_contract_hash"] = contract_hash
+        rebound["criterion_ids"] = criterion_ids
+        workflow_path.write_text(yaml.safe_dump(rebound, sort_keys=False), encoding="utf-8")
+        _sync_phase_yaml(project, workflow_id, phase_value)
+        _sync_sweetclaude_yaml_active(project, workflow_id, phase_value)
+        return {
+            "ok": True,
+            "status": "rebound",
+            "workflow_id": workflow_id,
+            "phase": phase_value,
+            "success_criteria_contract_hash": contract_hash,
+            "criterion_ids": criterion_ids,
+            "success_criteria_ledger_path": str(CANONICAL_LEDGER_REL),
+            "message": "Large-story workflow rebound to the current contract; phase preserved.",
+        }
+
     workflow_path.write_text(
         yaml.safe_dump(
             {
@@ -1137,11 +1179,7 @@ def init_workflow(
                 "phase": "DEFINE",
                 "state_owner": "large_story_controller",
                 "requires_success_criteria_contract": True,
-                "success_criteria_contract_path": str(
-                    resolved_contract.relative_to(project)
-                    if resolved_contract.is_relative_to(project)
-                    else resolved_contract
-                ),
+                "success_criteria_contract_path": contract_path_value,
                 "success_criteria_contract_hash": contract_hash,
                 "criterion_ids": criterion_ids,
                 "success_criteria_ledger_path": str(CANONICAL_LEDGER_REL),
@@ -1161,6 +1199,247 @@ def init_workflow(
         "success_criteria_ledger_path": str(CANONICAL_LEDGER_REL),
         "next_allowed_stage": "design",
         "message": "Large-story workflow state initialized by controller.",
+    }
+
+
+AMENDMENT_APPROVAL_RECEIPT_TYPE = "contract-amendment-approval"
+AMENDMENT_RECEIPT_TYPE = "contract-amendment"
+# Fields of a success criterion that an approved amendment may change. The
+# criterion id is intentionally excluded: amendments may edit existing criteria,
+# never add, remove, or re-key them.
+AMENDABLE_CRITERION_FIELDS = {
+    "statement",
+    "binary_predicate",
+    "measurement_type",
+    "measurement_procedure",
+    "evidence_artifact",
+    "evidence_owner",
+    "pass_condition",
+    "fail_condition",
+    "allowed_phase_to_measure",
+    "backlog_routing",
+}
+
+
+def _evidence_dir(project: Path) -> Path:
+    return project / ".sweetclaude" / "state" / "evidence"
+
+
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _approval_receipt_path(project: Path, approval_ref: str) -> Path:
+    return _evidence_dir(project) / f"amendment-approval-{approval_ref}.json"
+
+
+def _rel(project: Path, path: Path) -> str:
+    return str(path.relative_to(project) if path.is_relative_to(project) else path)
+
+
+def approve_amendment(
+    *,
+    project_dir: str | Path = ".",
+    workflow_id: str,
+    criterion_id: str,
+    reason: str,
+    approved_by: str = "user",
+) -> dict[str, Any]:
+    """Record a single-use, scoped approval token for a frozen-contract amendment.
+
+    LOCAL/ADVISORY: this records, scopes, and audits an approval; it is not an
+    external enforcement boundary (a single-actor machine can run it directly).
+    """
+    project = Path(project_dir).expanduser().resolve(strict=False)
+    if not _valid_workflow_id(workflow_id):
+        return _failure("blocked_amend_approval", "Invalid workflow_id.")
+    state = _load_yaml_dict(_workflow_state_path(project, workflow_id))
+    if not _is_active_workflow_state(state):
+        return _failure(
+            "blocked_amend_approval",
+            f"No active large-story workflow {workflow_id} to approve an amendment for.",
+        )
+    criterion_ids = state.get("criterion_ids") or []
+    if criterion_id not in criterion_ids:
+        return _failure(
+            "blocked_amend_approval",
+            f"Criterion {criterion_id} is not part of workflow {workflow_id} "
+            f"(known: {', '.join(map(str, criterion_ids)) or 'none'}).",
+        )
+    if not (reason and reason.strip()):
+        return _failure("blocked_amend_approval", "An amendment approval requires a reason.")
+    approval_ref = uuid.uuid4().hex
+    receipt = {
+        "schema_version": 2,
+        "receipt_type": AMENDMENT_APPROVAL_RECEIPT_TYPE,
+        "approval_ref": approval_ref,
+        "workflow_id": workflow_id,
+        "criterion_id": criterion_id,
+        "approved_by": approved_by,
+        "reason": reason.strip(),
+        "generated_at": _iso_now(),
+        "single_use": True,
+        "consumed": False,
+    }
+    path = _approval_receipt_path(project, approval_ref)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    return {
+        "ok": True,
+        "status": "amendment_approved",
+        "approval_ref": approval_ref,
+        "workflow_id": workflow_id,
+        "criterion_id": criterion_id,
+        "receipt_path": _rel(project, path),
+        "message": (
+            "Amendment approval recorded (single-use, scoped to this workflow + "
+            f"criterion). Apply with: amend-contract --approval-ref {approval_ref}."
+        ),
+    }
+
+
+def amend_contract(
+    *,
+    project_dir: str | Path = ".",
+    workflow_id: str,
+    criterion_id: str,
+    approval_ref: str,
+    fields: dict[str, Any],
+) -> dict[str, Any]:
+    """Atomically amend one frozen criterion under a valid, single-use approval.
+
+    edit fields -> re-freeze hash -> rebind workflow (phase preserved) ->
+    write immutable audit record -> consume the approval token.
+    """
+    project = Path(project_dir).expanduser().resolve(strict=False)
+    if not _valid_workflow_id(workflow_id):
+        return _failure("blocked_amend", "Invalid workflow_id.")
+    state = _load_yaml_dict(_workflow_state_path(project, workflow_id))
+    if not _is_active_workflow_state(state):
+        return _failure("blocked_amend", f"No active large-story workflow {workflow_id}.")
+
+    # 1) Validate the approval token: present, unconsumed, scoped to this pair.
+    receipt_path = _approval_receipt_path(project, approval_ref)
+    if not receipt_path.exists():
+        return _failure(
+            "blocked_amend_no_approval",
+            "Amendment denied: no approval record for --approval-ref. Record "
+            "approval first with approve-amendment.",
+        )
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except Exception:
+        return _failure("blocked_amend_no_approval", "Amendment denied: approval record unreadable.")
+    if receipt.get("consumed"):
+        return _failure(
+            "blocked_amend_consumed",
+            "Amendment denied: this approval was already consumed (single-use).",
+        )
+    if receipt.get("workflow_id") != workflow_id or receipt.get("criterion_id") != criterion_id:
+        return _failure(
+            "blocked_amend_scope",
+            "Amendment denied: approval is scoped to a different workflow/criterion.",
+        )
+
+    # 2) Bound the changes to amendable criterion fields.
+    if not isinstance(fields, dict) or not fields:
+        return _failure("blocked_amend", "No amendment fields provided.")
+    bad = set(fields) - AMENDABLE_CRITERION_FIELDS
+    if bad:
+        return _failure(
+            "blocked_amend_fields",
+            f"Amendment denied: non-amendable field(s) {sorted(bad)}. Amendable: "
+            f"{sorted(AMENDABLE_CRITERION_FIELDS)}.",
+        )
+
+    # 3) Load the contract; locate the criterion.
+    contract_rel = state.get("success_criteria_contract_path") or DEFAULT_CONTRACT_PATH
+    contract_path = Path(contract_rel)
+    resolved = contract_path if contract_path.is_absolute() else project / contract_path
+    if not resolved.exists():
+        return _failure("blocked_amend", f"Contract not found at {contract_rel}.")
+    backup = resolved.read_text(encoding="utf-8")
+    contract = yaml.safe_load(backup) or {}
+    criteria = contract.get("success_criteria") or []
+    ids_before = [c.get("id") for c in criteria]
+    target = next((c for c in criteria if c.get("id") == criterion_id), None)
+    if target is None:
+        return _failure("blocked_amend", f"Criterion {criterion_id} not found in contract.")
+    old_hash = str((contract.get("contract_freeze") or {}).get("contract_hash") or "")
+
+    # 4) Apply field changes; refuse if the criteria set would change.
+    field_diff: dict[str, Any] = {}
+    for key, value in fields.items():
+        field_diff[key] = {"old": target.get(key), "new": value}
+        target[key] = value
+    ids_after = [c.get("id") for c in criteria]
+    if sorted(ids_before) != sorted(ids_after) or len(ids_before) != len(ids_after):
+        resolved.write_text(backup, encoding="utf-8")
+        return _failure(
+            "blocked_amend_criteria_set",
+            "Amendment denied: the criteria set changed; amendments may only edit "
+            "existing criterion fields.",
+        )
+
+    # 5) Write + re-freeze, then validate. Restore the exact original on failure.
+    resolved.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
+    freeze_result = freeze_contract(
+        project_dir=project, contract_path=contract_rel, frozen_by=receipt.get("approved_by", "user")
+    )
+    if not freeze_result.get("ok"):
+        resolved.write_text(backup, encoding="utf-8")
+        return _failure("blocked_amend", f"Re-freeze failed: {freeze_result.get('error')}")
+    try:
+        validation = validate_success_criteria_contract(resolved)
+    except Exception as exc:
+        resolved.write_text(backup, encoding="utf-8")
+        return _failure(
+            "blocked_amend_invalid",
+            f"Amendment denied: amended contract is invalid ({exc}). Restored original.",
+        )
+    new_hash = str(validation.get("contract_hash") or "")
+
+    # 6) Rebind the workflow in place (phase and all other state preserved).
+    state["success_criteria_contract_hash"] = new_hash
+    _workflow_state_path(project, workflow_id).write_text(
+        yaml.safe_dump(state, sort_keys=False), encoding="utf-8"
+    )
+
+    # 7) Immutable audit record.
+    audit = {
+        "schema_version": 2,
+        "receipt_type": AMENDMENT_RECEIPT_TYPE,
+        "workflow_id": workflow_id,
+        "criterion_id": criterion_id,
+        "approval_ref": approval_ref,
+        "approved_by": receipt.get("approved_by"),
+        "reason": receipt.get("reason"),
+        "old_contract_hash": old_hash,
+        "new_contract_hash": new_hash,
+        "field_diff": field_diff,
+        "amended_at": _iso_now(),
+    }
+    digest = new_hash.split(":")[-1][:12] or "amend"
+    audit_path = _evidence_dir(project) / f"amendment-{workflow_id}-{criterion_id}-{digest}.json"
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.write_text(json.dumps(audit, indent=2) + "\n", encoding="utf-8")
+
+    # 8) Consume the single-use token.
+    receipt["consumed"] = True
+    receipt["consumed_at"] = _iso_now()
+    receipt["amendment_receipt_path"] = _rel(project, audit_path)
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    return {
+        "ok": True,
+        "status": "amended",
+        "workflow_id": workflow_id,
+        "criterion_id": criterion_id,
+        "old_contract_hash": old_hash,
+        "new_contract_hash": new_hash,
+        "field_diff": field_diff,
+        "receipt_path": _rel(project, audit_path),
+        "message": "Contract amended, re-frozen, and workflow rebound; audit recorded.",
     }
 
 
@@ -1224,9 +1503,12 @@ def gate_tool_use(
             )
         rel = _project_relative(project, file_path)
         if rel is None:
+            # Out-of-project writes (session scratchpad, temp working files) are
+            # not project state and are not governed by the large-story gate.
             return _decision(
-                False,
-                f"{BLOCKED_GATE_MESSAGE} Target is outside the project directory.",
+                True,
+                "Target is outside the project tree (e.g. session scratchpad); "
+                "not controller-governed.",
             )
         if (
             rel == PROTECTED_PHASE_REL
@@ -2288,6 +2570,18 @@ def main(argv: list[str] | None = None) -> int:
     init_parser.add_argument("--workflow-id", required=True)
     init_parser.add_argument("--contract-path")
 
+    approve_amend = sub.add_parser("approve-amendment")
+    approve_amend.add_argument("--workflow-id", required=True)
+    approve_amend.add_argument("--criterion", required=True)
+    approve_amend.add_argument("--reason", required=True)
+    approve_amend.add_argument("--approved-by", default="user")
+
+    amend = sub.add_parser("amend-contract")
+    amend.add_argument("--workflow-id", required=True)
+    amend.add_argument("--criterion", required=True)
+    amend.add_argument("--approval-ref", required=True)
+    amend.add_argument("--fields", required=True, help="JSON object, or @path to a JSON file")
+
     gate_parser = sub.add_parser("gate")
     gate_parser.add_argument("--tool", required=True)
     gate_parser.add_argument("--file")
@@ -2380,6 +2674,36 @@ def main(argv: list[str] | None = None) -> int:
                 project_dir=args.project_dir,
                 workflow_id=args.workflow_id,
                 contract_path=args.contract_path,
+            )
+        )
+    if args.command == "approve-amendment":
+        return _json_print(
+            approve_amendment(
+                project_dir=args.project_dir,
+                workflow_id=args.workflow_id,
+                criterion_id=args.criterion,
+                reason=args.reason,
+                approved_by=args.approved_by,
+            )
+        )
+    if args.command == "amend-contract":
+        fields_raw = args.fields
+        if fields_raw.startswith("@"):
+            try:
+                fields_raw = Path(fields_raw[1:]).read_text(encoding="utf-8")
+            except Exception as exc:
+                return _json_print(_failure("blocked_amend", f"--fields file unreadable: {exc}"))
+        try:
+            parsed_fields = json.loads(fields_raw)
+        except Exception as exc:
+            return _json_print(_failure("blocked_amend", f"--fields is not valid JSON: {exc}"))
+        return _json_print(
+            amend_contract(
+                project_dir=args.project_dir,
+                workflow_id=args.workflow_id,
+                criterion_id=args.criterion,
+                approval_ref=args.approval_ref,
+                fields=parsed_fields,
             )
         )
     if args.command == "gate":

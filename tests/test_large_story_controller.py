@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -26,6 +27,11 @@ from large_story_controller import (
     finalize_large_story,
     render_large_story_status,
     validate_ledger_evidence_paths,
+    _check_init_preconditions,
+    gate_tool_use,
+    approve_amendment,
+    amend_contract,
+    init_workflow,
 )
 from success_criteria_contracts import compute_success_criteria_contract_hash
 
@@ -1134,3 +1140,251 @@ def test_wlf063_integrated_regression_blocks_overclaim(tmp_path):
     assert rendered["status"] == "blocked_missing_completion_ledger"
     assert rendered["completion_claim_allowed"] is False
     assert "complete" not in rendered["allowed_summary"].lower()
+
+
+# --- ER: re-init/rebind of the SAME in-flight workflow (init precondition fix) ---
+
+def _git_init_main(project: Path) -> None:
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t.test",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t.test",
+    }
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    subprocess.run(["git", "checkout", "-q", "-b", "main"], cwd=project, check=True)
+    (project / "README.md").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=project, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=project, env=env, check=True)
+
+
+def _commit_all(project: Path) -> None:
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t.test",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t.test",
+    }
+    subprocess.run(["git", "add", "-A"], cwd=project, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "wf"], cwd=project, env=env, check=True)
+
+
+def _write_inflight_workflow(project: Path, story_id: str) -> None:
+    wf = project / ".sweetclaude" / "state" / "workflows"
+    wf.mkdir(parents=True, exist_ok=True)
+    (wf / f"{story_id}.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "workflow_id": story_id,
+                "phase": "DEFINE",
+                "state_owner": "large_story_controller",
+                "requires_success_criteria_contract": True,
+                "status": "define",
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_reinit_same_inflight_workflow_not_blocked_by_preconditions(tmp_path):
+    project = tmp_path / "proj"
+    project.mkdir()
+    _git_init_main(project)
+    _write_inflight_workflow(project, "STORY-001")
+    _commit_all(project)
+    # Re-binding the SAME in-flight workflow must not be blocked by preconditions.
+    assert _check_init_preconditions(project, workflow_id="STORY-001") is None
+
+
+def test_init_blocked_when_a_different_workflow_is_inflight(tmp_path):
+    project = tmp_path / "proj"
+    project.mkdir()
+    _git_init_main(project)
+    _write_inflight_workflow(project, "STORY-001")
+    _commit_all(project)
+    result = _check_init_preconditions(project, workflow_id="STORY-002")
+    assert result is not None
+    assert result["code"] == "blocked_inflight_workflow"
+
+
+# --- ER: approval-gated contract amendment + gate scratchpad scoping ---
+
+def _write_amendable_project(tmp_path: Path, story_id: str = "STORY-001") -> Path:
+    project = tmp_path / "proj"
+    project.mkdir()
+    contract = _contract(story_id)
+    cdir = project / ".sweetclaude" / "contracts"
+    cdir.mkdir(parents=True)
+    (cdir / "success-criteria-contract.yaml").write_text(
+        yaml.safe_dump(contract, sort_keys=False), encoding="utf-8"
+    )
+    wfdir = project / ".sweetclaude" / "state" / "workflows"
+    wfdir.mkdir(parents=True)
+    (wfdir / f"{story_id}.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "workflow_id": story_id,
+                "phase": "DESIGN",
+                "state_owner": "large_story_controller",
+                "requires_success_criteria_contract": True,
+                "status": "design",
+                "success_criteria_contract_path": ".sweetclaude/contracts/success-criteria-contract.yaml",
+                "success_criteria_contract_hash": contract["contract_freeze"]["contract_hash"],
+                "criterion_ids": ["SC-001"],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return project
+
+
+def test_approve_amendment_records_scoped_single_use_token(tmp_path):
+    project = _write_amendable_project(tmp_path)
+    res = approve_amendment(
+        project_dir=project, workflow_id="STORY-001",
+        criterion_id="SC-001", reason="SC-001 encodes the wrong mechanism",
+    )
+    assert res["ok"] is True
+    assert res["approval_ref"]
+    receipt = json.loads((project / res["receipt_path"]).read_text())
+    assert receipt["consumed"] is False
+    assert receipt["workflow_id"] == "STORY-001"
+    assert receipt["criterion_id"] == "SC-001"
+    assert receipt["single_use"] is True
+
+
+def test_approve_amendment_rejects_unknown_criterion(tmp_path):
+    project = _write_amendable_project(tmp_path)
+    res = approve_amendment(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-999", reason="x"
+    )
+    assert res["ok"] is False
+
+
+def test_amend_contract_applies_refreezes_rebinds_and_audits(tmp_path):
+    project = _write_amendable_project(tmp_path)
+    cpath = project / ".sweetclaude/contracts/success-criteria-contract.yaml"
+    wpath = project / ".sweetclaude/state/workflows/STORY-001.yaml"
+    old_hash = yaml.safe_load(wpath.read_text())["success_criteria_contract_hash"]
+    ref = approve_amendment(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001", reason="wrong mechanism"
+    )["approval_ref"]
+
+    res = amend_contract(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001",
+        approval_ref=ref, fields={"statement": "Amended statement."},
+    )
+    assert res["ok"] is True
+    assert res["new_contract_hash"] and res["new_contract_hash"] != old_hash
+
+    # contract content changed
+    sc1 = next(c for c in yaml.safe_load(cpath.read_text())["success_criteria"] if c["id"] == "SC-001")
+    assert sc1["statement"] == "Amended statement."
+
+    # workflow rebound to new hash, phase preserved (NOT reset to DEFINE)
+    wstate = yaml.safe_load(wpath.read_text())
+    assert wstate["success_criteria_contract_hash"] == res["new_contract_hash"]
+    assert wstate["phase"] == "DESIGN"
+
+    # audit record
+    audit = json.loads((project / res["receipt_path"]).read_text())
+    assert audit["old_contract_hash"] == old_hash
+    assert audit["new_contract_hash"] == res["new_contract_hash"]
+    assert audit["field_diff"]["statement"]["new"] == "Amended statement."
+
+
+def test_amend_contract_token_is_single_use(tmp_path):
+    project = _write_amendable_project(tmp_path)
+    ref = approve_amendment(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001", reason="x"
+    )["approval_ref"]
+    first = amend_contract(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001",
+        approval_ref=ref, fields={"statement": "A"},
+    )
+    assert first["ok"] is True
+    second = amend_contract(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001",
+        approval_ref=ref, fields={"statement": "B"},
+    )
+    assert second["ok"] is False
+    assert second["code"] == "blocked_amend_consumed"
+
+
+def test_amend_contract_without_approval_is_blocked(tmp_path):
+    project = _write_amendable_project(tmp_path)
+    res = amend_contract(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001",
+        approval_ref="deadbeefdeadbeef", fields={"statement": "A"},
+    )
+    assert res["ok"] is False
+    assert res["code"] == "blocked_amend_no_approval"
+
+
+def test_amend_contract_rejects_non_amendable_field(tmp_path):
+    project = _write_amendable_project(tmp_path)
+    ref = approve_amendment(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001", reason="x"
+    )["approval_ref"]
+    res = amend_contract(
+        project_dir=project, workflow_id="STORY-001", criterion_id="SC-001",
+        approval_ref=ref, fields={"id": "SC-XYZ"},
+    )
+    assert res["ok"] is False
+    assert res["code"] == "blocked_amend_fields"
+
+
+def test_gate_allows_out_of_project_scratchpad_write(tmp_path):
+    project = _write_amendable_project(tmp_path)
+    scratch = tmp_path / "scratch_out"
+    scratch.mkdir()
+    res = gate_tool_use(project_dir=project, tool="Write", file_path=str(scratch / "notes.md"))
+    assert res["allow"] is True
+
+
+def test_gate_still_blocks_inproject_source_write_outside_implement(tmp_path):
+    project = _write_amendable_project(tmp_path)
+    (project / "src").mkdir()
+    res = gate_tool_use(project_dir=project, tool="Write", file_path=str(project / "src" / "app.py"))
+    assert res["allow"] is False
+
+
+# --- init rebind preserves an active workflow's phase ---
+
+def _seed_backlog(project: Path, story_id: str) -> None:
+    bl = project / ".sweetclaude" / "product" / "backlog"
+    bl.mkdir(parents=True, exist_ok=True)
+    (bl / f"{story_id}-test.md").write_text(f"# {story_id}\n", encoding="utf-8")
+
+
+def test_init_rebind_preserves_phase_for_active_workflow(tmp_path):
+    project = tmp_path / "proj"
+    project.mkdir()
+    _git_init_main(project)
+    contract = _contract("STORY-001")
+    cdir = project / ".sweetclaude" / "contracts"
+    cdir.mkdir(parents=True)
+    (cdir / "success-criteria-contract.yaml").write_text(
+        yaml.safe_dump(contract, sort_keys=False), encoding="utf-8"
+    )
+    _seed_backlog(project, "STORY-001")
+    _commit_all(project)
+
+    first = init_workflow(project_dir=project, workflow_id="STORY-001")
+    assert first["ok"] is True
+    assert first["status"] == "define"
+
+    # Simulate in-flight progress to DESIGN, then commit (clean tree for re-init).
+    wpath = project / ".sweetclaude/state/workflows/STORY-001.yaml"
+    w = yaml.safe_load(wpath.read_text())
+    w["phase"] = "DESIGN"
+    w["status"] = "design"
+    wpath.write_text(yaml.safe_dump(w, sort_keys=False), encoding="utf-8")
+    _commit_all(project)
+
+    # Re-init the SAME workflow must REBIND, not reset to DEFINE.
+    second = init_workflow(project_dir=project, workflow_id="STORY-001")
+    assert second["ok"] is True
+    assert second["status"] == "rebound"
+    assert second["phase"] == "DESIGN"
+    assert yaml.safe_load(wpath.read_text())["phase"] == "DESIGN"
