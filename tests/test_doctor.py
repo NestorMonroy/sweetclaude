@@ -63,6 +63,8 @@ from doctor import (
     persist,
     load_suppressions,
     save_suppressions,
+    suppress_finding,
+    unsuppress_finding,
     compute_resolved_suppressions,
     prune_resolved_suppressions,
     main,
@@ -10496,3 +10498,123 @@ class TestT3eStep7RescanAfterDelegation:
                     f"Step 7 handler for {handler} must carry the "
                     f"re-scan-after-delegation instruction; got bullet: {b[:300]!r}"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Suppression recovery: finding-id validation + unsuppress (improvement request)
+# ---------------------------------------------------------------------------
+
+class TestSuppressionRecovery:
+    def test_suppress_rejects_multiline_finding_id(self, tmp_path):
+        blob = "a:b:c\nd:e:f\ng:h:i"
+        res = suppress_finding(tmp_path, blob)
+        assert res["suppressed"] is False
+        assert "control characters" in res["error"]
+        assert load_suppressions(tmp_path) == []  # nothing written
+
+    def test_suppress_rejects_whitespace_padded_id(self, tmp_path):
+        res = suppress_finding(tmp_path, "  cat:check:tgt  ")
+        assert res["suppressed"] is False
+        assert load_suppressions(tmp_path) == []
+
+    def test_suppress_accepts_valid_id(self, tmp_path):
+        fid = "state-integrity:phase-missing:phase.yaml"
+        res = suppress_finding(tmp_path, fid)
+        assert res["suppressed"] is True
+        assert any(e["finding_id"] == fid for e in load_suppressions(tmp_path))
+
+    def test_unsuppress_removes_one_entry(self, tmp_path):
+        suppress_finding(tmp_path, "a:b:c")
+        suppress_finding(tmp_path, "d:e:f")
+        res = unsuppress_finding(tmp_path, finding_id="a:b:c")
+        assert res["removed_count"] == 1
+        assert {e.get("finding_id") for e in load_suppressions(tmp_path)} == {"d:e:f"}
+
+    def test_unsuppress_absent_id_is_noop_success(self, tmp_path):
+        suppress_finding(tmp_path, "a:b:c")
+        res = unsuppress_finding(tmp_path, finding_id="zzz:zz:zz")
+        assert res["unsuppressed"] is True
+        assert res["removed_count"] == 0
+        assert {e.get("finding_id") for e in load_suppressions(tmp_path)} == {"a:b:c"}
+
+    def test_unsuppress_prune_malformed_recovers_corrupted_ledger(self, tmp_path):
+        # The Gap-1 incident: a corrupted ledger written before validation existed.
+        save_suppressions(tmp_path, [
+            {"finding_id": "good:check:tgt", "suppressed_at": "x"},
+            {"finding_id": "bad1\nbad2", "suppressed_at": "x"},
+            {"suppressed_at": "x"},  # missing finding_id
+        ])
+        res = unsuppress_finding(tmp_path, prune_malformed=True)
+        assert res["removed_count"] == 2
+        assert [e.get("finding_id") for e in load_suppressions(tmp_path)] == ["good:check:tgt"]
+
+    def test_main_suppress_rejects_and_exits_nonzero(self, tmp_path, capsys):
+        rc = main(["suppress", "--project-dir", str(tmp_path), "--finding-id", "a:b:c\nd:e:f"])
+        assert rc == 1
+        assert load_suppressions(tmp_path) == []
+
+    def test_main_unsuppress_requires_a_target(self, tmp_path, capsys):
+        rc = main(["unsuppress", "--project-dir", str(tmp_path)])
+        assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# Byte-identical duplicate work items: resolve_identical_duplicate (Gap 3)
+# ---------------------------------------------------------------------------
+
+class TestIdenticalDuplicateResolution:
+    def _fixture(self, tmp_path, *, created_differs=False):
+        bl = {"id": "ISSUE-044", "type": "story", "title": "Same", "status": "new"}
+        rm = dict(bl)
+        if created_differs:
+            bl["created"] = "2026-01-01"
+            rm["created"] = "2026-02-02"
+        return build_fixture(tmp_path, overrides={
+            "backlog_files": [{"name": "ISSUE-044-x.md", "frontmatter": bl}],
+            "roadmap_files": [{"name": "ISSUE-044-x.md", "frontmatter": rm}],
+        })
+
+    def _dup_finding(self, project_dir):
+        state = build_project_state(project_dir)
+        return next(
+            x for x in check_storage_lint(state)
+            if x.id == "storage-lint:cross-location-duplicate-id:ISSUE-044"
+        )
+
+    def test_identical_cross_location_offers_resolve_recipe(self, tmp_path, fake_home):
+        project_dir = self._fixture(tmp_path)
+        _make_cache_stub(project_dir)
+        f = self._dup_finding(project_dir)
+        assert f.fix_recipe["type"] == "resolve_identical_duplicate"
+        assert "/backlog/" in f.fix_recipe["recommended_keep"]
+        assert "/roadmap/" in f.fix_recipe["recommended_remove"]
+
+    def test_identical_ignores_volatile_created(self, tmp_path, fake_home):
+        project_dir = self._fixture(tmp_path, created_differs=True)
+        _make_cache_stub(project_dir)
+        f = self._dup_finding(project_dir)
+        assert f.fix_recipe["type"] == "resolve_identical_duplicate"
+
+    def test_divergent_cross_location_keeps_renumber(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path, overrides={
+            "backlog_files": [{"name": "ISSUE-044-x.md", "frontmatter": {
+                "id": "ISSUE-044", "type": "story", "title": "One", "status": "new"}}],
+            "roadmap_files": [{"name": "ISSUE-044-y.md", "frontmatter": {
+                "id": "ISSUE-044", "type": "story", "title": "DIFFERENT", "status": "active"}}],
+        })
+        _make_cache_stub(project_dir)
+        f = self._dup_finding(project_dir)
+        assert f.fix_recipe["type"] == "renumber_duplicate"
+
+    def test_resolve_remove_is_deleted_and_backed_up(self, tmp_path, fake_home):
+        project_dir = self._fixture(tmp_path)
+        _make_cache_stub(project_dir)
+        f = self._dup_finding(project_dir)
+        remove = f.fix_recipe["recommended_remove"]
+        keep = f.fix_recipe["recommended_keep"]
+        archive = create_archive(project_dir)
+        res = execute_recipe(project_dir, {"action": "delete_file", "file": remove}, archive)
+        assert res.success
+        assert not Path(remove).exists()      # the duplicate copy is gone
+        assert Path(keep).exists()            # the survivor remains
+        assert res.backup_path is not None    # before-image archived -> restore-reversible

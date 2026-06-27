@@ -662,6 +662,41 @@ def check_hook_health(state: ProjectState) -> list[Finding]:
     return findings
 
 
+_VOLATILE_FRONTMATTER_KEYS = ("created", "updated", "last_updated", "modified")
+
+
+def _content_sans_volatile(path: Path):
+    """Return (frontmatter_without_volatile_keys, body) for duplicate comparison,
+    or None if unreadable. Volatile keys (e.g. created) are dropped so two copies
+    that differ only by a timestamp still compare equal."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return ({}, text)
+    try:
+        fm = yaml.safe_load(parts[1]) or {}
+    except Exception:
+        return None
+    if isinstance(fm, dict):
+        for key in _VOLATILE_FRONTMATTER_KEYS:
+            fm.pop(key, None)
+    return (fm, parts[2])
+
+
+def _duplicate_files_identical(file_a: Path, file_b: Path) -> bool:
+    """True if two colliding files are the same item once volatile frontmatter is
+    ignored. Unreadable/ambiguous -> False (treat as divergent, keeping the safe
+    renumber offer)."""
+    a = _content_sans_volatile(file_a)
+    b = _content_sans_volatile(file_b)
+    if a is None or b is None:
+        return False
+    return a == b
+
+
 def check_storage_lint(state: ProjectState) -> list[Finding]:
     findings: list[Finding] = []
     backlog_dir = state.product_base / "backlog"
@@ -685,9 +720,33 @@ def check_storage_lint(state: ProjectState) -> list[Finding]:
             file_a = backlog_files[dup_id]
             file_b = roadmap_files[dup_id]
             proposed = _propose_next_id(dup_id, all_known_ids)
-            # Same resolution contract as file-diagnostics:duplicate-id —
-            # this finding supersedes that one in scan dedup (F5.1.4), so it
-            # must carry the renumber fix, not strand the user report-only.
+            label_a = str(file_a.parent.relative_to(state.product_base))
+            label_b = str(file_b.parent.relative_to(state.product_base))
+            # Identical copies (same item copied between folders) must be
+            # de-duplicated by dropping one, not renumbered — renumbering would
+            # mint a phantom second item. Divergent files are genuinely distinct,
+            # so they keep the renumber offer.
+            if _duplicate_files_identical(file_a, file_b):
+                fix_recipe = {
+                    "action": "prompt",
+                    "type": "resolve_identical_duplicate",
+                    "duplicate_id": dup_id,
+                    "files": [str(file_a), str(file_b)],
+                    "labels": [label_a, label_b],
+                    # Recommend keeping the backlog copy (the status-appropriate
+                    # home for an unscheduled item) and removing the roadmap copy.
+                    "recommended_keep": str(file_a),
+                    "recommended_remove": str(file_b),
+                }
+            else:
+                fix_recipe = {
+                    "action": "prompt",
+                    "type": "renumber_duplicate",
+                    "duplicate_id": dup_id,
+                    "files": [str(file_a), str(file_b)],
+                    "labels": [label_a, label_b],
+                    "proposed_new_id": proposed,
+                }
             findings.append(Finding(
                 id=f"storage-lint:cross-location-duplicate-id:{dup_id}",
                 category="storage_lint",
@@ -696,17 +755,7 @@ def check_storage_lint(state: ProjectState) -> list[Finding]:
                 detail=f"ID {dup_id} found in both {file_a} and {file_b}",
                 file_paths=[str(file_a), str(file_b)],
                 fix_type="prompted",
-                fix_recipe={
-                    "action": "prompt",
-                    "type": "renumber_duplicate",
-                    "duplicate_id": dup_id,
-                    "files": [str(file_a), str(file_b)],
-                    "labels": [
-                        str(file_a.parent.relative_to(state.product_base)),
-                        str(file_b.parent.relative_to(state.product_base)),
-                    ],
-                    "proposed_new_id": proposed,
-                },
+                fix_recipe=fix_recipe,
             ))
 
     if backlog_dir.is_dir():
@@ -1382,20 +1431,20 @@ def check_file_diagnostics(state: ProjectState) -> list[Finding]:
                     first = seen_ids[item_id]
                     file_a, file_b = str(first), str(p)
                     proposed = _propose_next_id(item_id, all_known_ids)
-                    findings.append(Finding(
-                        id=f"file-diagnostics:duplicate-id:{item_id}",
-                        category="file_diagnostics",
-                        severity="error",
-                        summary=f"ID {item_id} is used by multiple files",
-                        detail=f"duplicate-id: {item_id} in {file_b} and {file_a}",
-                        file_paths=[file_a, file_b],
-                        fix_type="prompted",
-                        # renumber_duplicate: the user picks WHICH colliding copy
-                        # gets a fresh id. The recipe carries both files, their
-                        # location labels, the duplicate id, and a proposed
-                        # next-available id so the skill can renumber the chosen
-                        # file (rewrite its id + rename it) via the executor.
-                        fix_recipe={
+                    # Identical copies -> drop one (delete via executor, reversible);
+                    # divergent copies -> renumber one to a fresh id.
+                    if _duplicate_files_identical(Path(file_a), Path(file_b)):
+                        recipe = {
+                            "action": "prompt",
+                            "type": "resolve_identical_duplicate",
+                            "duplicate_id": item_id,
+                            "files": [file_a, file_b],
+                            "labels": [Path(file_a).parent.name, Path(file_b).parent.name],
+                            "recommended_keep": file_a,
+                            "recommended_remove": file_b,
+                        }
+                    else:
+                        recipe = {
                             "action": "prompt",
                             "type": "renumber_duplicate",
                             "duplicate_id": item_id,
@@ -1405,7 +1454,16 @@ def check_file_diagnostics(state: ProjectState) -> list[Finding]:
                                 Path(file_b).parent.name,
                             ],
                             "proposed_new_id": proposed,
-                        },
+                        }
+                    findings.append(Finding(
+                        id=f"file-diagnostics:duplicate-id:{item_id}",
+                        category="file_diagnostics",
+                        severity="error",
+                        summary=f"ID {item_id} is used by multiple files",
+                        detail=f"duplicate-id: {item_id} in {file_b} and {file_a}",
+                        file_paths=[file_a, file_b],
+                        fix_type="prompted",
+                        fix_recipe=recipe,
                     ))
                 else:
                     seen_ids[item_id] = p
@@ -2284,6 +2342,28 @@ def prune_resolved_suppressions(
     return resolved
 
 
+def _validate_finding_id(finding_id: object) -> str | None:
+    """Return an error message if *finding_id* is not a safe single-line id,
+    else None.
+
+    Guards the only sanctioned writer of doctor-suppressions.json against
+    malformed input — e.g. a newline-joined blob of many ids passed as one
+    argument, which would otherwise be stored verbatim and corrupt the file.
+    """
+    if not isinstance(finding_id, str):
+        return "finding_id must be a string"
+    if finding_id == "":
+        return "finding_id is empty"
+    if finding_id != finding_id.strip():
+        return "finding_id has leading or trailing whitespace"
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in finding_id):
+        return (
+            "finding_id contains control characters; pass one id per call "
+            "(newlines/tabs are not allowed)"
+        )
+    return None
+
+
 def suppress_finding(
     project_dir: Path, finding_id: str, reason: str | None = None
 ) -> dict:
@@ -2293,6 +2373,9 @@ def suppress_finding(
     existing entry is preserved. This is the script-owned path that replaces
     the former skill-side inline write to doctor-suppressions.json (S3).
     """
+    error = _validate_finding_id(finding_id)
+    if error:
+        return {"suppressed": False, "finding_id": finding_id, "error": error}
     entries = load_suppressions(project_dir)
     already = any(e.get("finding_id") == finding_id for e in entries)
     if not already:
@@ -2306,6 +2389,39 @@ def suppress_finding(
         "finding_id": finding_id,
         "already_suppressed": already,
         "count": len(entries),
+    }
+
+
+def unsuppress_finding(
+    project_dir: Path,
+    finding_id: str | None = None,
+    *,
+    prune_malformed: bool = False,
+) -> dict:
+    """Remove suppression entries through the same load/save owner as suppress.
+
+    Idempotent: removing an absent id is a no-op success. With
+    ``prune_malformed`` also drops any entry whose finding_id is missing or
+    fails ``_validate_finding_id`` — a one-command recovery from a ledger that
+    was corrupted before validation existed.
+    """
+    entries = load_suppressions(project_dir)
+    removed: list[dict] = []
+    remaining: list[dict] = []
+    for entry in entries:
+        fid = entry.get("finding_id")
+        drop = (finding_id is not None and fid == finding_id) or (
+            prune_malformed and (fid is None or _validate_finding_id(fid) is not None)
+        )
+        (removed if drop else remaining).append(entry)
+    if removed:
+        save_suppressions(project_dir, remaining)
+    return {
+        "unsuppressed": True,
+        "finding_id": finding_id,
+        "prune_malformed": prune_malformed,
+        "removed_count": len(removed),
+        "count": len(remaining),
     }
 
 
@@ -4266,6 +4382,10 @@ def main(argv: list[str] | None = None) -> int:
     p_suppress.add_argument("--finding-id", required=True)
     p_suppress.add_argument("--reason", default=None)
 
+    p_unsuppress = _add("unsuppress")
+    p_unsuppress.add_argument("--finding-id", default=None)
+    p_unsuppress.add_argument("--prune-malformed", action="store_true", default=False)
+
     _add("dry-run")
 
     p_persist = _add("persist")
@@ -4338,10 +4458,26 @@ def main(argv: list[str] | None = None) -> int:
             _emit(record_action(args.archive_dir.resolve(), action))
 
         elif args.cmd == "suppress":
-            _emit(suppress_finding(
+            result = suppress_finding(
                 args.project_dir.resolve(),
                 args.finding_id,
                 reason=args.reason,
+            )
+            _emit(result)
+            if not result.get("suppressed"):
+                return 1
+
+        elif args.cmd == "unsuppress":
+            if not args.finding_id and not args.prune_malformed:
+                _emit({
+                    "unsuppressed": False,
+                    "error": "provide --finding-id and/or --prune-malformed",
+                })
+                return 1
+            _emit(unsuppress_finding(
+                args.project_dir.resolve(),
+                finding_id=args.finding_id,
+                prune_malformed=args.prune_malformed,
             ))
 
         elif args.cmd == "dry-run":
