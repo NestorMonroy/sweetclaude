@@ -4,6 +4,21 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.3.11-beta] — 2026-06-27 (4.x beta channel)
+
+### Fixed — small-story workflows now clear the VERIFY gate
+
+Small-story workflows could not pass VERIFY. The success-criteria contract
+scaffolded at DEFINE recorded its evidence files under a `large-story` path,
+while the small-story controller wrote and checked evidence under a
+`small-story` path. At VERIFY the controller compares the frozen contract
+against the evidence ledger, the two paths never matched, and the workflow
+was blocked. The contract scaffolder now records evidence paths that match
+the workflow it belongs to, so small-story workflows complete VERIFY as
+expected. Large-story workflows are unaffected.
+
+---
+
 ## [4.3.10-beta] — 2026-06-27 (4.x beta channel)
 
 ### Fixed — archived orphans no longer re-flagged on every scan
