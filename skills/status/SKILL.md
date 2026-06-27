@@ -339,6 +339,7 @@ Rules:
 - If stored status ≠ derived_status: append `⚠ children suggest [{derived_status}]` after `[{status}]`
 - Per epic: show up to 5 non-done issues, then `(+N done)` for collapsed done issues; `✓` marks done items
 - Use `├──` / `└──` connectors; `│   ` for continuation lines; `↓` between milestones
+- These connectors (`├── └── │ ↓ ✓`) are required structure, exempt from the session output-style "no box-drawing" rule — never substitute dashes or markdown lists
 - Epics with no children: show `(no issues)` inline
 
 After the tree, summary line from `summary` query data:
