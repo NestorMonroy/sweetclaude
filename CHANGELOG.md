@@ -4,6 +4,34 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.3.9-beta] — 2026-06-27 (4.x beta channel)
+
+### Added — recover bad doctor suppressions, and amend approved contracts in place
+
+Doctor now has an `unsuppress` command, so a suppression you no longer want can
+be removed through the sanctioned interface instead of hand-editing the
+suppressions file. It includes `--prune-malformed` to clear out invalid entries
+in one step if the file was ever corrupted.
+
+In a large-story workflow, when you approve a change to a frozen success-criteria
+contract, the assistant can now apply it for you — edit the criterion, re-freeze
+the hash, and rebind the workflow in one step — instead of asking you to
+hand-edit YAML and re-run shell commands. Without a recorded approval the change
+stays blocked, as before.
+
+### Fixed — safer suppressions, smarter duplicate handling, fewer false blocks
+
+- Doctor's `suppress` now rejects a malformed finding id (for example, several
+  ids accidentally passed as one newline-joined value) before writing, so the
+  suppressions file can no longer be silently corrupted.
+- When the same work item exists as byte-identical copies in two folders, doctor
+  now offers to drop one copy (backed up and reversible) rather than renumbering
+  one into a second, distinct-looking item.
+- The large-story workflow no longer blocks writes to your session scratchpad or
+  other files outside the project while you are mid-workflow.
+
+---
+
 ## [4.3.8-beta] — 2026-06-26 (4.x beta channel)
 
 ### Fixed — your status changes are no longer silently reverted
