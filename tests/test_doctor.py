@@ -63,6 +63,8 @@ from doctor import (
     persist,
     load_suppressions,
     save_suppressions,
+    suppress_finding,
+    unsuppress_finding,
     compute_resolved_suppressions,
     prune_resolved_suppressions,
     main,
@@ -10496,3 +10498,61 @@ class TestT3eStep7RescanAfterDelegation:
                     f"Step 7 handler for {handler} must carry the "
                     f"re-scan-after-delegation instruction; got bullet: {b[:300]!r}"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Suppression recovery: finding-id validation + unsuppress (improvement request)
+# ---------------------------------------------------------------------------
+
+class TestSuppressionRecovery:
+    def test_suppress_rejects_multiline_finding_id(self, tmp_path):
+        blob = "a:b:c\nd:e:f\ng:h:i"
+        res = suppress_finding(tmp_path, blob)
+        assert res["suppressed"] is False
+        assert "control characters" in res["error"]
+        assert load_suppressions(tmp_path) == []  # nothing written
+
+    def test_suppress_rejects_whitespace_padded_id(self, tmp_path):
+        res = suppress_finding(tmp_path, "  cat:check:tgt  ")
+        assert res["suppressed"] is False
+        assert load_suppressions(tmp_path) == []
+
+    def test_suppress_accepts_valid_id(self, tmp_path):
+        fid = "state-integrity:phase-missing:phase.yaml"
+        res = suppress_finding(tmp_path, fid)
+        assert res["suppressed"] is True
+        assert any(e["finding_id"] == fid for e in load_suppressions(tmp_path))
+
+    def test_unsuppress_removes_one_entry(self, tmp_path):
+        suppress_finding(tmp_path, "a:b:c")
+        suppress_finding(tmp_path, "d:e:f")
+        res = unsuppress_finding(tmp_path, finding_id="a:b:c")
+        assert res["removed_count"] == 1
+        assert {e.get("finding_id") for e in load_suppressions(tmp_path)} == {"d:e:f"}
+
+    def test_unsuppress_absent_id_is_noop_success(self, tmp_path):
+        suppress_finding(tmp_path, "a:b:c")
+        res = unsuppress_finding(tmp_path, finding_id="zzz:zz:zz")
+        assert res["unsuppressed"] is True
+        assert res["removed_count"] == 0
+        assert {e.get("finding_id") for e in load_suppressions(tmp_path)} == {"a:b:c"}
+
+    def test_unsuppress_prune_malformed_recovers_corrupted_ledger(self, tmp_path):
+        # The Gap-1 incident: a corrupted ledger written before validation existed.
+        save_suppressions(tmp_path, [
+            {"finding_id": "good:check:tgt", "suppressed_at": "x"},
+            {"finding_id": "bad1\nbad2", "suppressed_at": "x"},
+            {"suppressed_at": "x"},  # missing finding_id
+        ])
+        res = unsuppress_finding(tmp_path, prune_malformed=True)
+        assert res["removed_count"] == 2
+        assert [e.get("finding_id") for e in load_suppressions(tmp_path)] == ["good:check:tgt"]
+
+    def test_main_suppress_rejects_and_exits_nonzero(self, tmp_path, capsys):
+        rc = main(["suppress", "--project-dir", str(tmp_path), "--finding-id", "a:b:c\nd:e:f"])
+        assert rc == 1
+        assert load_suppressions(tmp_path) == []
+
+    def test_main_unsuppress_requires_a_target(self, tmp_path, capsys):
+        rc = main(["unsuppress", "--project-dir", str(tmp_path)])
+        assert rc == 1

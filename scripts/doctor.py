@@ -2284,6 +2284,28 @@ def prune_resolved_suppressions(
     return resolved
 
 
+def _validate_finding_id(finding_id: object) -> str | None:
+    """Return an error message if *finding_id* is not a safe single-line id,
+    else None.
+
+    Guards the only sanctioned writer of doctor-suppressions.json against
+    malformed input — e.g. a newline-joined blob of many ids passed as one
+    argument, which would otherwise be stored verbatim and corrupt the file.
+    """
+    if not isinstance(finding_id, str):
+        return "finding_id must be a string"
+    if finding_id == "":
+        return "finding_id is empty"
+    if finding_id != finding_id.strip():
+        return "finding_id has leading or trailing whitespace"
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in finding_id):
+        return (
+            "finding_id contains control characters; pass one id per call "
+            "(newlines/tabs are not allowed)"
+        )
+    return None
+
+
 def suppress_finding(
     project_dir: Path, finding_id: str, reason: str | None = None
 ) -> dict:
@@ -2293,6 +2315,9 @@ def suppress_finding(
     existing entry is preserved. This is the script-owned path that replaces
     the former skill-side inline write to doctor-suppressions.json (S3).
     """
+    error = _validate_finding_id(finding_id)
+    if error:
+        return {"suppressed": False, "finding_id": finding_id, "error": error}
     entries = load_suppressions(project_dir)
     already = any(e.get("finding_id") == finding_id for e in entries)
     if not already:
@@ -2306,6 +2331,39 @@ def suppress_finding(
         "finding_id": finding_id,
         "already_suppressed": already,
         "count": len(entries),
+    }
+
+
+def unsuppress_finding(
+    project_dir: Path,
+    finding_id: str | None = None,
+    *,
+    prune_malformed: bool = False,
+) -> dict:
+    """Remove suppression entries through the same load/save owner as suppress.
+
+    Idempotent: removing an absent id is a no-op success. With
+    ``prune_malformed`` also drops any entry whose finding_id is missing or
+    fails ``_validate_finding_id`` — a one-command recovery from a ledger that
+    was corrupted before validation existed.
+    """
+    entries = load_suppressions(project_dir)
+    removed: list[dict] = []
+    remaining: list[dict] = []
+    for entry in entries:
+        fid = entry.get("finding_id")
+        drop = (finding_id is not None and fid == finding_id) or (
+            prune_malformed and (fid is None or _validate_finding_id(fid) is not None)
+        )
+        (removed if drop else remaining).append(entry)
+    if removed:
+        save_suppressions(project_dir, remaining)
+    return {
+        "unsuppressed": True,
+        "finding_id": finding_id,
+        "prune_malformed": prune_malformed,
+        "removed_count": len(removed),
+        "count": len(remaining),
     }
 
 
@@ -4266,6 +4324,10 @@ def main(argv: list[str] | None = None) -> int:
     p_suppress.add_argument("--finding-id", required=True)
     p_suppress.add_argument("--reason", default=None)
 
+    p_unsuppress = _add("unsuppress")
+    p_unsuppress.add_argument("--finding-id", default=None)
+    p_unsuppress.add_argument("--prune-malformed", action="store_true", default=False)
+
     _add("dry-run")
 
     p_persist = _add("persist")
@@ -4338,10 +4400,26 @@ def main(argv: list[str] | None = None) -> int:
             _emit(record_action(args.archive_dir.resolve(), action))
 
         elif args.cmd == "suppress":
-            _emit(suppress_finding(
+            result = suppress_finding(
                 args.project_dir.resolve(),
                 args.finding_id,
                 reason=args.reason,
+            )
+            _emit(result)
+            if not result.get("suppressed"):
+                return 1
+
+        elif args.cmd == "unsuppress":
+            if not args.finding_id and not args.prune_malformed:
+                _emit({
+                    "unsuppressed": False,
+                    "error": "provide --finding-id and/or --prune-malformed",
+                })
+                return 1
+            _emit(unsuppress_finding(
+                args.project_dir.resolve(),
+                finding_id=args.finding_id,
+                prune_malformed=args.prune_malformed,
             ))
 
         elif args.cmd == "dry-run":
