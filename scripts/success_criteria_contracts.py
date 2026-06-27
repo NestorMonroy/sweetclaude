@@ -976,7 +976,12 @@ def _active_workflow_for_different_story(project: Path, story_id: str) -> bool:
     return False
 
 
-def _skeleton_criterion(story_id: str, index: int) -> dict[str, Any]:
+VALID_WORKFLOW_TYPES = ("large-story", "small-story")
+
+
+def _skeleton_criterion(
+    story_id: str, index: int, workflow_type: str = "large-story"
+) -> dict[str, Any]:
     criterion_id = f"SC-{index:03d}"
     return {
         "id": criterion_id,
@@ -985,7 +990,7 @@ def _skeleton_criterion(story_id: str, index: int) -> dict[str, Any]:
         "binary_predicate": f"placeholder measurement command {index} exits with code 0",
         "measurement_type": "command",
         "measurement_procedure": f"Run the criterion {index} measurement command; record the exit code.",
-        "evidence_artifact": f".sweetclaude/reports/large-story/{story_id}/evidence/{criterion_id}.json",
+        "evidence_artifact": f".sweetclaude/reports/{workflow_type}/{story_id}/evidence/{criterion_id}.json",
         "evidence_owner": "controller",
         "pass_condition": "Exit code equals 0",
         "fail_condition": "Exit code differs from 0",
@@ -1002,6 +1007,7 @@ def init_contract(
     title: str = "",
     objective: str = "",
     criteria_count: int = 3,
+    workflow_type: str = "large-story",
     force: bool = False,
 ) -> dict[str, Any]:
     """Write a schema-valid success criteria contract skeleton.
@@ -1011,6 +1017,13 @@ def init_contract(
     freeze-contract. Refuses to overwrite while a workflow is active —
     post-freeze amendment is human-gated at the file layer.
     """
+    if workflow_type not in VALID_WORKFLOW_TYPES:
+        return {
+            "ok": False,
+            "error": (
+                f"workflow_type must be one of {VALID_WORKFLOW_TYPES}; got {workflow_type!r}."
+            ),
+        }
     project = Path(project_dir).expanduser().resolve(strict=False)
     contract_path = project / DEFAULT_CONTRACT_PATH
     if _active_workflow_for_different_story(project, story_id):
@@ -1056,7 +1069,8 @@ def init_contract(
             {"id": "NONGOAL-001", "statement": "PLACEHOLDER non-goal: replace with one exclusion."}
         ],
         "success_criteria": [
-            _skeleton_criterion(story_id, index) for index in range(1, criteria_count + 1)
+            _skeleton_criterion(story_id, index, workflow_type)
+            for index in range(1, criteria_count + 1)
         ],
         "contract_freeze": {
             "frozen_at": "",
@@ -1137,6 +1151,11 @@ def main(argv: list[str] | None = None) -> int:
     p_init.add_argument("--title", default="")
     p_init.add_argument("--objective", default="")
     p_init.add_argument("--criteria", type=int, default=3)
+    p_init.add_argument(
+        "--workflow-type",
+        default="large-story",
+        choices=sorted(VALID_WORKFLOW_TYPES),
+    )
     p_init.add_argument("--force", action="store_true")
 
     p_freeze = sub.add_parser("freeze-contract")
@@ -1168,6 +1187,7 @@ def main(argv: list[str] | None = None) -> int:
                 title=args.title,
                 objective=args.objective,
                 criteria_count=args.criteria,
+                workflow_type=args.workflow_type,
                 force=args.force,
             )
         elif args.cmd == "freeze-contract":

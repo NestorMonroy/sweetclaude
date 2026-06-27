@@ -276,3 +276,73 @@ def test_init_workflow_fails_without_backlog_file(tmp_path):
     assert result["code"] == "blocked_init_no_story"
     wf_path = project / ".sweetclaude" / "state" / "workflows" / "PHANTOM-001.yaml"
     assert not wf_path.exists(), "No workflow state should be written without a backlog story"
+
+
+def test_init_contract_small_story_evidence_paths_match_controller(tmp_path):
+    """Small-story contracts must freeze small-story evidence paths.
+
+    The skeleton previously hardcoded large-story/ in every evidence_artifact,
+    while the small-story controller writes small-story/ at VERIFY. The frozen
+    contract and the controller ledger then disagreed and the completion
+    cross-check always failed. init_contract must honor workflow_type.
+    """
+    from success_criteria_contracts import init_contract
+
+    _create_backlog_file(tmp_path, "STORY-001")
+    init_contract(
+        project_dir=tmp_path,
+        story_id="STORY-001",
+        criteria_count=2,
+        workflow_type="small-story",
+    )
+    contract = yaml.safe_load(
+        (tmp_path / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    for index, criterion in enumerate(contract["success_criteria"], start=1):
+        assert criterion["evidence_artifact"] == (
+            f".sweetclaude/reports/small-story/STORY-001/evidence/SC-{index:03d}.json"
+        )
+
+
+def test_small_story_verify_passes_with_init_contract_generated_contract(tmp_path):
+    """End-to-end: a contract scaffolded via init-contract must clear VERIFY.
+
+    Reproduces the real SKILL path (init-contract, not a hand-built fixture).
+    Before the workflow_type fix the frozen contract carried large-story/
+    evidence paths while the controller wrote small-story/, so the completion
+    cross-check raised at VERIFY. This drives the full flow to prove it passes.
+    """
+    from success_criteria_contracts import freeze_contract, init_contract
+
+    project = tmp_path
+    _create_backlog_file(project, "STORY-001")
+    assert init_contract(
+        project_dir=project,
+        story_id="STORY-001",
+        criteria_count=1,
+        workflow_type="small-story",
+    )["ok"]
+    assert freeze_contract(project_dir=project)["ok"]
+    assert init_workflow(project_dir=project, workflow_id="STORY-001")["ok"]
+    _advance_to_implement(project, "STORY-001")
+    record_evidence(project_dir=project, tool="Write", file_path="app.py", workflow_id="STORY-001")
+    result = enter_verify_phase(project_dir=project, workflow_id="STORY-001")
+    assert result["ok"], result
+
+
+def test_init_contract_defaults_to_large_story(tmp_path):
+    """Default workflow_type preserves the historical large-story path."""
+    from success_criteria_contracts import init_contract
+
+    _create_backlog_file(tmp_path, "STORY-001")
+    init_contract(project_dir=tmp_path, story_id="STORY-001", criteria_count=1)
+    contract = yaml.safe_load(
+        (tmp_path / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert contract["success_criteria"][0]["evidence_artifact"] == (
+        ".sweetclaude/reports/large-story/STORY-001/evidence/SC-001.json"
+    )
