@@ -155,7 +155,10 @@ def test_doctor_routes_accepted_legacy_layout_to_compatibility_mode(tmp_path):
     assert route["primary_action"]["label"] == "Continue in compatibility mode"
     assert route["primary_action"]["capability_id"] == "doctor.compatibility_mode"
     assert route["primary_action"]["mutates_project"] is False
-    assert route["guard"]["migrate_allowed"] is False
+    # accepted_legacy_taxonomy is a compatibility-mode shape that still OFFERS
+    # migration (manifest: migrate_allowed: true) — staying in compat and
+    # migrating to v4 are both available from here.
+    assert route["guard"]["migrate_allowed"] is True
     # S7 unblocked migrate.typed_legacy_backlog, so the accepted_legacy_taxonomy
     # route no longer lists it as a blocked capability.
     assert route["blocked_capabilities"] == []
