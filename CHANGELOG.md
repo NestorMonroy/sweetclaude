@@ -4,6 +4,19 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.3.10-beta] — 2026-06-27 (4.x beta channel)
+
+### Fixed — archived orphans no longer re-flagged on every scan
+
+When you resolve an orphaned work-item file by archiving it, the file moves into
+`.sweetclaude/product/archive/orphans/`. The orphan scan used by both doctor and
+update searched the entire product tree, including that archive directory, so
+legacy-prefix files (`US-`, `BL-`, `STORY-`, and similar) reappeared as findings
+on the next scan — archiving them never stuck. The scan now skips its own archive
+directory, so an archived orphan stays resolved.
+
+---
+
 ## [4.3.9-beta] — 2026-06-27 (4.x beta channel)
 
 ### Added — recover bad doctor suppressions, and amend approved contracts in place
