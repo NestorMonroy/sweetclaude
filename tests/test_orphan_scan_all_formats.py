@@ -342,6 +342,32 @@ def test_archived_orphan_not_in_subsequent_scan(tmp_path):
     ), "archived file must not appear in subsequent scan"
 
 
+def test_archived_legacy_prefix_orphan_not_in_subsequent_scan(tmp_path):
+    # Legacy-prefix files (US-, BL-, STORY-, ...) are caught by the whole-tree
+    # rglob in scan step 2, which descends into the scanner's own archive/orphans/
+    # directory. Archiving such a file must still make it stick across scans.
+    base = tmp_path / ".sweetclaude" / "product"
+    bl = base / "backlog"
+    _w(bl / "ISSUE-001-normal.md", "ISSUE-001")
+    _w(bl / "US-BL011-observability.md", "US-BL011")
+
+    subprocess.run(
+        ["python3", str(SCRIPT), "archive-orphans", "--project-dir", str(tmp_path),
+         "--paths", json.dumps([".sweetclaude/product/backlog/US-BL011-observability.md"])],
+        capture_output=True, text=True, check=True,
+    )
+
+    assert (base / "archive" / "orphans" / "US-BL011-observability.md").exists()
+
+    rescan = _scan(tmp_path)
+    assert not any(
+        "archive/orphans" in f["file"] for f in rescan["findings"]
+    ), "archived legacy-prefix file must not be re-flagged from archive/orphans/"
+    assert not any(
+        f["id"] == "US-BL011" for f in rescan["findings"]
+    ), "archived legacy-prefix file must not appear in subsequent scan"
+
+
 # --- Action 5: Acknowledge round-trip verification ---
 
 

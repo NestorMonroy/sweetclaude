@@ -527,10 +527,14 @@ def scan_orphans(project_dir: pathlib.Path) -> dict:
     findings: list[dict] = []
     seen: set[str] = set()
     acknowledged = _load_orphan_registry(project_dir)
+    archive_root = (product_base / "archive").resolve()
 
     def _add(path: pathlib.Path, category: str, detail: str) -> None:
         key = str(path.resolve())
         if key in seen or str(path) in expected_files:
+            return
+        resolved = pathlib.Path(key)
+        if resolved == archive_root or archive_root in resolved.parents:
             return
         try:
             rel = str(path.relative_to(project_dir))
