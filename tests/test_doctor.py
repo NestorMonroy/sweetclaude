@@ -10556,3 +10556,65 @@ class TestSuppressionRecovery:
     def test_main_unsuppress_requires_a_target(self, tmp_path, capsys):
         rc = main(["unsuppress", "--project-dir", str(tmp_path)])
         assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# Byte-identical duplicate work items: resolve_identical_duplicate (Gap 3)
+# ---------------------------------------------------------------------------
+
+class TestIdenticalDuplicateResolution:
+    def _fixture(self, tmp_path, *, created_differs=False):
+        bl = {"id": "ISSUE-044", "type": "story", "title": "Same", "status": "new"}
+        rm = dict(bl)
+        if created_differs:
+            bl["created"] = "2026-01-01"
+            rm["created"] = "2026-02-02"
+        return build_fixture(tmp_path, overrides={
+            "backlog_files": [{"name": "ISSUE-044-x.md", "frontmatter": bl}],
+            "roadmap_files": [{"name": "ISSUE-044-x.md", "frontmatter": rm}],
+        })
+
+    def _dup_finding(self, project_dir):
+        state = build_project_state(project_dir)
+        return next(
+            x for x in check_storage_lint(state)
+            if x.id == "storage-lint:cross-location-duplicate-id:ISSUE-044"
+        )
+
+    def test_identical_cross_location_offers_resolve_recipe(self, tmp_path, fake_home):
+        project_dir = self._fixture(tmp_path)
+        _make_cache_stub(project_dir)
+        f = self._dup_finding(project_dir)
+        assert f.fix_recipe["type"] == "resolve_identical_duplicate"
+        assert "/backlog/" in f.fix_recipe["recommended_keep"]
+        assert "/roadmap/" in f.fix_recipe["recommended_remove"]
+
+    def test_identical_ignores_volatile_created(self, tmp_path, fake_home):
+        project_dir = self._fixture(tmp_path, created_differs=True)
+        _make_cache_stub(project_dir)
+        f = self._dup_finding(project_dir)
+        assert f.fix_recipe["type"] == "resolve_identical_duplicate"
+
+    def test_divergent_cross_location_keeps_renumber(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path, overrides={
+            "backlog_files": [{"name": "ISSUE-044-x.md", "frontmatter": {
+                "id": "ISSUE-044", "type": "story", "title": "One", "status": "new"}}],
+            "roadmap_files": [{"name": "ISSUE-044-y.md", "frontmatter": {
+                "id": "ISSUE-044", "type": "story", "title": "DIFFERENT", "status": "active"}}],
+        })
+        _make_cache_stub(project_dir)
+        f = self._dup_finding(project_dir)
+        assert f.fix_recipe["type"] == "renumber_duplicate"
+
+    def test_resolve_remove_is_deleted_and_backed_up(self, tmp_path, fake_home):
+        project_dir = self._fixture(tmp_path)
+        _make_cache_stub(project_dir)
+        f = self._dup_finding(project_dir)
+        remove = f.fix_recipe["recommended_remove"]
+        keep = f.fix_recipe["recommended_keep"]
+        archive = create_archive(project_dir)
+        res = execute_recipe(project_dir, {"action": "delete_file", "file": remove}, archive)
+        assert res.success
+        assert not Path(remove).exists()      # the duplicate copy is gone
+        assert Path(keep).exists()            # the survivor remains
+        assert res.backup_path is not None    # before-image archived -> restore-reversible

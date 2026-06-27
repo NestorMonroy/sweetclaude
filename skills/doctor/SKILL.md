@@ -615,6 +615,12 @@ For fix types that require further user input or skill delegation:
   ```
   If the chosen file is genuinely absent the executor returns failure with a clear error — surface that, never a silent skip. Report the new-id assignment ("{old_id} → {new_id} in {file}"). Then record the prompted-fix action.
 
+- `resolve_identical_duplicate`: The two colliding files are **byte-identical** (the same item copied between folders), so renumbering would mint a phantom second item — the correct fix is to drop one copy. The prompt recipe carries `fix_recipe.duplicate_id`, both files in `fix_recipe.files` with labels in `fix_recipe.labels`, and a recommended survivor/removal in `fix_recipe.recommended_keep` / `fix_recipe.recommended_remove` (the backlog copy is recommended kept, the status-appropriate home for an unscheduled item). Confirm via AskUserQuestion (**Keep {recommended_keep}, drop the other** (default) → remove `recommended_remove`; **Keep the other copy instead** → remove `recommended_keep`; plus a "Something else" escape). Apply through the executor by building a finding whose recipe is the executable `delete_file` action carrying the copy to remove. Do **not** `rm` in the skill: the executor backs up the removed copy's bytes through the pipeline (before-image → empty), so `restore` recreates it.
+  ```bash
+  echo '[{"id": "{finding_id}", "category": "storage_lint", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "delete_file", "file": "{remove_path}"}}]' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+  ```
+  Report which copy was removed and which survived. Then record the prompted-fix action.
+
   ```bash
   echo '[{"id": "{finding_id}", "category": "compatibility_mode", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "write_field", "file": "{fix_recipe.file}", "key_path": ["recovery", "taxonomy", "compatibility_exited"], "value": true}}]' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
   ```
@@ -738,7 +744,7 @@ Silent — do not report pruning results to the user.
   - File fixes (auto and prompted) → `auto-fix` / `auto-fix --include-prompted`, which
     routes through `execute_recipe` for backup + diff recording per FR-2.4. This covers
     every prompted recipe — `config_conflict`, `yaml_repair`, `hook_restore`, `file_move`,
-    and `renumber_duplicate`.
+    `renumber_duplicate`, and `resolve_identical_duplicate`.
   - Suppressions → `suppress` (Steps 6 and 8), which owns the write to
     `doctor-suppressions.json` via `save_suppressions`.
   - Skip / suppress bookkeeping and migration outcomes → `record-action`.

@@ -662,6 +662,41 @@ def check_hook_health(state: ProjectState) -> list[Finding]:
     return findings
 
 
+_VOLATILE_FRONTMATTER_KEYS = ("created", "updated", "last_updated", "modified")
+
+
+def _content_sans_volatile(path: Path):
+    """Return (frontmatter_without_volatile_keys, body) for duplicate comparison,
+    or None if unreadable. Volatile keys (e.g. created) are dropped so two copies
+    that differ only by a timestamp still compare equal."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return ({}, text)
+    try:
+        fm = yaml.safe_load(parts[1]) or {}
+    except Exception:
+        return None
+    if isinstance(fm, dict):
+        for key in _VOLATILE_FRONTMATTER_KEYS:
+            fm.pop(key, None)
+    return (fm, parts[2])
+
+
+def _duplicate_files_identical(file_a: Path, file_b: Path) -> bool:
+    """True if two colliding files are the same item once volatile frontmatter is
+    ignored. Unreadable/ambiguous -> False (treat as divergent, keeping the safe
+    renumber offer)."""
+    a = _content_sans_volatile(file_a)
+    b = _content_sans_volatile(file_b)
+    if a is None or b is None:
+        return False
+    return a == b
+
+
 def check_storage_lint(state: ProjectState) -> list[Finding]:
     findings: list[Finding] = []
     backlog_dir = state.product_base / "backlog"
@@ -685,9 +720,33 @@ def check_storage_lint(state: ProjectState) -> list[Finding]:
             file_a = backlog_files[dup_id]
             file_b = roadmap_files[dup_id]
             proposed = _propose_next_id(dup_id, all_known_ids)
-            # Same resolution contract as file-diagnostics:duplicate-id —
-            # this finding supersedes that one in scan dedup (F5.1.4), so it
-            # must carry the renumber fix, not strand the user report-only.
+            label_a = str(file_a.parent.relative_to(state.product_base))
+            label_b = str(file_b.parent.relative_to(state.product_base))
+            # Identical copies (same item copied between folders) must be
+            # de-duplicated by dropping one, not renumbered — renumbering would
+            # mint a phantom second item. Divergent files are genuinely distinct,
+            # so they keep the renumber offer.
+            if _duplicate_files_identical(file_a, file_b):
+                fix_recipe = {
+                    "action": "prompt",
+                    "type": "resolve_identical_duplicate",
+                    "duplicate_id": dup_id,
+                    "files": [str(file_a), str(file_b)],
+                    "labels": [label_a, label_b],
+                    # Recommend keeping the backlog copy (the status-appropriate
+                    # home for an unscheduled item) and removing the roadmap copy.
+                    "recommended_keep": str(file_a),
+                    "recommended_remove": str(file_b),
+                }
+            else:
+                fix_recipe = {
+                    "action": "prompt",
+                    "type": "renumber_duplicate",
+                    "duplicate_id": dup_id,
+                    "files": [str(file_a), str(file_b)],
+                    "labels": [label_a, label_b],
+                    "proposed_new_id": proposed,
+                }
             findings.append(Finding(
                 id=f"storage-lint:cross-location-duplicate-id:{dup_id}",
                 category="storage_lint",
@@ -696,17 +755,7 @@ def check_storage_lint(state: ProjectState) -> list[Finding]:
                 detail=f"ID {dup_id} found in both {file_a} and {file_b}",
                 file_paths=[str(file_a), str(file_b)],
                 fix_type="prompted",
-                fix_recipe={
-                    "action": "prompt",
-                    "type": "renumber_duplicate",
-                    "duplicate_id": dup_id,
-                    "files": [str(file_a), str(file_b)],
-                    "labels": [
-                        str(file_a.parent.relative_to(state.product_base)),
-                        str(file_b.parent.relative_to(state.product_base)),
-                    ],
-                    "proposed_new_id": proposed,
-                },
+                fix_recipe=fix_recipe,
             ))
 
     if backlog_dir.is_dir():
@@ -1382,20 +1431,20 @@ def check_file_diagnostics(state: ProjectState) -> list[Finding]:
                     first = seen_ids[item_id]
                     file_a, file_b = str(first), str(p)
                     proposed = _propose_next_id(item_id, all_known_ids)
-                    findings.append(Finding(
-                        id=f"file-diagnostics:duplicate-id:{item_id}",
-                        category="file_diagnostics",
-                        severity="error",
-                        summary=f"ID {item_id} is used by multiple files",
-                        detail=f"duplicate-id: {item_id} in {file_b} and {file_a}",
-                        file_paths=[file_a, file_b],
-                        fix_type="prompted",
-                        # renumber_duplicate: the user picks WHICH colliding copy
-                        # gets a fresh id. The recipe carries both files, their
-                        # location labels, the duplicate id, and a proposed
-                        # next-available id so the skill can renumber the chosen
-                        # file (rewrite its id + rename it) via the executor.
-                        fix_recipe={
+                    # Identical copies -> drop one (delete via executor, reversible);
+                    # divergent copies -> renumber one to a fresh id.
+                    if _duplicate_files_identical(Path(file_a), Path(file_b)):
+                        recipe = {
+                            "action": "prompt",
+                            "type": "resolve_identical_duplicate",
+                            "duplicate_id": item_id,
+                            "files": [file_a, file_b],
+                            "labels": [Path(file_a).parent.name, Path(file_b).parent.name],
+                            "recommended_keep": file_a,
+                            "recommended_remove": file_b,
+                        }
+                    else:
+                        recipe = {
                             "action": "prompt",
                             "type": "renumber_duplicate",
                             "duplicate_id": item_id,
@@ -1405,7 +1454,16 @@ def check_file_diagnostics(state: ProjectState) -> list[Finding]:
                                 Path(file_b).parent.name,
                             ],
                             "proposed_new_id": proposed,
-                        },
+                        }
+                    findings.append(Finding(
+                        id=f"file-diagnostics:duplicate-id:{item_id}",
+                        category="file_diagnostics",
+                        severity="error",
+                        summary=f"ID {item_id} is used by multiple files",
+                        detail=f"duplicate-id: {item_id} in {file_b} and {file_a}",
+                        file_paths=[file_a, file_b],
+                        fix_type="prompted",
+                        fix_recipe=recipe,
                     ))
                 else:
                     seen_ids[item_id] = p
