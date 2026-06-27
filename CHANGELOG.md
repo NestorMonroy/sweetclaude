@@ -4,6 +4,23 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.3.12-beta] — 2026-06-27 (4.x beta channel)
+
+### Added — small-story workflows can amend a frozen contract with approval
+
+Small-story workflows could not change a frozen success-criteria contract once
+a workflow was underway: the only option was a hard block plus a manual file
+edit, and re-initializing to pick up the change is refused while a workflow is
+in flight. Small-story now has the same approval-gated amendment path that
+large-story already had. With explicit user approval you can edit a single
+frozen criterion; the contract is re-frozen and the active workflow is rebound
+to it in place, with the phase preserved and an audit record written — no
+re-initialization required. Each approval is single-use and scoped to one
+workflow and criterion. Amendments may only edit existing criteria, never add,
+remove, or re-key them.
+
+---
+
 ## [4.3.11-beta] — 2026-06-27 (4.x beta channel)
 
 ### Fixed — small-story workflows now clear the VERIFY gate
