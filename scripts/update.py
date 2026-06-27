@@ -71,6 +71,12 @@ def _major_version(v: str) -> int:
     return int(m.group(1)) if m else 0
 
 
+def _semver_tuple(v):
+    """(major, minor, patch) for a version string, or None if unparseable."""
+    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", str(v or ""))
+    return tuple(int(p) for p in m.groups()) if m else None
+
+
 # ---------------------------------------------------------------------------
 # preflight
 # ---------------------------------------------------------------------------
@@ -517,9 +523,25 @@ def cmd_metadata(args: argparse.Namespace) -> int:
             import yaml
             with open(sc_yaml) as f:
                 d = yaml.safe_load(f) or {}
-            recorded = (d.get("framework") or {}).get("installed_version")
-            if recorded != args.version:
-                d.setdefault("framework", {})["installed_version"] = args.version
+            framework = d.setdefault("framework", {})
+            changed = False
+            if framework.get("installed_version") != args.version:
+                framework["installed_version"] = args.version
+                changed = True
+            # Reconcile update.available against the just-installed version in
+            # the same write. An update consumes/supersedes any previously
+            # recorded "available" at or below the new version; leaving it set
+            # makes bootstrap offer a downgrade. A genuinely newer available
+            # (above installed) is preserved. Not deferred to a health check.
+            upd = framework.get("update")
+            if isinstance(upd, dict):
+                avail = upd.get("available")
+                avail_t = _semver_tuple(avail) if isinstance(avail, str) else None
+                inst_t = _semver_tuple(args.version)
+                if avail_t is not None and inst_t is not None and avail_t <= inst_t:
+                    upd["available"] = None
+                    changed = True
+            if changed:
                 tmp = tempfile.NamedTemporaryFile(
                     "w", dir=str(sc_yaml.parent), suffix=".tmp",
                     delete=False, encoding="utf-8",
