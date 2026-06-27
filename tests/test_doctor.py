@@ -2160,7 +2160,7 @@ class TestMigrationCurrency:
         orphan_script = project_dir / "scripts" / "migrate" / "migrate-v3-to-v4.py"
         orphan_script.parent.mkdir(parents=True, exist_ok=True)
         orphan_script.write_text(
-            'import json; print(json.dumps({"orphans": [{"file": "orphan.md"}]}))\n'
+            'import json; print(json.dumps({"findings": [{"file": "orphan.md"}]}))\n'
         )
 
         original_run = subprocess.run
@@ -2402,7 +2402,7 @@ class TestMigrationCurrency:
         orphan_script = project_dir / "scripts" / "migrate" / "migrate-v3-to-v4.py"
         orphan_script.parent.mkdir(parents=True, exist_ok=True)
         orphan_script.write_text(
-            'import json; print(json.dumps({"orphans": [{"file": "orphan.md"}]}))\n'
+            'import json; print(json.dumps({"findings": [{"file": "orphan.md"}]}))\n'
         )
 
         state = build_project_state(project_dir)
@@ -2425,7 +2425,7 @@ class TestMigrationCurrency:
         orphan_script = project_dir / "scripts" / "migrate" / "migrate-v3-to-v4.py"
         orphan_script.parent.mkdir(parents=True, exist_ok=True)
         orphan_script.write_text(
-            'import json; print(json.dumps({"orphans": []}))\n'
+            'import json; print(json.dumps({"findings": []}))\n'
         )
 
         state = build_project_state(project_dir)
