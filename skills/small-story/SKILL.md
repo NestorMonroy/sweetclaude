@@ -88,7 +88,7 @@ entered them into the ledger.
 4. Create or locate a frozen `success_criteria_contract` at
    `.sweetclaude/contracts/success-criteria-contract.yaml`. Do NOT hand-author
    the YAML — generate a schema-valid skeleton:
-   `python3 "$CONTRACTS" init-contract --project-dir . --story-id {workflow_id} --title "{title}" --criteria {n}`.
+   `python3 "$CONTRACTS" init-contract --project-dir . --story-id {workflow_id} --title "{title}" --criteria {n} --workflow-type small-story`.
    Then replace every PLACEHOLDER with the agreed objective, outcomes,
    non-goals, statements, and binary predicates. Evidence paths and enum
    fields are pre-filled — do not change them. Criteria must be binary and
