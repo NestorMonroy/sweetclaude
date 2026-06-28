@@ -19,7 +19,7 @@ from orchestrator import (
 
 _STEP_ID_SAFE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
-VALID_ACTIONS = {"approve", "iterate", "retry", "skip", "abort", "reset", "accept", "acknowledge"}
+VALID_ACTIONS = {"approve", "iterate", "retry", "skip", "abort", "reset", "accept", "acknowledge", "executed"}
 
 
 def _now_iso():
@@ -304,7 +304,16 @@ def _complete_sc(project_dir, workflow_id, result, workflow_state=None):
 
 
 def _invoke_agent(*args, **kwargs):
-    pass
+    # Default (production) executor seam. A Python subprocess cannot spawn a
+    # Claude Code subagent, so the real step execution is delegated to the
+    # conversational model: returning this sentinel makes run_loop yield an
+    # `execute_step` point. Tests inject a synchronous executor in place of this
+    # function (writing the artifact / returning a signal) and so never delegate.
+    return {"status": "delegate"}
+
+
+def _is_delegate(value):
+    return isinstance(value, dict) and value.get("status") == "delegate"
 
 
 def _extract_signal_from_path(output_path):
@@ -390,6 +399,11 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
         if step is None:
             raise ValueError("Step '{}' not found in template".format(current_step_id))
 
+        # Re-entry after the model executed this step out of band (resume action
+        # "executed"). The artifact is already on disk; skip invocation and stale
+        # output cleanup so we don't discard the model's work.
+        reentering = state.get("step_executed") == current_step_id
+
         gate = step.get("gate")
         if gate:
             already_passed = _gate_already_passed(state, step["id"], gate)
@@ -415,7 +429,7 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
             _check_containment(output_path, project_dir)
 
             existing_artifact_path = state.get("artifacts", {}).get(output_artifact)
-            if existing_artifact_path:
+            if existing_artifact_path and not reentering:
                 _check_containment(existing_artifact_path, project_dir)
                 existing_abs = os.path.abspath(existing_artifact_path)
                 output_abs = os.path.abspath(output_path)
@@ -429,7 +443,7 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
                             "payload": {"error": str(e), "actions": ["retry", "skip", "abort"]}
                         }
 
-            if os.path.exists(output_path):
+            if os.path.exists(output_path) and not reentering:
                 try:
                     os.remove(output_path)
                 except OSError as e:
@@ -460,16 +474,37 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
 
             model = step.get("model", "sonnet")
 
-            agent_return_value = _invoke_agent(
-                step=step,
-                state=state,
-                state_param=state,
-                project_dir_str=project_dir,
-                prompt=prompt,
-                output_path=output_path,
-                input_paths=input_paths,
-                model=model,
-            )
+            if reentering:
+                # Model already executed this step out of band; its output is on
+                # disk. Skip invocation and fall through to post-processing.
+                agent_return_value = None
+            else:
+                agent_return_value = _invoke_agent(
+                    step=step,
+                    state=state,
+                    state_param=state,
+                    project_dir_str=project_dir,
+                    prompt=prompt,
+                    output_path=output_path,
+                    input_paths=input_paths,
+                    model=model,
+                )
+                if _is_delegate(agent_return_value):
+                    state["status"] = "waiting_for_agent"
+                    _save_state(workflow_id, state, project_dir, output_dir)
+                    return {
+                        "reason": "execute_step",
+                        "step_id": step["id"],
+                        "payload": {
+                            "agent": agent,
+                            "subagent_type": step.get("subagent_type"),
+                            "model": model,
+                            "input_paths": [str(p) for p in input_paths],
+                            "output_path": output_path,
+                            "prompt": prompt,
+                            "actions": ["executed", "abort"],
+                        },
+                    }
         else:
             agent_return_value = _invoke_agent(
                 step=step,
@@ -635,6 +670,7 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
 
         _write_checkpoint(state, "Completed step '{}'".format(current_step_id))
         state["current_step_id"] = next_step_id
+        state["step_executed"] = None
         state["status"] = "active"
 
         if next_step_id not in ("COMPLETE", "HALTED"):
@@ -685,6 +721,15 @@ def resume_loop(workflow_id, decision, project_dir=".", deference_level="collabo
     _add_session(state)
     _save_state(workflow_id, state, project_dir, output_dir)
 
+    if action == "executed":
+        # The model finished executing the step that yielded `execute_step` and
+        # wrote its artifact. Mark it executed and re-enter the loop, which skips
+        # invocation and runs post-processing (signal, routing, exit checks).
+        state["step_executed"] = current_step_id
+        state["status"] = "active"
+        _save_state(workflow_id, state, project_dir, output_dir)
+        return run_loop(workflow_id, project_dir=project_dir, deference_level=deference_level)
+
     if action == "approve":
         step = _find_step(current_step_id, steps)
         if step:
@@ -698,6 +743,7 @@ def resume_loop(workflow_id, decision, project_dir=".", deference_level="collabo
         prior = _find_prior_step(current_step_id, steps)
         if prior:
             state["current_step_id"] = prior["id"]
+            state["step_executed"] = None
             state["status"] = "active"
             _save_state(workflow_id, state, project_dir, output_dir)
         return {"reason": "iterated", "step_id": state.get("current_step_id"), "payload": {}}
@@ -714,6 +760,7 @@ def resume_loop(workflow_id, decision, project_dir=".", deference_level="collabo
                     output_path = _make_output_path(workflow_id, step["id"], output_artifact, output_dir, project_dir)
                     if os.path.exists(output_path):
                         os.remove(output_path)
+        state["step_executed"] = None
         state["status"] = "active"
         _save_state(workflow_id, state, project_dir, output_dir)
         return run_loop(workflow_id, project_dir=project_dir, deference_level=deference_level)
