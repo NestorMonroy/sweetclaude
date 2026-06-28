@@ -2486,3 +2486,98 @@ class TestBudget:
         result = resume_loop("STORY-025", {"action": "executed", "tokens": 999999},
                              project_dir=str(project_dir), deference_level="autonomous")
         assert result["reason"] == "complete"
+
+
+# ---------------------------------------------------------------------------
+# Scenario: adversarial-verify step shape (fan-out + vote)
+# ---------------------------------------------------------------------------
+
+class TestVerifyStep:
+    def _wf_state(self, tmp_path, workflow_id="STORY-025"):
+        path = tmp_path / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+        return yaml.safe_load(path.read_text())
+
+    def _verify_step(self, count=3, threshold="majority"):
+        step = _make_step("verify-bug", phase="VERIFY",
+                          routing={"confirmed": "continue", "refuted": "hard_stop_report"})
+        step["agent"] = None
+        step["verify"] = {"agent": "skeptic", "subagent_type": "research",
+                          "count": count, "threshold": threshold, "output_artifact": "verdict"}
+        return step
+
+    def test_verify_step_yields_fanout_payload(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="verify-bug",
+                                    steps=[self._verify_step(count=3)])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        assert result["reason"] == "execute_step"
+        v = result["payload"]["verify"]
+        assert v["count"] == 3
+        assert v["threshold"] == "majority"
+        assert v["agent"] == "skeptic"
+        assert len(v["slots"]) == 3
+
+    def test_relayed_majority_confirmed_routes_continue(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="verify-bug",
+                                    steps=[self._verify_step(count=3)])
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025",
+                             {"action": "executed", "verdicts": ["confirmed", "confirmed", "refuted"]},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+        vr = self._wf_state(tmp_path)["verify_results"]["verify-bug"]
+        assert vr["confirmed"] == 2
+        assert vr["signal"] == "confirmed"
+
+    def test_relayed_majority_refuted_routes_hard_stop(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="verify-bug",
+                                    steps=[self._verify_step(count=3)])
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025",
+                             {"action": "executed", "verdicts": ["refuted", "refuted", "confirmed"]},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "halted"
+
+    def test_threshold_all_refutes_on_single_dissent(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="verify-bug",
+                                    steps=[self._verify_step(count=3, threshold="all")])
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025",
+                             {"action": "executed", "verdicts": ["confirmed", "confirmed", "refuted"]},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "halted"
+
+    def test_verdicts_read_from_artifacts_when_not_relayed(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="verify-bug",
+                                    steps=[self._verify_step(count=3)])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        for s in result["payload"]["verify"]["slots"]:
+            op = s["output_path"]
+            os.makedirs(os.path.dirname(op), exist_ok=True)
+            with open(op, "w") as f:
+                f.write("---\nsignal: confirmed\n---\n")
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+
+    def test_missing_verdict_yields_failure(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="verify-bug",
+                                    steps=[self._verify_step(count=3)])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        only = result["payload"]["verify"]["slots"][0]["output_path"]
+        os.makedirs(os.path.dirname(only), exist_ok=True)
+        with open(only, "w") as f:
+            f.write("---\nsignal: confirmed\n---\n")
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "failure"

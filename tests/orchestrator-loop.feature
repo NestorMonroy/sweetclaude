@@ -94,6 +94,34 @@ Feature: Orchestrator main loop
     When the model writes one child artifact and resumes "executed"
     Then the loop advances
 
+  # --- Adversarial verify ---
+
+  Scenario: Verify step yields a fan-out of verifiers
+    Given a step that declares a verify block with a count
+    When the loop reaches the step
+    Then it yields one execute_step listing a verifier slot per count
+    And the payload includes the threshold
+
+  Scenario: Majority-confirmed verdict routes on "confirmed"
+    Given a verify step with threshold "majority"
+    When the model relays verdicts that are mostly confirmed
+    Then the loop routes on the "confirmed" signal
+
+  Scenario: Majority-refuted verdict routes on "refuted"
+    Given a verify step with threshold "majority"
+    When the model relays verdicts that are mostly refuted
+    Then the loop routes on the "refuted" signal
+
+  Scenario: Verdicts can be read from the verifier artifacts
+    Given a verify step with no relayed verdicts
+    When each verifier writes a confirmed/refuted signal to its slot
+    Then the loop tallies the artifacts to produce the aggregate signal
+
+  Scenario: A missing verdict fails the verify step
+    Given a verify step with no relayed verdicts
+    When not every verifier slot has a verdict
+    Then the loop yields a YieldPoint with reason "failure"
+
   # --- Budget ---
 
   Scenario: Step budget yields budget_exhausted
