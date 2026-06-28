@@ -4,6 +4,25 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.4.1-beta] — 2026-06-28 (4.x beta channel)
+
+### Fixed — small-story workflow resolution and status provenance
+
+Small-story finalize and status checks now use the resolved workflow id, so
+completion validation reports against the correct workflow instead of a raw
+unresolved id. Separately, setting a status that already matches the current
+one now still records an explicit `source: manual` flag — protecting a status
+you set by hand from being overridden by automatic parent/child roll-up.
+
+### Changed — small-story init guidance
+
+Init error messages and the small-story skill now spell out the required
+sequence: commit the frozen contract on the trunk branch, run init on trunk,
+then create your implementation branch so it carries the workflow state
+forward. Branching before init previously forced a confusing recovery cycle.
+
+---
+
 ## [4.4.0-beta] — 2026-06-27 (4.x beta channel)
 
 ### Added — orchestrator executor and failure reporting
