@@ -315,6 +315,24 @@ def write_status(filepath: str, new_status: str, actor: str, project_dir: str | 
     old_status = fm_check["status"]
 
     if old_status == new_status:
+        # Status is already correct. Still allow an explicit (non-sync) operator
+        # action to update provenance only — e.g. marking an already-correct
+        # status as `source: manual` to protect it from auto roll-up. Auto-sync
+        # (_from_sync) must never take this path, so it cannot downgrade a manual
+        # flag to auto when the status happens to match.
+        if (not _from_sync) and source is not None and fm.get("source") != source:
+            fm["source"] = source
+            fm["updated"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            _atomic_write_frontmatter(path, fm, body)
+
+            pd = _resolve_project_dir(filepath, project_dir)
+            entity = fm.get("id", path.stem)
+            try:
+                file_rel = str(path.relative_to(pd))
+            except ValueError:
+                file_rel = str(path)
+            _append_audit(pd, actor, entity, file_rel, old_status, new_status)
+            _trigger_cache_rebuild(pd)
         return
 
     validate_transition(old_status, new_status, "issue", reopen=reopen)
