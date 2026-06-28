@@ -70,6 +70,8 @@ The loop has reached a step whose work must be performed by a subagent. The Pyth
 
 **If `payload.parallel` is present** this is a fan-out step. Spawn every child in the list concurrently (one subagent each, using its `agent`/`subagent_type`/`model`, writing to its `output_path`). Wait for all of them, then resume with `{"action": "executed"}`. The loop validates the `join` policy (`all` = every child artifact present and non-empty; `any` = at least one) and advances or fails accordingly. Skip the single-step instructions below.
 
+**If `payload.verify` is present** this is an adversarial-verify step. Spawn `verify.count` independent verifiers (using `verify.agent`/`subagent_type`/`model` and `verify.instruction`), each writing a `confirmed` or `refuted` verdict to its slot's `output_path`. Relay the verdicts when you resume: `{"action": "executed", "verdicts": ["confirmed", "refuted", "confirmed"]}` (or let each verifier write `signal: confirmed|refuted` frontmatter and resume with just `{"action": "executed"}`). The loop tallies affirm votes against `verify.threshold` (`majority`/`all`/`any`/integer) and emits a `confirmed` or `refuted` signal that your `routing` consumes. Skip the single-step instructions below.
+
 Otherwise (single step):
 
 1. Spawn a subagent using the `payload`:

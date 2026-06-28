@@ -496,6 +496,132 @@ def _run_parallel_step(workflow_id, state, step, reentering, output_dir, project
     return None
 
 
+_AFFIRM_VERDICTS = {"confirmed", "real", "pass", "true", "yes", "valid"}
+
+
+def _verify_slots(workflow_id, step, output_dir, project_dir):
+    """Resolve a verify step into (config, count, [(artifact, path), ...])."""
+    cfg = step.get("verify") or {}
+    try:
+        count = int(cfg.get("count", 3) or 3)
+    except (TypeError, ValueError):
+        count = 3
+    count = max(1, count)
+    base = cfg.get("output_artifact", "verdict")
+    slots = []
+    for i in range(1, count + 1):
+        art = "{}-{}".format(base, i)
+        path = _make_output_path(workflow_id, step["id"], art, output_dir, project_dir)
+        _check_containment(path, project_dir)
+        slots.append((art, path))
+    return cfg, count, slots
+
+
+def _verdict_passes(threshold, confirmed, total):
+    """Apply a verify threshold to an affirm-vote tally."""
+    if isinstance(threshold, bool):
+        threshold = "majority"
+    if isinstance(threshold, int):
+        return confirmed >= threshold
+    t = str(threshold or "majority").lower()
+    if t == "all":
+        return total > 0 and confirmed == total
+    if t == "any":
+        return confirmed >= 1
+    return confirmed > (total / 2.0)
+
+
+def _run_verify_step(workflow_id, state, step, reentering, output_dir, project_dir):
+    """Drive an adversarial-verify (fan-out + vote) step.
+
+    First visit: clean stale verdict slots and yield one `execute_step` asking
+    the model to spawn N independent verifiers, each returning a 'confirmed' or
+    'refuted' verdict. Re-entry: tally the affirm votes (relayed verdicts
+    preferred, else read each verdict artifact), apply the threshold, and set
+    the step signal to 'confirmed' or 'refuted' for routing.
+    """
+    cfg, count, slots = _verify_slots(workflow_id, step, output_dir, project_dir)
+    threshold = cfg.get("threshold", "majority")
+
+    if not reentering:
+        for _art, path in slots:
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError as e:
+                    return {
+                        "reason": "failure",
+                        "step_id": step["id"],
+                        "payload": {"error": str(e), "actions": ["retry", "skip", "abort"]},
+                    }
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+        state["status"] = "waiting_for_agent"
+        _save_state(workflow_id, state, project_dir, output_dir)
+        return {
+            "reason": "execute_step",
+            "step_id": step["id"],
+            "payload": {
+                "verify": {
+                    "agent": cfg.get("agent"),
+                    "subagent_type": cfg.get("subagent_type"),
+                    "model": cfg.get("model", "sonnet"),
+                    "count": count,
+                    "threshold": threshold,
+                    "instruction": cfg.get(
+                        "instruction",
+                        "Independently attempt to REFUTE the claim. Default to "
+                        "'refuted' when uncertain; return 'confirmed' only if it holds."),
+                    "slots": [{"output_artifact": art, "output_path": path} for art, path in slots],
+                },
+                "actions": ["executed", "abort"],
+            },
+        }
+
+    # Re-entry: gather verdicts (relayed preferred, else read each artifact).
+    relayed = (state.get("pending_verdicts") or {}).get(step["id"])
+    verdicts = []
+    missing = []
+    if isinstance(relayed, list) and relayed:
+        verdicts = [str(v).lower() for v in relayed]
+    else:
+        for art, path in slots:
+            sig = _extract_signal_from_path(path) if path else None
+            if sig is None:
+                missing.append(art)
+            else:
+                verdicts.append(str(sig).lower())
+                state.setdefault("artifacts", {})[art] = path
+
+    if missing:
+        _write_checkpoint(state, "Verify step '{}' missing verdicts: {}".format(
+            step["id"], ", ".join(missing)))
+        state["status"] = "waiting_for_user"
+        _save_state(workflow_id, state, project_dir, output_dir)
+        return {
+            "reason": "failure",
+            "step_id": step["id"],
+            "payload": {
+                "error": "Missing verdicts: {}".format(missing),
+                "actions": ["retry", "skip", "abort"],
+            },
+        }
+
+    confirmed = sum(1 for v in verdicts if v in _AFFIRM_VERDICTS)
+    total = len(verdicts)
+    aggregate = "confirmed" if _verdict_passes(threshold, confirmed, total) else "refuted"
+    state.setdefault("step_signals", {})[step["id"]] = aggregate
+    state.setdefault("verify_results", {})[step["id"]] = {
+        "confirmed": confirmed,
+        "total": total,
+        "threshold": threshold,
+        "signal": aggregate,
+    }
+    if isinstance(state.get("pending_verdicts"), dict):
+        state["pending_verdicts"].pop(step["id"], None)
+    _save_state(workflow_id, state, project_dir, output_dir)
+    return None
+
+
 def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
     _validate_workflow_id(workflow_id)
     project_dir = os.path.abspath(project_dir)
@@ -583,6 +709,14 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
             if parallel_result is not None:
                 return parallel_result
 
+        # Adversarial-verify step: fan out N verifiers and route on the vote.
+        verify_spec = step.get("verify")
+        if verify_spec:
+            verify_result = _run_verify_step(
+                workflow_id, state, step, reentering, output_dir, project_dir)
+            if verify_result is not None:
+                return verify_result
+
         output_artifact = step.get("output_artifact")
         output_path = None
         if output_artifact:
@@ -617,9 +751,10 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
 
         agent = step.get("agent")
         agent_return_value = None
-        if parallel_children:
-            # Execution was handled by _run_parallel_step; children's artifacts
-            # are already recorded. Fall through to routing/advance.
+        if parallel_children or verify_spec:
+            # Execution was handled by _run_parallel_step / _run_verify_step;
+            # artifacts and any aggregate signal are already recorded. Fall
+            # through to routing/advance.
             pass
         elif agent is not None:
             try:
