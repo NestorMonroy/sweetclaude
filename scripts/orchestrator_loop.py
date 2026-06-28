@@ -19,7 +19,7 @@ from orchestrator import (
 
 _STEP_ID_SAFE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
-VALID_ACTIONS = {"approve", "iterate", "retry", "skip", "abort", "reset", "accept", "acknowledge"}
+VALID_ACTIONS = {"approve", "iterate", "retry", "skip", "abort", "reset", "accept", "acknowledge", "executed"}
 
 
 def _now_iso():
@@ -304,7 +304,54 @@ def _complete_sc(project_dir, workflow_id, result, workflow_state=None):
 
 
 def _invoke_agent(*args, **kwargs):
-    pass
+    # Default (production) executor seam. A Python subprocess cannot spawn a
+    # Claude Code subagent, so the real step execution is delegated to the
+    # conversational model: returning this sentinel makes run_loop yield an
+    # `execute_step` point. Tests inject a synchronous executor in place of this
+    # function (writing the artifact / returning a signal) and so never delegate.
+    return {"status": "delegate"}
+
+
+def _is_delegate(value):
+    return isinstance(value, dict) and value.get("status") == "delegate"
+
+
+def _schema_allowed_signals(schema):
+    """Return the set of valid signal values declared by a step's output_schema,
+    or None when the schema does not constrain the signal.
+
+    Supported shape:
+        output_schema:
+          signal:
+            enum: [done, issues, blocked]
+    """
+    if not isinstance(schema, dict):
+        return None
+    sig = schema.get("signal")
+    if isinstance(sig, dict) and isinstance(sig.get("enum"), list):
+        return set(sig["enum"])
+    return None
+
+
+def _budget_limits(defaults):
+    """Return (max_steps, max_tokens) from orchestrator defaults; None = unlimited."""
+    b = (defaults.get("budget") or {}) if isinstance(defaults, dict) else {}
+    return b.get("max_steps"), b.get("max_tokens")
+
+
+def _budget_exceeded(state, defaults):
+    """Return the name of the exhausted budget dimension, or None.
+
+    `steps` is counted deterministically by the loop (one per completed step);
+    `tokens` is accumulated from spend the model relays on resume("executed").
+    """
+    max_steps, max_tokens = _budget_limits(defaults)
+    spent = state.get("budget_spent") or {}
+    if max_steps is not None and spent.get("steps", 0) >= max_steps:
+        return "max_steps"
+    if max_tokens is not None and spent.get("tokens", 0) >= max_tokens:
+        return "max_tokens"
+    return None
 
 
 def _extract_signal_from_path(output_path):
@@ -352,6 +399,226 @@ def _add_session(state):
     })
 
 
+def _resolve_parallel_children(workflow_id, step, output_dir, project_dir):
+    """Resolve each child of a parallel step to (child, output_artifact, path)."""
+    resolved = []
+    for child in (step.get("parallel") or []):
+        art = child.get("output_artifact")
+        path = None
+        if art:
+            path = _make_output_path(workflow_id, step["id"], art, output_dir, project_dir)
+            _check_containment(path, project_dir)
+        resolved.append((child, art, path))
+    return resolved
+
+
+def _run_parallel_step(workflow_id, state, step, reentering, output_dir, project_dir):
+    """Drive a parallel (fan-out) step.
+
+    First visit: clean stale child outputs and yield a single `execute_step`
+    whose payload lists every child for the model to spawn concurrently.
+    Re-entry: validate the join policy across the children's artifacts, record
+    them, and return None so the caller continues to routing/advance.
+    """
+    resolved = _resolve_parallel_children(workflow_id, step, output_dir, project_dir)
+    join = step.get("join", "all")
+
+    if not reentering:
+        for _child, _art, path in resolved:
+            if path:
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except OSError as e:
+                        return {
+                            "reason": "failure",
+                            "step_id": step["id"],
+                            "payload": {"error": str(e), "actions": ["retry", "skip", "abort"]},
+                        }
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+        state["status"] = "waiting_for_agent"
+        _save_state(workflow_id, state, project_dir, output_dir)
+        return {
+            "reason": "execute_step",
+            "step_id": step["id"],
+            "payload": {
+                "parallel": [
+                    {
+                        "agent": child.get("agent"),
+                        "subagent_type": child.get("subagent_type"),
+                        "model": child.get("model", "sonnet"),
+                        "output_artifact": art,
+                        "output_path": path,
+                        "prompt": child.get("prompt", ""),
+                    }
+                    for (child, art, path) in resolved
+                ],
+                "join": join,
+                "output_schema": step.get("output_schema"),
+                "actions": ["executed", "abort"],
+            },
+        }
+
+    # Re-entry: validate the join policy.
+    present = []
+    for child, art, path in resolved:
+        ok = bool(path) and os.path.exists(path) and os.path.getsize(path) > 0
+        if ok and art:
+            state.setdefault("artifacts", {})[art] = path
+        present.append((child, art, ok))
+
+    if join == "any":
+        satisfied = any(ok for _c, _a, ok in present)
+    else:
+        satisfied = all(ok for _c, _a, ok in present)
+
+    if not satisfied:
+        missing = [art or (child.get("agent") or "child")
+                   for child, art, ok in present if not ok]
+        _write_checkpoint(state, "Parallel step '{}' join '{}' unsatisfied; missing: {}".format(
+            step["id"], join, ", ".join(str(m) for m in missing)))
+        state["status"] = "waiting_for_user"
+        _save_state(workflow_id, state, project_dir, output_dir)
+        return {
+            "reason": "failure",
+            "step_id": step["id"],
+            "payload": {
+                "error": "Parallel join '{}' not satisfied; missing artifacts: {}".format(
+                    join, missing),
+                "actions": ["retry", "skip", "abort"],
+            },
+        }
+
+    _save_state(workflow_id, state, project_dir, output_dir)
+    return None
+
+
+_AFFIRM_VERDICTS = {"confirmed", "real", "pass", "true", "yes", "valid"}
+
+
+def _verify_slots(workflow_id, step, output_dir, project_dir):
+    """Resolve a verify step into (config, count, [(artifact, path), ...])."""
+    cfg = step.get("verify") or {}
+    try:
+        count = int(cfg.get("count", 3) or 3)
+    except (TypeError, ValueError):
+        count = 3
+    count = max(1, count)
+    base = cfg.get("output_artifact", "verdict")
+    slots = []
+    for i in range(1, count + 1):
+        art = "{}-{}".format(base, i)
+        path = _make_output_path(workflow_id, step["id"], art, output_dir, project_dir)
+        _check_containment(path, project_dir)
+        slots.append((art, path))
+    return cfg, count, slots
+
+
+def _verdict_passes(threshold, confirmed, total):
+    """Apply a verify threshold to an affirm-vote tally."""
+    if isinstance(threshold, bool):
+        threshold = "majority"
+    if isinstance(threshold, int):
+        return confirmed >= threshold
+    t = str(threshold or "majority").lower()
+    if t == "all":
+        return total > 0 and confirmed == total
+    if t == "any":
+        return confirmed >= 1
+    return confirmed > (total / 2.0)
+
+
+def _run_verify_step(workflow_id, state, step, reentering, output_dir, project_dir):
+    """Drive an adversarial-verify (fan-out + vote) step.
+
+    First visit: clean stale verdict slots and yield one `execute_step` asking
+    the model to spawn N independent verifiers, each returning a 'confirmed' or
+    'refuted' verdict. Re-entry: tally the affirm votes (relayed verdicts
+    preferred, else read each verdict artifact), apply the threshold, and set
+    the step signal to 'confirmed' or 'refuted' for routing.
+    """
+    cfg, count, slots = _verify_slots(workflow_id, step, output_dir, project_dir)
+    threshold = cfg.get("threshold", "majority")
+
+    if not reentering:
+        for _art, path in slots:
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError as e:
+                    return {
+                        "reason": "failure",
+                        "step_id": step["id"],
+                        "payload": {"error": str(e), "actions": ["retry", "skip", "abort"]},
+                    }
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+        state["status"] = "waiting_for_agent"
+        _save_state(workflow_id, state, project_dir, output_dir)
+        return {
+            "reason": "execute_step",
+            "step_id": step["id"],
+            "payload": {
+                "verify": {
+                    "agent": cfg.get("agent"),
+                    "subagent_type": cfg.get("subagent_type"),
+                    "model": cfg.get("model", "sonnet"),
+                    "count": count,
+                    "threshold": threshold,
+                    "instruction": cfg.get(
+                        "instruction",
+                        "Independently attempt to REFUTE the claim. Default to "
+                        "'refuted' when uncertain; return 'confirmed' only if it holds."),
+                    "slots": [{"output_artifact": art, "output_path": path} for art, path in slots],
+                },
+                "actions": ["executed", "abort"],
+            },
+        }
+
+    # Re-entry: gather verdicts (relayed preferred, else read each artifact).
+    relayed = (state.get("pending_verdicts") or {}).get(step["id"])
+    verdicts = []
+    missing = []
+    if isinstance(relayed, list) and relayed:
+        verdicts = [str(v).lower() for v in relayed]
+    else:
+        for art, path in slots:
+            sig = _extract_signal_from_path(path) if path else None
+            if sig is None:
+                missing.append(art)
+            else:
+                verdicts.append(str(sig).lower())
+                state.setdefault("artifacts", {})[art] = path
+
+    if missing:
+        _write_checkpoint(state, "Verify step '{}' missing verdicts: {}".format(
+            step["id"], ", ".join(missing)))
+        state["status"] = "waiting_for_user"
+        _save_state(workflow_id, state, project_dir, output_dir)
+        return {
+            "reason": "failure",
+            "step_id": step["id"],
+            "payload": {
+                "error": "Missing verdicts: {}".format(missing),
+                "actions": ["retry", "skip", "abort"],
+            },
+        }
+
+    confirmed = sum(1 for v in verdicts if v in _AFFIRM_VERDICTS)
+    total = len(verdicts)
+    aggregate = "confirmed" if _verdict_passes(threshold, confirmed, total) else "refuted"
+    state.setdefault("step_signals", {})[step["id"]] = aggregate
+    state.setdefault("verify_results", {})[step["id"]] = {
+        "confirmed": confirmed,
+        "total": total,
+        "threshold": threshold,
+        "signal": aggregate,
+    }
+    if isinstance(state.get("pending_verdicts"), dict):
+        state["pending_verdicts"].pop(step["id"], None)
+    _save_state(workflow_id, state, project_dir, output_dir)
+    return None
+
+
 def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
     _validate_workflow_id(workflow_id)
     project_dir = os.path.abspath(project_dir)
@@ -386,9 +653,30 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
             payload = _complete_sc(project_dir, workflow_id, "halted", workflow_state=state)
             return {"reason": "halted", "step_id": "HALTED", "payload": payload or {}}
 
+        budget_hit = _budget_exceeded(state, defaults)
+        if budget_hit:
+            _write_checkpoint(state, "Budget exhausted ({})".format(budget_hit))
+            state["status"] = "waiting_for_user"
+            _save_state(workflow_id, state, project_dir, output_dir)
+            return {
+                "reason": "budget_exhausted",
+                "step_id": current_step_id,
+                "payload": {
+                    "limit": budget_hit,
+                    "spent": state.get("budget_spent", {}),
+                    "options": ["reset", "abort"],
+                    "actions": ["reset", "abort"],
+                },
+            }
+
         step = _find_step(current_step_id, steps)
         if step is None:
             raise ValueError("Step '{}' not found in template".format(current_step_id))
+
+        # Re-entry after the model executed this step out of band (resume action
+        # "executed"). The artifact is already on disk; skip invocation and stale
+        # output cleanup so we don't discard the model's work.
+        reentering = state.get("step_executed") == current_step_id
 
         gate = step.get("gate")
         if gate:
@@ -408,6 +696,24 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
                         }
                     }
 
+        # Parallel (fan-out) step: the model spawns all children concurrently,
+        # then the join policy is validated on re-entry. Routing/advance below is
+        # shared with single steps.
+        parallel_children = step.get("parallel")
+        if parallel_children:
+            parallel_result = _run_parallel_step(
+                workflow_id, state, step, reentering, output_dir, project_dir)
+            if parallel_result is not None:
+                return parallel_result
+
+        # Adversarial-verify step: fan out N verifiers and route on the vote.
+        verify_spec = step.get("verify")
+        if verify_spec:
+            verify_result = _run_verify_step(
+                workflow_id, state, step, reentering, output_dir, project_dir)
+            if verify_result is not None:
+                return verify_result
+
         output_artifact = step.get("output_artifact")
         output_path = None
         if output_artifact:
@@ -415,7 +721,7 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
             _check_containment(output_path, project_dir)
 
             existing_artifact_path = state.get("artifacts", {}).get(output_artifact)
-            if existing_artifact_path:
+            if existing_artifact_path and not reentering:
                 _check_containment(existing_artifact_path, project_dir)
                 existing_abs = os.path.abspath(existing_artifact_path)
                 output_abs = os.path.abspath(output_path)
@@ -429,7 +735,7 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
                             "payload": {"error": str(e), "actions": ["retry", "skip", "abort"]}
                         }
 
-            if os.path.exists(output_path):
+            if os.path.exists(output_path) and not reentering:
                 try:
                     os.remove(output_path)
                 except OSError as e:
@@ -442,7 +748,12 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
 
         agent = step.get("agent")
         agent_return_value = None
-        if agent is not None:
+        if parallel_children or verify_spec:
+            # Execution was handled by _run_parallel_step / _run_verify_step;
+            # artifacts and any aggregate signal are already recorded. Fall
+            # through to routing/advance.
+            pass
+        elif agent is not None:
             try:
                 envelope = assemble_context_envelope(step, state, project_dir)
                 input_paths = envelope
@@ -460,16 +771,38 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
 
             model = step.get("model", "sonnet")
 
-            agent_return_value = _invoke_agent(
-                step=step,
-                state=state,
-                state_param=state,
-                project_dir_str=project_dir,
-                prompt=prompt,
-                output_path=output_path,
-                input_paths=input_paths,
-                model=model,
-            )
+            if reentering:
+                # Model already executed this step out of band; its output is on
+                # disk. Skip invocation and fall through to post-processing.
+                agent_return_value = None
+            else:
+                agent_return_value = _invoke_agent(
+                    step=step,
+                    state=state,
+                    state_param=state,
+                    project_dir_str=project_dir,
+                    prompt=prompt,
+                    output_path=output_path,
+                    input_paths=input_paths,
+                    model=model,
+                )
+                if _is_delegate(agent_return_value):
+                    state["status"] = "waiting_for_agent"
+                    _save_state(workflow_id, state, project_dir, output_dir)
+                    return {
+                        "reason": "execute_step",
+                        "step_id": step["id"],
+                        "payload": {
+                            "agent": agent,
+                            "subagent_type": step.get("subagent_type"),
+                            "model": model,
+                            "input_paths": [str(p) for p in input_paths],
+                            "output_path": output_path,
+                            "prompt": prompt,
+                            "output_schema": step.get("output_schema"),
+                            "actions": ["executed", "abort"],
+                        },
+                    }
         else:
             agent_return_value = _invoke_agent(
                 step=step,
@@ -508,10 +841,33 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
             _save_state(workflow_id, state, project_dir, output_dir)
 
         signal = None
-        if output_path:
+        provided_signal = (state.get("step_signals") or {}).get(current_step_id)
+        if provided_signal is not None:
+            # Structured signal relayed by the model from the subagent's
+            # schema-validated output; preferred over scraping the artifact.
+            signal = provided_signal
+        elif output_path:
             signal = _extract_signal_from_path(output_path)
         elif isinstance(agent_return_value, dict):
             signal = agent_return_value.get("signal", None)
+
+        schema = step.get("output_schema")
+        if schema is not None and signal is not None:
+            allowed = _schema_allowed_signals(schema)
+            if allowed is not None and signal not in allowed:
+                _write_checkpoint(state, "Step '{}' signal '{}' violates output_schema".format(
+                    step["id"], signal))
+                state["status"] = "waiting_for_user"
+                _save_state(workflow_id, state, project_dir, output_dir)
+                return {
+                    "reason": "failure",
+                    "step_id": step["id"],
+                    "payload": {
+                        "error": "Signal '{}' is not permitted by output_schema (allowed: {})".format(
+                            signal, sorted(allowed)),
+                        "actions": ["retry", "skip", "abort"],
+                    },
+                }
 
         escalation = step.get("escalation")
         if escalation and signal == escalation.get("signal"):
@@ -634,7 +990,12 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
             completed.append(current_step_id)
 
         _write_checkpoint(state, "Completed step '{}'".format(current_step_id))
+        if isinstance(state.get("step_signals"), dict):
+            state["step_signals"].pop(current_step_id, None)
+        budget_spent = state.setdefault("budget_spent", {"steps": 0, "tokens": 0})
+        budget_spent["steps"] = budget_spent.get("steps", 0) + 1
         state["current_step_id"] = next_step_id
+        state["step_executed"] = None
         state["status"] = "active"
 
         if next_step_id not in ("COMPLETE", "HALTED"):
@@ -685,6 +1046,31 @@ def resume_loop(workflow_id, decision, project_dir=".", deference_level="collabo
     _add_session(state)
     _save_state(workflow_id, state, project_dir, output_dir)
 
+    if action == "executed":
+        # The model finished executing the step that yielded `execute_step` and
+        # wrote its artifact. Mark it executed and re-enter the loop, which skips
+        # invocation and runs post-processing (signal, routing, exit checks).
+        # The model may relay a structured signal from the subagent's
+        # schema-validated output; it takes precedence over scraping the artifact.
+        provided_signal = decision.get("signal")
+        if provided_signal is None and isinstance(decision.get("result"), dict):
+            provided_signal = decision["result"].get("signal")
+        state["step_executed"] = current_step_id
+        if provided_signal is not None:
+            state.setdefault("step_signals", {})[current_step_id] = provided_signal
+        verdicts = decision.get("verdicts")
+        if isinstance(verdicts, list) and verdicts:
+            state.setdefault("pending_verdicts", {})[current_step_id] = verdicts
+        cost = decision.get("tokens")
+        if cost is None:
+            cost = decision.get("cost")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost > 0:
+            bs = state.setdefault("budget_spent", {"steps": 0, "tokens": 0})
+            bs["tokens"] = bs.get("tokens", 0) + cost
+        state["status"] = "active"
+        _save_state(workflow_id, state, project_dir, output_dir)
+        return run_loop(workflow_id, project_dir=project_dir, deference_level=deference_level)
+
     if action == "approve":
         step = _find_step(current_step_id, steps)
         if step:
@@ -698,6 +1084,9 @@ def resume_loop(workflow_id, decision, project_dir=".", deference_level="collabo
         prior = _find_prior_step(current_step_id, steps)
         if prior:
             state["current_step_id"] = prior["id"]
+            state["step_executed"] = None
+            if isinstance(state.get("step_signals"), dict):
+                state["step_signals"].pop(prior["id"], None)
             state["status"] = "active"
             _save_state(workflow_id, state, project_dir, output_dir)
         return {"reason": "iterated", "step_id": state.get("current_step_id"), "payload": {}}
@@ -714,6 +1103,9 @@ def resume_loop(workflow_id, decision, project_dir=".", deference_level="collabo
                     output_path = _make_output_path(workflow_id, step["id"], output_artifact, output_dir, project_dir)
                     if os.path.exists(output_path):
                         os.remove(output_path)
+        state["step_executed"] = None
+        if isinstance(state.get("step_signals"), dict):
+            state["step_signals"].pop(current_step_id, None)
         state["status"] = "active"
         _save_state(workflow_id, state, project_dir, output_dir)
         return run_loop(workflow_id, project_dir=project_dir, deference_level=deference_level)
@@ -742,8 +1134,10 @@ def resume_loop(workflow_id, decision, project_dir=".", deference_level="collabo
         for key in list(iterations.keys()):
             iterations[key]["count"] = 0
         state["iterations"] = iterations
+        if isinstance(state.get("budget_spent"), dict):
+            state["budget_spent"] = {"steps": 0, "tokens": 0}
         state["status"] = "active"
-        _write_checkpoint(state, "Iteration counters reset")
+        _write_checkpoint(state, "Iteration counters and budget reset")
         _save_state(workflow_id, state, project_dir, output_dir)
         return {"reason": "reset", "step_id": current_step_id, "payload": {}}
 

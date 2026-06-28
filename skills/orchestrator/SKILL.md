@@ -64,6 +64,29 @@ Parse the JSON output. If the command fails or produces no output, report:
 
 The loop returns a JSON object with `reason`, `step_id`, and `payload`. Handle each reason:
 
+### reason: execute_step
+
+The loop has reached a step whose work must be performed by a subagent. The Python loop cannot spawn one itself — this is where you, the model, are the runtime.
+
+**If `payload.parallel` is present** this is a fan-out step. Spawn every child in the list concurrently (one subagent each, using its `agent`/`subagent_type`/`model`, writing to its `output_path`). Wait for all of them, then resume with `{"action": "executed"}`. The loop validates the `join` policy (`all` = every child artifact present and non-empty; `any` = at least one) and advances or fails accordingly. Skip the single-step instructions below.
+
+**If `payload.verify` is present** this is an adversarial-verify step. Spawn `verify.count` independent verifiers (using `verify.agent`/`subagent_type`/`model` and `verify.instruction`), each writing a `confirmed` or `refuted` verdict to its slot's `output_path`. Relay the verdicts when you resume: `{"action": "executed", "verdicts": ["confirmed", "refuted", "confirmed"]}` (or let each verifier write `signal: confirmed|refuted` frontmatter and resume with just `{"action": "executed"}`). The loop tallies affirm votes against `verify.threshold` (`majority`/`all`/`any`/integer) and emits a `confirmed` or `refuted` signal that your `routing` consumes. Skip the single-step instructions below.
+
+Otherwise (single step):
+
+1. Spawn a subagent using the `payload`:
+   - `agent` — the role to assume (maps to an `agents/{agent}.md` definition where one exists)
+   - `subagent_type` — the agent type to launch
+   - `model` — the model to run it on
+   - `input_paths` — files the subagent may read as input
+   - `output_path` — where the subagent MUST write its output artifact (if non-null)
+   - `prompt` — the assembled instruction to pass through
+   - `output_schema` — when non-null, the contract the subagent's result must satisfy (e.g. `signal.enum` lists the only valid signal values)
+2. Wait for the subagent to finish and confirm the artifact exists at `output_path` (when one is specified).
+3. Resume with `{"action": "executed"}` (Step 4). When `output_schema` is present, relay the subagent's chosen signal: `{"action": "executed", "signal": "<value>"}` — it must be one of the schema's allowed values. A relayed signal takes precedence over scraping the artifact; if you omit it, the loop falls back to reading the signal from the artifact frontmatter. The loop re-enters, validates the artifact and signal, routes, and advances.
+
+Do not skip the subagent and write the artifact yourself — the point is the isolated subagent context. If the user wants to stop instead, resume with `{"action": "abort"}`.
+
 ### reason: gate
 
 Present via AskUserQuestion:
@@ -106,6 +129,20 @@ Present via AskUserQuestion:
 
 Feed the user's choice to Step 4.
 
+### reason: budget_exhausted
+
+The workflow hit its configured budget (`payload.limit` is `max_steps` or `max_tokens`; `payload.spent` shows the tally).
+
+Present via AskUserQuestion:
+- Header: "Budget exhausted"
+- Show: "The workflow reached its {payload.limit} budget ({payload.spent})."
+- **Reset** (Recommended) — "Clear the budget counters and continue"
+- **Abort** — "Stop the workflow"
+
+On Reset, feed `{"action": "reset"}` to Step 4, then return to **Step 2** to run the loop again. On Abort, feed `{"action": "abort"}`.
+
+When relaying step completion you may report spend so the token budget is tracked: `{"action": "executed", "tokens": <output-tokens-spent>}`.
+
 ### reason: complete
 
 Output:
@@ -123,6 +160,7 @@ Stop. Do not continue to Step 4.
 ## Step 4: Resume loop
 
 Map the user's AskUserQuestion selection to an action:
+- "Executed" → `{"action": "executed"}`
 - "Approve" → `{"action": "approve"}`
 - "Iterate" → `{"action": "iterate"}`
 - "Retry" → `{"action": "retry"}`
