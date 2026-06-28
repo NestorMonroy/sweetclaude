@@ -94,6 +94,28 @@ Feature: Orchestrator main loop
     When the model writes one child artifact and resumes "executed"
     Then the loop advances
 
+  # --- Budget ---
+
+  Scenario: Step budget yields budget_exhausted
+    Given a workflow with a max_steps budget of 1
+    When one step completes and the loop reaches the next
+    Then it yields a YieldPoint with reason "budget_exhausted" and limit "max_steps"
+
+  Scenario: Token budget accrues from relayed spend
+    Given a workflow with a max_tokens budget
+    When the model resumes "executed" relaying token spend over the limit
+    Then the loop yields a YieldPoint with reason "budget_exhausted" and limit "max_tokens"
+
+  Scenario: Reset clears the budget and the loop continues
+    Given a workflow that yielded "budget_exhausted"
+    When the user resets and the loop runs again
+    Then the budget counters are zero and the next step executes
+
+  Scenario: No configured budget is unlimited
+    Given a workflow with no budget configured
+    When steps complete and spend is relayed
+    Then the loop never yields budget_exhausted
+
   # --- Gate enforcement ---
 
   Scenario: Soft gate yields for approval in collaborative mode

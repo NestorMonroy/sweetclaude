@@ -336,6 +336,27 @@ def _schema_allowed_signals(schema):
     return None
 
 
+def _budget_limits(defaults):
+    """Return (max_steps, max_tokens) from orchestrator defaults; None = unlimited."""
+    b = (defaults.get("budget") or {}) if isinstance(defaults, dict) else {}
+    return b.get("max_steps"), b.get("max_tokens")
+
+
+def _budget_exceeded(state, defaults):
+    """Return the name of the exhausted budget dimension, or None.
+
+    `steps` is counted deterministically by the loop (one per completed step);
+    `tokens` is accumulated from spend the model relays on resume("executed").
+    """
+    max_steps, max_tokens = _budget_limits(defaults)
+    spent = state.get("budget_spent") or {}
+    if max_steps is not None and spent.get("steps", 0) >= max_steps:
+        return "max_steps"
+    if max_tokens is not None and spent.get("tokens", 0) >= max_tokens:
+        return "max_tokens"
+    return None
+
+
 def _extract_signal_from_path(output_path):
     if not output_path or not os.path.exists(output_path):
         return None
@@ -508,6 +529,22 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
         if current_step_id == "HALTED":
             payload = _complete_sc(project_dir, workflow_id, "halted", workflow_state=state)
             return {"reason": "halted", "step_id": "HALTED", "payload": payload or {}}
+
+        budget_hit = _budget_exceeded(state, defaults)
+        if budget_hit:
+            _write_checkpoint(state, "Budget exhausted ({})".format(budget_hit))
+            state["status"] = "waiting_for_user"
+            _save_state(workflow_id, state, project_dir, output_dir)
+            return {
+                "reason": "budget_exhausted",
+                "step_id": current_step_id,
+                "payload": {
+                    "limit": budget_hit,
+                    "spent": state.get("budget_spent", {}),
+                    "options": ["reset", "abort"],
+                    "actions": ["reset", "abort"],
+                },
+            }
 
         step = _find_step(current_step_id, steps)
         if step is None:
@@ -823,6 +860,8 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
         _write_checkpoint(state, "Completed step '{}'".format(current_step_id))
         if isinstance(state.get("step_signals"), dict):
             state["step_signals"].pop(current_step_id, None)
+        budget_spent = state.setdefault("budget_spent", {"steps": 0, "tokens": 0})
+        budget_spent["steps"] = budget_spent.get("steps", 0) + 1
         state["current_step_id"] = next_step_id
         state["step_executed"] = None
         state["status"] = "active"
@@ -887,6 +926,15 @@ def resume_loop(workflow_id, decision, project_dir=".", deference_level="collabo
         state["step_executed"] = current_step_id
         if provided_signal is not None:
             state.setdefault("step_signals", {})[current_step_id] = provided_signal
+        verdicts = decision.get("verdicts")
+        if isinstance(verdicts, list) and verdicts:
+            state.setdefault("pending_verdicts", {})[current_step_id] = verdicts
+        cost = decision.get("tokens")
+        if cost is None:
+            cost = decision.get("cost")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost > 0:
+            bs = state.setdefault("budget_spent", {"steps": 0, "tokens": 0})
+            bs["tokens"] = bs.get("tokens", 0) + cost
         state["status"] = "active"
         _save_state(workflow_id, state, project_dir, output_dir)
         return run_loop(workflow_id, project_dir=project_dir, deference_level=deference_level)
@@ -954,8 +1002,10 @@ def resume_loop(workflow_id, decision, project_dir=".", deference_level="collabo
         for key in list(iterations.keys()):
             iterations[key]["count"] = 0
         state["iterations"] = iterations
+        if isinstance(state.get("budget_spent"), dict):
+            state["budget_spent"] = {"steps": 0, "tokens": 0}
         state["status"] = "active"
-        _write_checkpoint(state, "Iteration counters reset")
+        _write_checkpoint(state, "Iteration counters and budget reset")
         _save_state(workflow_id, state, project_dir, output_dir)
         return {"reason": "reset", "step_id": current_step_id, "payload": {}}
 

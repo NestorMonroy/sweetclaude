@@ -127,6 +127,20 @@ Present via AskUserQuestion:
 
 Feed the user's choice to Step 4.
 
+### reason: budget_exhausted
+
+The workflow hit its configured budget (`payload.limit` is `max_steps` or `max_tokens`; `payload.spent` shows the tally).
+
+Present via AskUserQuestion:
+- Header: "Budget exhausted"
+- Show: "The workflow reached its {payload.limit} budget ({payload.spent})."
+- **Reset** (Recommended) — "Clear the budget counters and continue"
+- **Abort** — "Stop the workflow"
+
+On Reset, feed `{"action": "reset"}` to Step 4, then return to **Step 2** to run the loop again. On Abort, feed `{"action": "abort"}`.
+
+When relaying step completion you may report spend so the token budget is tracked: `{"action": "executed", "tokens": <output-tokens-spent>}`.
+
 ### reason: complete
 
 Output:
