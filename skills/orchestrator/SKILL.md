@@ -68,6 +68,10 @@ The loop returns a JSON object with `reason`, `step_id`, and `payload`. Handle e
 
 The loop has reached a step whose work must be performed by a subagent. The Python loop cannot spawn one itself — this is where you, the model, are the runtime.
 
+**If `payload.parallel` is present** this is a fan-out step. Spawn every child in the list concurrently (one subagent each, using its `agent`/`subagent_type`/`model`, writing to its `output_path`). Wait for all of them, then resume with `{"action": "executed"}`. The loop validates the `join` policy (`all` = every child artifact present and non-empty; `any` = at least one) and advances or fails accordingly. Skip the single-step instructions below.
+
+Otherwise (single step):
+
 1. Spawn a subagent using the `payload`:
    - `agent` — the role to assume (maps to an `agents/{agent}.md` definition where one exists)
    - `subagent_type` — the agent type to launch

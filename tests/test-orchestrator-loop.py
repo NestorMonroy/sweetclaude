@@ -2305,3 +2305,108 @@ class TestStructuredOutputContract:
                     project_dir=str(project_dir), deference_level="autonomous")
 
         assert (self._wf_state(tmp_path).get("step_signals") or {}).get("review") is None
+
+
+# ---------------------------------------------------------------------------
+# Scenario: parallel (fan-out) step groups
+#
+# A step may declare `parallel` children with a `join` policy. The loop yields
+# one execute_step listing all children; the model spawns them concurrently and
+# resumes "executed"; the join policy is validated across the child artifacts.
+# ---------------------------------------------------------------------------
+
+class TestParallelStepGroups:
+    def _wf_state(self, tmp_path, workflow_id="STORY-025"):
+        path = tmp_path / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+        return yaml.safe_load(path.read_text())
+
+    def _caucus_step(self, join="all"):
+        step = _make_step("caucus", phase="VERIFY")
+        step["agent"] = None
+        step["parallel"] = [
+            {"agent": "code-reviewer", "output_artifact": "code_review", "subagent_type": "code"},
+            {"agent": "security-reviewer", "output_artifact": "sec_review", "subagent_type": "research"},
+        ]
+        step["join"] = join
+        return step
+
+    def _write_children(self, children, which=None):
+        for i, c in enumerate(children):
+            if which is not None and i not in which:
+                continue
+            op = c["output_path"]
+            os.makedirs(os.path.dirname(op), exist_ok=True)
+            with open(op, "w") as f:
+                f.write("# review {}\nok\n".format(i))
+
+    def test_parallel_step_yields_fanout_execute_step(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="caucus",
+                                    steps=[self._caucus_step()])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+
+        assert result["reason"] == "execute_step"
+        assert result["step_id"] == "caucus"
+        payload = result["payload"]
+        assert "parallel" in payload
+        assert len(payload["parallel"]) == 2
+        assert {c["agent"] for c in payload["parallel"]} == {"code-reviewer", "security-reviewer"}
+        assert all(c["output_path"] for c in payload["parallel"])
+        assert payload["join"] == "all"
+
+    def test_join_all_advances_when_every_child_present(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="caucus",
+                                    steps=[self._caucus_step(join="all")])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        self._write_children(result["payload"]["parallel"])
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+        artifacts = self._wf_state(tmp_path)["artifacts"]
+        assert artifacts.get("code_review")
+        assert artifacts.get("sec_review")
+        assert os.path.exists(artifacts["code_review"])
+
+    def test_join_all_fails_when_a_child_missing(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="caucus",
+                                    steps=[self._caucus_step(join="all")])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        # Write only the first child.
+        self._write_children(result["payload"]["parallel"], which={0})
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "failure"
+        assert "join" in result["payload"]["error"].lower()
+
+    def test_join_any_advances_with_one_child(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="caucus",
+                                    steps=[self._caucus_step(join="any")])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        self._write_children(result["payload"]["parallel"], which={1})
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+
+    def test_gated_parallel_step_yields_gate_then_fanout(self, tmp_path):
+        step = self._caucus_step()
+        step["gate"] = "user_approval"
+        project_dir = _full_project(tmp_path, current_step_id="caucus", steps=[step])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="collaborative")
+        assert result["reason"] == "gate"
+
+        result = resume_loop("STORY-025", {"action": "approve"},
+                             project_dir=str(project_dir), deference_level="collaborative")
+        assert result["reason"] == "execute_step"
+        assert "parallel" in result["payload"]
