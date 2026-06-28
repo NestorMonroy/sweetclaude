@@ -1805,10 +1805,13 @@ class TestYieldPayloadStructure:
 # ---------------------------------------------------------------------------
 
 class TestLoopExceptionBoundaries:
-    def test_keyerror_from_assemble_context_yields_failure(self, tmp_path, monkeypatch):
-        """If assemble_context_envelope raises KeyError, the loop yields failure instead of crashing."""
+    def test_keyerror_from_assemble_context_is_handled_then_no_output_fails(self, tmp_path, monkeypatch):
+        """A KeyError in assemble_context_envelope is caught (no crash) and the
+        step still delegates execution; if no artifact is produced, the
+        post-execute exit check surfaces the failure."""
         steps = [
-            _make_step("spec", phase="DEFINE", agent="spec-writer", output_artifact="spec_file", next="done"),
+            _make_step("spec", phase="DEFINE", agent="spec-writer", output_artifact="spec_file",
+                       exit_checks=["file_exists"]),
         ]
         project_dir = _full_project(tmp_path, current_step_id="spec", steps=steps)
 
@@ -1817,7 +1820,13 @@ class TestLoopExceptionBoundaries:
 
         monkeypatch.setattr("orchestrator_loop.assemble_context_envelope", broken_assemble)
 
+        # KeyError is caught: the loop delegates execution rather than crashing.
         result = run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "execute_step"
+
+        # Model reports executed but wrote no artifact -> exit check fails.
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
         assert result["reason"] == "failure"
 
     def test_action_dispatch_failure_yields_failure(self, tmp_path, monkeypatch):
@@ -2069,3 +2078,540 @@ class TestExtractOutputSignalNull:
         content = "---\nsignal: null\n---\n"
         result = extract_output_signal(content)
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Scenario: execute_step delegation (production executor seam)
+#
+# In production _invoke_agent cannot spawn a Claude subagent, so agent steps
+# yield reason "execute_step"; the model executes the step out of band and
+# resumes with action "executed".
+# ---------------------------------------------------------------------------
+
+class TestExecuteStepDelegation:
+    def _wf_state(self, tmp_path, workflow_id="STORY-025"):
+        path = tmp_path / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+        return yaml.safe_load(path.read_text())
+
+    def test_agent_step_yields_execute_step_in_production(self, tmp_path):
+        """With no injected executor, an agent step delegates via execute_step."""
+        steps = [_make_step("spec", phase="DEFINE", agent="spec-writer",
+                            model="opus", subagent_type="research",
+                            output_artifact="spec_file", exit_checks=["file_exists"])]
+        project_dir = _full_project(tmp_path, current_step_id="spec", steps=steps)
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+
+        assert result["reason"] == "execute_step"
+        assert result["step_id"] == "spec"
+        payload = result["payload"]
+        assert payload["agent"] == "spec-writer"
+        assert payload["model"] == "opus"
+        assert payload["subagent_type"] == "research"
+        assert payload["output_path"] is not None
+        assert "executed" in payload["actions"]
+
+    def test_waiting_for_agent_status_persisted_on_yield(self, tmp_path):
+        """The execute_step yield marks the workflow waiting_for_agent on disk."""
+        steps = [_make_step("spec", phase="DEFINE", agent="spec-writer",
+                            output_artifact="spec_file", exit_checks=["file_exists"])]
+        project_dir = _full_project(tmp_path, current_step_id="spec", steps=steps)
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+
+        assert self._wf_state(tmp_path)["status"] == "waiting_for_agent"
+
+    def test_resume_executed_advances_after_model_writes_artifact(self, tmp_path):
+        """After the model writes the artifact, resume 'executed' completes the step."""
+        steps = [_make_step("spec", phase="DEFINE", agent="spec-writer",
+                            output_artifact="spec_file",
+                            exit_checks=["file_exists", "file_non_empty"])]
+        project_dir = _full_project(tmp_path, current_step_id="spec", steps=steps)
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        assert result["reason"] == "execute_step"
+
+        # Simulate the model spawning the subagent and writing the artifact.
+        out = result["payload"]["output_path"]
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w") as f:
+            f.write("# Spec\nReal content\n")
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+
+        assert result["reason"] == "complete"
+        # Re-entry must NOT have deleted the model's artifact.
+        assert os.path.exists(out)
+        assert "spec" in self._wf_state(tmp_path)["completed_steps"]
+
+    def test_reentry_preserves_artifact_and_clears_marker(self, tmp_path):
+        """step_executed is set during re-entry and cleared once the step advances."""
+        steps = [
+            _make_step("spec", phase="DEFINE", agent="spec-writer",
+                       output_artifact="spec_file", exit_checks=["file_exists"]),
+            _make_step("implement", phase="IMPLEMENT", agent="implementer",
+                       output_artifact="source_files", exit_checks=["file_exists"]),
+        ]
+        project_dir = _full_project(tmp_path, current_step_id="spec", steps=steps)
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        out = result["payload"]["output_path"]
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w") as f:
+            f.write("# Spec\n")
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+
+        # Advanced to the next agent step, which itself delegates; marker reset.
+        assert result["reason"] == "execute_step"
+        assert result["step_id"] == "implement"
+        assert self._wf_state(tmp_path).get("step_executed") is None
+
+    def test_agent_step_without_output_delegates_then_completes(self, tmp_path):
+        """An agent step with no output_artifact still delegates, then completes."""
+        steps = [_make_step("activate", phase="ACTIVATION", agent="housekeeping")]
+        project_dir = _full_project(tmp_path, current_step_id="activate", steps=steps)
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        assert result["reason"] == "execute_step"
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+        assert "activate" in self._wf_state(tmp_path)["completed_steps"]
+
+    def test_gate_then_execute_step_are_separate_yields(self, tmp_path):
+        """A gated agent step yields the gate first, then execute_step after approval."""
+        steps = [_make_step("spec", phase="DEFINE", agent="spec-writer",
+                            output_artifact="spec_file", gate="user_approval",
+                            exit_checks=["file_exists"])]
+        project_dir = _full_project(tmp_path, current_step_id="spec", steps=steps)
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="collaborative")
+        assert result["reason"] == "gate"
+
+        result = resume_loop("STORY-025", {"action": "approve"},
+                             project_dir=str(project_dir), deference_level="collaborative")
+        assert result["reason"] == "execute_step"
+
+
+# ---------------------------------------------------------------------------
+# Scenario: structured-output contract (output_schema + relayed signal)
+#
+# A step may declare output_schema; the model relays a schema-validated signal
+# via resume("executed", signal=...), which the loop prefers over scraping the
+# artifact. Invalid signals are rejected against the schema enum.
+# ---------------------------------------------------------------------------
+
+class TestStructuredOutputContract:
+    def _wf_state(self, tmp_path, workflow_id="STORY-025"):
+        path = tmp_path / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+        return yaml.safe_load(path.read_text())
+
+    def _review_step(self, schema=True, routing=None):
+        step = _make_step("review", phase="VERIFY", agent="reviewer",
+                          output_artifact="review_file", routing=routing)
+        if schema:
+            step["output_schema"] = {"signal": {"enum": ["approve", "reject"]}}
+        return step
+
+    def test_execute_step_payload_includes_output_schema(self, tmp_path):
+        schema = {"signal": {"enum": ["done"]}}
+        step = _make_step("spec", phase="DEFINE", agent="spec-writer",
+                          output_artifact="spec_file", exit_checks=["file_exists"])
+        step["output_schema"] = schema
+        project_dir = _full_project(tmp_path, current_step_id="spec", steps=[step])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        assert result["payload"]["output_schema"] == schema
+
+    def test_relayed_signal_drives_routing(self, tmp_path):
+        step = self._review_step(routing={"approve": "continue", "reject": "hard_stop_report"})
+        project_dir = _full_project(tmp_path, current_step_id="review", steps=[step])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        out = result["payload"]["output_path"]
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w") as f:
+            f.write("# Review\nlooks good\n")
+
+        result = resume_loop("STORY-025", {"action": "executed", "signal": "approve"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+
+    def test_relayed_reject_signal_halts_via_routing(self, tmp_path):
+        step = self._review_step(routing={"approve": "continue", "reject": "hard_stop_report"})
+        project_dir = _full_project(tmp_path, current_step_id="review", steps=[step])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        out = result["payload"]["output_path"]
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w") as f:
+            f.write("# Review\nblocked\n")
+
+        result = resume_loop("STORY-025", {"action": "executed", "signal": "reject"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "halted"
+
+    def test_signal_outside_schema_enum_yields_failure(self, tmp_path):
+        step = self._review_step()  # enum is [approve, reject], no routing
+        project_dir = _full_project(tmp_path, current_step_id="review", steps=[step])
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025", {"action": "executed", "signal": "banana"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "failure"
+        assert "output_schema" in result["payload"]["error"]
+
+    def test_file_scraped_signal_used_when_none_relayed(self, tmp_path):
+        # No output_schema; signal comes from the artifact frontmatter (fallback).
+        step = _make_step("review", phase="VERIFY", agent="reviewer",
+                          output_artifact="review_file",
+                          routing={"approve": "continue", "reject": "hard_stop_report"})
+        project_dir = _full_project(tmp_path, current_step_id="review", steps=[step])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        out = result["payload"]["output_path"]
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w") as f:
+            f.write("---\nsignal: approve\n---\n")
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+
+    def test_relayed_signal_cleared_after_advance(self, tmp_path):
+        step = self._review_step(routing={"approve": "continue", "reject": "hard_stop_report"})
+        project_dir = _full_project(tmp_path, current_step_id="review", steps=[step])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        out = result["payload"]["output_path"]
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w") as f:
+            f.write("# Review\n")
+        resume_loop("STORY-025", {"action": "executed", "signal": "approve"},
+                    project_dir=str(project_dir), deference_level="autonomous")
+
+        assert (self._wf_state(tmp_path).get("step_signals") or {}).get("review") is None
+
+
+# ---------------------------------------------------------------------------
+# Scenario: parallel (fan-out) step groups
+#
+# A step may declare `parallel` children with a `join` policy. The loop yields
+# one execute_step listing all children; the model spawns them concurrently and
+# resumes "executed"; the join policy is validated across the child artifacts.
+# ---------------------------------------------------------------------------
+
+class TestParallelStepGroups:
+    def _wf_state(self, tmp_path, workflow_id="STORY-025"):
+        path = tmp_path / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+        return yaml.safe_load(path.read_text())
+
+    def _caucus_step(self, join="all"):
+        step = _make_step("caucus", phase="VERIFY")
+        step["agent"] = None
+        step["parallel"] = [
+            {"agent": "code-reviewer", "output_artifact": "code_review", "subagent_type": "code"},
+            {"agent": "security-reviewer", "output_artifact": "sec_review", "subagent_type": "research"},
+        ]
+        step["join"] = join
+        return step
+
+    def _write_children(self, children, which=None):
+        for i, c in enumerate(children):
+            if which is not None and i not in which:
+                continue
+            op = c["output_path"]
+            os.makedirs(os.path.dirname(op), exist_ok=True)
+            with open(op, "w") as f:
+                f.write("# review {}\nok\n".format(i))
+
+    def test_parallel_step_yields_fanout_execute_step(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="caucus",
+                                    steps=[self._caucus_step()])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+
+        assert result["reason"] == "execute_step"
+        assert result["step_id"] == "caucus"
+        payload = result["payload"]
+        assert "parallel" in payload
+        assert len(payload["parallel"]) == 2
+        assert {c["agent"] for c in payload["parallel"]} == {"code-reviewer", "security-reviewer"}
+        assert all(c["output_path"] for c in payload["parallel"])
+        assert payload["join"] == "all"
+
+    def test_join_all_advances_when_every_child_present(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="caucus",
+                                    steps=[self._caucus_step(join="all")])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        self._write_children(result["payload"]["parallel"])
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+        artifacts = self._wf_state(tmp_path)["artifacts"]
+        assert artifacts.get("code_review")
+        assert artifacts.get("sec_review")
+        assert os.path.exists(artifacts["code_review"])
+
+    def test_join_all_fails_when_a_child_missing(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="caucus",
+                                    steps=[self._caucus_step(join="all")])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        # Write only the first child.
+        self._write_children(result["payload"]["parallel"], which={0})
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "failure"
+        assert "join" in result["payload"]["error"].lower()
+
+    def test_join_any_advances_with_one_child(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="caucus",
+                                    steps=[self._caucus_step(join="any")])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        self._write_children(result["payload"]["parallel"], which={1})
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+
+    def test_gated_parallel_step_yields_gate_then_fanout(self, tmp_path):
+        step = self._caucus_step()
+        step["gate"] = "user_approval"
+        project_dir = _full_project(tmp_path, current_step_id="caucus", steps=[step])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="collaborative")
+        assert result["reason"] == "gate"
+
+        result = resume_loop("STORY-025", {"action": "approve"},
+                             project_dir=str(project_dir), deference_level="collaborative")
+        assert result["reason"] == "execute_step"
+        assert "parallel" in result["payload"]
+
+
+# ---------------------------------------------------------------------------
+# Scenario: per-workflow budget (steps + relayed tokens)
+# ---------------------------------------------------------------------------
+
+class TestBudget:
+    def _wf_state(self, tmp_path, workflow_id="STORY-025"):
+        path = tmp_path / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+        return yaml.safe_load(path.read_text())
+
+    def _set_budget(self, project_dir, max_steps=None, max_tokens=None, default_max=3):
+        data = {
+            "iteration_limits": {"default_max": default_max},
+            "paths": {"output_dir": ".sweetclaude/workflows"},
+            "subagent_types": {"allowlist": ["code", "research", "housekeeping"]},
+            "budget": {"max_steps": max_steps, "max_tokens": max_tokens},
+        }
+        (project_dir / "config" / "orchestrator-defaults.yaml").write_text(yaml.safe_dump(data))
+
+    def _two_agent_steps(self):
+        return [
+            _make_step("activate", phase="ACTIVATION", agent="housekeeping"),
+            _make_step("spec", phase="DEFINE", agent="spec-writer",
+                       output_artifact="spec_file", exit_checks=["file_exists"]),
+        ]
+
+    def test_max_steps_budget_yields_budget_exhausted(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="activate",
+                                    steps=self._two_agent_steps())
+        self._set_budget(project_dir, max_steps=1)
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+
+        assert result["reason"] == "budget_exhausted"
+        assert result["payload"]["limit"] == "max_steps"
+
+    def test_reset_clears_budget_and_continues(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="activate",
+                                    steps=self._two_agent_steps())
+        self._set_budget(project_dir, max_steps=1)
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        resume_loop("STORY-025", {"action": "executed"},
+                    project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025", {"action": "reset"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "reset"
+        assert self._wf_state(tmp_path)["budget_spent"]["steps"] == 0
+
+        result = run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "execute_step"
+        assert result["step_id"] == "spec"
+
+    def test_max_tokens_budget_from_relayed_spend(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="activate",
+                                    steps=self._two_agent_steps())
+        self._set_budget(project_dir, max_tokens=100)
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025", {"action": "executed", "tokens": 150},
+                             project_dir=str(project_dir), deference_level="autonomous")
+
+        assert result["reason"] == "budget_exhausted"
+        assert result["payload"]["limit"] == "max_tokens"
+
+    def test_no_budget_is_unlimited(self, tmp_path):
+        steps = [_make_step("activate", phase="ACTIVATION", agent="housekeeping")]
+        project_dir = _full_project(tmp_path, current_step_id="activate", steps=steps)
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025", {"action": "executed", "tokens": 999999},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+
+
+# ---------------------------------------------------------------------------
+# Scenario: adversarial-verify step shape (fan-out + vote)
+# ---------------------------------------------------------------------------
+
+class TestVerifyStep:
+    def _wf_state(self, tmp_path, workflow_id="STORY-025"):
+        path = tmp_path / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+        return yaml.safe_load(path.read_text())
+
+    def _verify_step(self, count=3, threshold="majority"):
+        step = _make_step("verify-bug", phase="VERIFY",
+                          routing={"confirmed": "continue", "refuted": "hard_stop_report"})
+        step["agent"] = None
+        step["verify"] = {"agent": "skeptic", "subagent_type": "research",
+                          "count": count, "threshold": threshold, "output_artifact": "verdict"}
+        return step
+
+    def test_verify_step_yields_fanout_payload(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="verify-bug",
+                                    steps=[self._verify_step(count=3)])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        assert result["reason"] == "execute_step"
+        v = result["payload"]["verify"]
+        assert v["count"] == 3
+        assert v["threshold"] == "majority"
+        assert v["agent"] == "skeptic"
+        assert len(v["slots"]) == 3
+
+    def test_relayed_majority_confirmed_routes_continue(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="verify-bug",
+                                    steps=[self._verify_step(count=3)])
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025",
+                             {"action": "executed", "verdicts": ["confirmed", "confirmed", "refuted"]},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+        vr = self._wf_state(tmp_path)["verify_results"]["verify-bug"]
+        assert vr["confirmed"] == 2
+        assert vr["signal"] == "confirmed"
+
+    def test_relayed_majority_refuted_routes_hard_stop(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="verify-bug",
+                                    steps=[self._verify_step(count=3)])
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025",
+                             {"action": "executed", "verdicts": ["refuted", "refuted", "confirmed"]},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "halted"
+
+    def test_threshold_all_refutes_on_single_dissent(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="verify-bug",
+                                    steps=[self._verify_step(count=3, threshold="all")])
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025",
+                             {"action": "executed", "verdicts": ["confirmed", "confirmed", "refuted"]},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "halted"
+
+    def test_verdicts_read_from_artifacts_when_not_relayed(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="verify-bug",
+                                    steps=[self._verify_step(count=3)])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        for s in result["payload"]["verify"]["slots"]:
+            op = s["output_path"]
+            os.makedirs(os.path.dirname(op), exist_ok=True)
+            with open(op, "w") as f:
+                f.write("---\nsignal: confirmed\n---\n")
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+
+    def test_missing_verdict_yields_failure(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="verify-bug",
+                                    steps=[self._verify_step(count=3)])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        only = result["payload"]["verify"]["slots"][0]["output_path"]
+        os.makedirs(os.path.dirname(only), exist_ok=True)
+        with open(only, "w") as f:
+            f.write("---\nsignal: confirmed\n---\n")
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "failure"
+
+
+# ---------------------------------------------------------------------------
+# Scenario: state-persistence cleanups
+# ---------------------------------------------------------------------------
+
+class TestStatePersistenceCleanups:
+    def _wf_state(self, tmp_path, workflow_id="STORY-025"):
+        path = tmp_path / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+        return yaml.safe_load(path.read_text())
+
+    def test_artifact_pointer_dropped_when_exit_check_fails_on_missing_file(self, tmp_path):
+        steps = [_make_step("spec", phase="DEFINE", agent="spec-writer",
+                            output_artifact="spec_file", exit_checks=["file_exists"])]
+        project_dir = _full_project(tmp_path, current_step_id="spec", steps=steps)
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        # Model reports executed but wrote no artifact.
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "failure"
+        # State must not reference an artifact that was never produced.
+        assert "spec_file" not in (self._wf_state(tmp_path).get("artifacts") or {})
+
+    def test_state_mirrored_consistently_to_both_locations(self, tmp_path):
+        steps = [_make_step("activate", phase="ACTIVATION", agent="housekeeping")]
+        project_dir = _full_project(tmp_path, current_step_id="activate", steps=steps)
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+
+        canonical = tmp_path / ".sweetclaude" / "state" / "workflows" / "STORY-025.yaml"
+        mirror = tmp_path / ".sweetclaude" / "workflows" / "STORY-025.yaml"
+        assert canonical.exists() and mirror.exists()
+        assert yaml.safe_load(canonical.read_text()) == yaml.safe_load(mirror.read_text())

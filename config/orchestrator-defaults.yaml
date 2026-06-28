@@ -1,5 +1,11 @@
 iteration_limits:
   default_max: 3
+budget:
+  # Per-workflow ceilings. null = unlimited.
+  # max_steps is counted by the loop (one per completed step).
+  # max_tokens accumulates spend the model relays on resume("executed").
+  max_steps: null
+  max_tokens: null
 paths:
   output_dir: ".sweetclaude/workflows"
 subagent_types:

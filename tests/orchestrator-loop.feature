@@ -28,6 +28,122 @@ Feature: Orchestrator main loop
     When the loop runs
     Then it yields a YieldPoint with reason "halted"
 
+  # --- execute_step delegation ---
+
+  Scenario: Agent step delegates execution to the model in production
+    Given a workflow at an agent step with no injected executor
+    When the loop reaches the step
+    Then it yields a YieldPoint with reason "execute_step"
+    And the payload contains agent, model, output_path, and an "executed" action
+    And the state file shows status "waiting_for_agent"
+
+  Scenario: Resume executed advances after the model writes the artifact
+    Given a workflow that yielded "execute_step" for an agent step
+    When the model writes the output artifact and resumes with action "executed"
+    Then re-entry does not delete the artifact
+    And the step's exit checks pass and the loop advances
+
+  Scenario: Gate and execution are separate yields
+    Given a gated agent step in collaborative mode
+    When the loop reaches the step
+    Then it yields "gate" first
+    And after approval it yields "execute_step"
+
+  # --- Structured-output contract ---
+
+  Scenario: execute_step payload carries the step output_schema
+    Given an agent step that declares an output_schema
+    When the loop delegates the step
+    Then the execute_step payload includes the output_schema
+
+  Scenario: A relayed signal takes precedence over the artifact
+    Given a step with routing and an output_schema
+    When the model resumes "executed" with a signal value
+    Then the loop routes on the relayed signal rather than scraping the artifact
+
+  Scenario: A signal outside the schema enum is rejected
+    Given a step whose output_schema enumerates valid signals
+    When the model relays a signal not in the enum
+    Then the loop yields a YieldPoint with reason "failure"
+
+  Scenario: Signal falls back to the artifact when none is relayed
+    Given a step with routing and no relayed signal
+    When the model resumes "executed"
+    Then the loop reads the signal from the artifact frontmatter
+
+  # --- Parallel (fan-out) step groups ---
+
+  Scenario: Parallel step yields a single fan-out execute_step
+    Given a step that declares parallel children
+    When the loop reaches the step
+    Then it yields one execute_step whose payload lists every child
+    And the payload includes the join policy
+
+  Scenario: Join all advances when every child artifact is present
+    Given a parallel step with join "all"
+    When the model writes every child artifact and resumes "executed"
+    Then each child artifact is recorded and the loop advances
+
+  Scenario: Join all fails when a child artifact is missing
+    Given a parallel step with join "all"
+    When the model writes only some child artifacts and resumes "executed"
+    Then the loop yields a YieldPoint with reason "failure"
+
+  Scenario: Join any advances with a single child artifact
+    Given a parallel step with join "any"
+    When the model writes one child artifact and resumes "executed"
+    Then the loop advances
+
+  # --- Adversarial verify ---
+
+  Scenario: Verify step yields a fan-out of verifiers
+    Given a step that declares a verify block with a count
+    When the loop reaches the step
+    Then it yields one execute_step listing a verifier slot per count
+    And the payload includes the threshold
+
+  Scenario: Majority-confirmed verdict routes on "confirmed"
+    Given a verify step with threshold "majority"
+    When the model relays verdicts that are mostly confirmed
+    Then the loop routes on the "confirmed" signal
+
+  Scenario: Majority-refuted verdict routes on "refuted"
+    Given a verify step with threshold "majority"
+    When the model relays verdicts that are mostly refuted
+    Then the loop routes on the "refuted" signal
+
+  Scenario: Verdicts can be read from the verifier artifacts
+    Given a verify step with no relayed verdicts
+    When each verifier writes a confirmed/refuted signal to its slot
+    Then the loop tallies the artifacts to produce the aggregate signal
+
+  Scenario: A missing verdict fails the verify step
+    Given a verify step with no relayed verdicts
+    When not every verifier slot has a verdict
+    Then the loop yields a YieldPoint with reason "failure"
+
+  # --- Budget ---
+
+  Scenario: Step budget yields budget_exhausted
+    Given a workflow with a max_steps budget of 1
+    When one step completes and the loop reaches the next
+    Then it yields a YieldPoint with reason "budget_exhausted" and limit "max_steps"
+
+  Scenario: Token budget accrues from relayed spend
+    Given a workflow with a max_tokens budget
+    When the model resumes "executed" relaying token spend over the limit
+    Then the loop yields a YieldPoint with reason "budget_exhausted" and limit "max_tokens"
+
+  Scenario: Reset clears the budget and the loop continues
+    Given a workflow that yielded "budget_exhausted"
+    When the user resets and the loop runs again
+    Then the budget counters are zero and the next step executes
+
+  Scenario: No configured budget is unlimited
+    Given a workflow with no budget configured
+    When steps complete and spend is relayed
+    Then the loop never yields budget_exhausted
+
   # --- Gate enforcement ---
 
   Scenario: Soft gate yields for approval in collaborative mode
