@@ -4,7 +4,7 @@
 **Subject repo:** `/home/user/sweetclaude` (sweetclaude v4.1.12-beta)
 **Question:** Could native Claude Code plugin-developer capabilities — Plan Mode, subagents/agent-teams, and **dynamic Workflows** — natively carry some of the burden SweetClaude currently implements with custom machinery (23 bash hooks, ~38 Python scripts, an `orchestrator_loop.py`, 113 prose skills, custom YAML state, and shell-preprocessing state injection)?
 
-> **Implementation status (2026-06-28):** Improvement #1 from the addendum (the `execute_step` yield — model-as-runtime executor) has landed in `scripts/orchestrator_loop.py` and `skills/orchestrator/SKILL.md`. Items #2 (structured-output contract) and #3 (parallel step groups) are in progress. The remaining items and the two smaller cleanups are still open.
+> **Implementation status (2026-06-28):** Addendum improvements #1 (the `execute_step` yield — model-as-runtime executor), #2 (structured-output contract), and #3 (parallel/fan-out step groups) have landed in `scripts/orchestrator_loop.py` and `skills/orchestrator/SKILL.md`, each with tests and Gherkin scenarios. Still open: #4 (budget), #5 (adversarial-verify step shape), and the two smaller cleanups (artifact-set ordering, dual-write).
 
 ---
 

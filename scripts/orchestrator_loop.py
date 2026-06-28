@@ -381,6 +381,100 @@ def _add_session(state):
     })
 
 
+def _resolve_parallel_children(workflow_id, step, output_dir, project_dir):
+    """Resolve each child of a parallel step to (child, output_artifact, path)."""
+    resolved = []
+    for child in (step.get("parallel") or []):
+        art = child.get("output_artifact")
+        path = None
+        if art:
+            path = _make_output_path(workflow_id, step["id"], art, output_dir, project_dir)
+            _check_containment(path, project_dir)
+        resolved.append((child, art, path))
+    return resolved
+
+
+def _run_parallel_step(workflow_id, state, step, reentering, output_dir, project_dir):
+    """Drive a parallel (fan-out) step.
+
+    First visit: clean stale child outputs and yield a single `execute_step`
+    whose payload lists every child for the model to spawn concurrently.
+    Re-entry: validate the join policy across the children's artifacts, record
+    them, and return None so the caller continues to routing/advance.
+    """
+    resolved = _resolve_parallel_children(workflow_id, step, output_dir, project_dir)
+    join = step.get("join", "all")
+
+    if not reentering:
+        for _child, _art, path in resolved:
+            if path:
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except OSError as e:
+                        return {
+                            "reason": "failure",
+                            "step_id": step["id"],
+                            "payload": {"error": str(e), "actions": ["retry", "skip", "abort"]},
+                        }
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+        state["status"] = "waiting_for_agent"
+        _save_state(workflow_id, state, project_dir, output_dir)
+        return {
+            "reason": "execute_step",
+            "step_id": step["id"],
+            "payload": {
+                "parallel": [
+                    {
+                        "agent": child.get("agent"),
+                        "subagent_type": child.get("subagent_type"),
+                        "model": child.get("model", "sonnet"),
+                        "output_artifact": art,
+                        "output_path": path,
+                        "prompt": child.get("prompt", ""),
+                    }
+                    for (child, art, path) in resolved
+                ],
+                "join": join,
+                "output_schema": step.get("output_schema"),
+                "actions": ["executed", "abort"],
+            },
+        }
+
+    # Re-entry: validate the join policy.
+    present = []
+    for child, art, path in resolved:
+        ok = bool(path) and os.path.exists(path) and os.path.getsize(path) > 0
+        if ok and art:
+            state.setdefault("artifacts", {})[art] = path
+        present.append((child, art, ok))
+
+    if join == "any":
+        satisfied = any(ok for _c, _a, ok in present)
+    else:
+        satisfied = all(ok for _c, _a, ok in present)
+
+    if not satisfied:
+        missing = [art or (child.get("agent") or "child")
+                   for child, art, ok in present if not ok]
+        _write_checkpoint(state, "Parallel step '{}' join '{}' unsatisfied; missing: {}".format(
+            step["id"], join, ", ".join(str(m) for m in missing)))
+        state["status"] = "waiting_for_user"
+        _save_state(workflow_id, state, project_dir, output_dir)
+        return {
+            "reason": "failure",
+            "step_id": step["id"],
+            "payload": {
+                "error": "Parallel join '{}' not satisfied; missing artifacts: {}".format(
+                    join, missing),
+                "actions": ["retry", "skip", "abort"],
+            },
+        }
+
+    _save_state(workflow_id, state, project_dir, output_dir)
+    return None
+
+
 def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
     _validate_workflow_id(workflow_id)
     project_dir = os.path.abspath(project_dir)
@@ -442,6 +536,16 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
                         }
                     }
 
+        # Parallel (fan-out) step: the model spawns all children concurrently,
+        # then the join policy is validated on re-entry. Routing/advance below is
+        # shared with single steps.
+        parallel_children = step.get("parallel")
+        if parallel_children:
+            parallel_result = _run_parallel_step(
+                workflow_id, state, step, reentering, output_dir, project_dir)
+            if parallel_result is not None:
+                return parallel_result
+
         output_artifact = step.get("output_artifact")
         output_path = None
         if output_artifact:
@@ -476,7 +580,11 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
 
         agent = step.get("agent")
         agent_return_value = None
-        if agent is not None:
+        if parallel_children:
+            # Execution was handled by _run_parallel_step; children's artifacts
+            # are already recorded. Fall through to routing/advance.
+            pass
+        elif agent is not None:
             try:
                 envelope = assemble_context_envelope(step, state, project_dir)
                 input_paths = envelope

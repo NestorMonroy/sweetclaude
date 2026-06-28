@@ -71,6 +71,29 @@ Feature: Orchestrator main loop
     When the model resumes "executed"
     Then the loop reads the signal from the artifact frontmatter
 
+  # --- Parallel (fan-out) step groups ---
+
+  Scenario: Parallel step yields a single fan-out execute_step
+    Given a step that declares parallel children
+    When the loop reaches the step
+    Then it yields one execute_step whose payload lists every child
+    And the payload includes the join policy
+
+  Scenario: Join all advances when every child artifact is present
+    Given a parallel step with join "all"
+    When the model writes every child artifact and resumes "executed"
+    Then each child artifact is recorded and the loop advances
+
+  Scenario: Join all fails when a child artifact is missing
+    Given a parallel step with join "all"
+    When the model writes only some child artifacts and resumes "executed"
+    Then the loop yields a YieldPoint with reason "failure"
+
+  Scenario: Join any advances with a single child artifact
+    Given a parallel step with join "any"
+    When the model writes one child artifact and resumes "executed"
+    Then the loop advances
+
   # --- Gate enforcement ---
 
   Scenario: Soft gate yields for approval in collaborative mode
