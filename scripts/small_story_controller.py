@@ -1032,8 +1032,10 @@ def _check_init_preconditions(project: Path) -> dict[str, Any] | None:
         return _failure(
             "blocked_not_on_main",
             f"Small-story init is blocked: current branch is '{display}', "
-            f"not '{main_branch}'. Switch to {main_branch} before starting a new story: "
-            f"git checkout {main_branch}",
+            f"not '{main_branch}'. init must run on the trunk branch. Correct sequence: "
+            f"commit the frozen contract on {main_branch}, run init on {main_branch}, then "
+            f"create your implementation branch (git checkout -b feat/<id>-...) to carry the "
+            f"workflow state forward.",
         )
 
     try:
@@ -1045,7 +1047,8 @@ def _check_init_preconditions(project: Path) -> dict[str, Any] | None:
             return _failure(
                 "blocked_dirty_tree",
                 "Small-story init is blocked: working tree has uncommitted changes. "
-                "Commit, stash, or discard changes before starting a new story.",
+                "Commit the frozen contract (or stash/discard other changes) on the trunk "
+                "branch before running init; create your implementation branch after init.",
             )
         if r.returncode != 0:
             return _failure(
