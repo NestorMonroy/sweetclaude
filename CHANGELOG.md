@@ -4,6 +4,22 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.4.0-beta] — 2026-06-27 (4.x beta channel)
+
+### Added — orchestrator executor and failure reporting
+
+The orchestrator can now run workflows end to end: it delegates each step to a
+subagent, enforces a structured-output contract, runs steps in parallel groups,
+and tracks a per-workflow budget. A new report-failure skill produces structured
+failure reports with root-cause analysis.
+
+### Fixed — update currency and roadmap rendering
+
+Update checks now reconcile available-version state against the installed
+version. Roadmap tree connectors render correctly under the style rules.
+
+---
+
 ## [4.3.12-beta] — 2026-06-27 (4.x beta channel)
 
 ### Added — small-story workflows can amend a frozen contract with approval
