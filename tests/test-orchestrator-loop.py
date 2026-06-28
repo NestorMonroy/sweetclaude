@@ -2581,3 +2581,37 @@ class TestVerifyStep:
         result = resume_loop("STORY-025", {"action": "executed"},
                              project_dir=str(project_dir), deference_level="autonomous")
         assert result["reason"] == "failure"
+
+
+# ---------------------------------------------------------------------------
+# Scenario: state-persistence cleanups
+# ---------------------------------------------------------------------------
+
+class TestStatePersistenceCleanups:
+    def _wf_state(self, tmp_path, workflow_id="STORY-025"):
+        path = tmp_path / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+        return yaml.safe_load(path.read_text())
+
+    def test_artifact_pointer_dropped_when_exit_check_fails_on_missing_file(self, tmp_path):
+        steps = [_make_step("spec", phase="DEFINE", agent="spec-writer",
+                            output_artifact="spec_file", exit_checks=["file_exists"])]
+        project_dir = _full_project(tmp_path, current_step_id="spec", steps=steps)
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        # Model reports executed but wrote no artifact.
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "failure"
+        # State must not reference an artifact that was never produced.
+        assert "spec_file" not in (self._wf_state(tmp_path).get("artifacts") or {})
+
+    def test_state_mirrored_consistently_to_both_locations(self, tmp_path):
+        steps = [_make_step("activate", phase="ACTIVATION", agent="housekeeping")]
+        project_dir = _full_project(tmp_path, current_step_id="activate", steps=steps)
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+
+        canonical = tmp_path / ".sweetclaude" / "state" / "workflows" / "STORY-025.yaml"
+        mirror = tmp_path / ".sweetclaude" / "workflows" / "STORY-025.yaml"
+        assert canonical.exists() and mirror.exists()
+        assert yaml.safe_load(canonical.read_text()) == yaml.safe_load(mirror.read_text())
