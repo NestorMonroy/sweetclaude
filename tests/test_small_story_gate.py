@@ -566,3 +566,55 @@ def test_small_story_amend_inflight_then_complete_verify(tmp_path):
     result = enter_verify_phase(project_dir=project, workflow_id="STORY-001")
     assert result["ok"], result
     assert result["success_criteria_contract_hash"] == amended["new_contract_hash"]
+
+
+# --- Regression: no-arg finalize / render-status resolve the workflow id ------
+# (bug: finalize/render passed the raw workflow_id=None into completion
+#  validation instead of the id already resolved from state, so the no-arg
+#  forms documented in the skill failed on a correctly-completed story.)
+
+
+def test_finalize_no_arg_forwards_resolved_workflow_id(monkeypatch):
+    import small_story_controller as ssc
+
+    monkeypatch.setattr(ssc, "_workflow_id_from_state", lambda project: "STORY-077")
+    monkeypatch.setattr(ssc, "_check_state_phase_consistency", lambda project, wid: None)
+    captured = {}
+
+    def fake_completion(*, project_dir, workflow_id):
+        captured["id"] = workflow_id
+        return {"ok": True}
+
+    monkeypatch.setattr(ssc, "_completion_result", fake_completion)
+
+    result = ssc.finalize_small_story(project_dir=".")  # no workflow_id argument
+    # The id resolved from state must be forwarded to completion validation,
+    # not the raw None (the bug).
+    assert captured["id"] == "STORY-077"
+    assert result["ok"] is True
+    assert result["workflow_id"] == "STORY-077"
+
+
+def test_render_status_no_arg_forwards_resolved_workflow_id(monkeypatch):
+    import small_story_controller as ssc
+
+    monkeypatch.setattr(ssc, "_workflow_id_from_state", lambda project: "STORY-077")
+    monkeypatch.setattr(ssc, "_check_state_phase_consistency", lambda project, wid: None)
+    monkeypatch.setattr(ssc, "_status_details", lambda *a, **k: {})
+    captured = {"completion": [], "gate": []}
+
+    def fake_completion(*, project_dir, workflow_id):
+        captured["completion"].append(workflow_id)
+        return {"ok": True, "code": "ok", "message": ""}
+
+    def fake_gate(*, project_dir, workflow_id):
+        captured["gate"].append(workflow_id)
+        return {"ok": True, "workflow_id": workflow_id}
+
+    monkeypatch.setattr(ssc, "_completion_result", fake_completion)
+    monkeypatch.setattr(ssc, "_completion_gate_result", fake_gate)
+
+    result = ssc.render_small_story_status(project_dir=".")  # no workflow_id argument
+    assert captured["completion"] == ["STORY-077"]
+    assert captured["gate"] == ["STORY-077"]
+    assert result["workflow_id"] == "STORY-077"

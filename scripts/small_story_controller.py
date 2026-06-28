@@ -879,7 +879,7 @@ def finalize_small_story(
             inconsistency["forbidden_phrases_detected"] = _forbidden_phrases(attempted_response)
             inconsistency["allowed_summary"] = _blocked_summary("blocked_state_inconsistent")
             return inconsistency
-    completion = _completion_result(project_dir=project_dir, workflow_id=workflow_id)
+    completion = _completion_result(project_dir=project_dir, workflow_id=resolved_workflow_id)
     forbidden = _forbidden_phrases(attempted_response)
     if not completion["ok"]:
         completion["completion_claim_allowed"] = False
@@ -889,7 +889,7 @@ def finalize_small_story(
     return {
         "ok": True,
         "status": "complete",
-        "workflow_id": workflow_id,
+        "workflow_id": resolved_workflow_id,
         "completion_claim_allowed": True,
         "forbidden_phrases_detected": forbidden,
         "allowed_summary": "Small-story completion validation passed. Controller state permits completion.",
@@ -917,8 +917,8 @@ def render_small_story_status(
                 "workflow_phase": inconsistency.get("workflow_phase"),
                 "phase_yaml_phase": inconsistency.get("phase_yaml_phase"),
             }
-    completion = _completion_result(project_dir=project_dir, workflow_id=workflow_id)
-    gate = _completion_gate_result(project_dir=project_dir, workflow_id=workflow_id)
+    completion = _completion_result(project_dir=project_dir, workflow_id=resolved_workflow_id)
+    gate = _completion_gate_result(project_dir=project_dir, workflow_id=resolved_workflow_id)
     details = _status_details(project, resolved_workflow_id, completion, gate)
     if completion["ok"]:
         return {
