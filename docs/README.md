@@ -67,6 +67,12 @@ repair, recovery, and supported migration route through `/sweetclaude:doctor`,
 Do not use `/sweetclaude:update` to move between channels. Channel switching is
 explicit: install the other plugin channel and follow that channel's guide.
 
+## Design & Analysis
+
+| Item | Link |
+|---|---|
+| Native Claude Code capabilities vs. SweetClaude | [Native capabilities analysis](design/native-capabilities-analysis.md) |
+
 ## Other Entry Points
 
 - [Back to main README](../README.md)
