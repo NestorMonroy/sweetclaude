@@ -316,6 +316,23 @@ def _is_delegate(value):
     return isinstance(value, dict) and value.get("status") == "delegate"
 
 
+def _schema_allowed_signals(schema):
+    """Return the set of valid signal values declared by a step's output_schema,
+    or None when the schema does not constrain the signal.
+
+    Supported shape:
+        output_schema:
+          signal:
+            enum: [done, issues, blocked]
+    """
+    if not isinstance(schema, dict):
+        return None
+    sig = schema.get("signal")
+    if isinstance(sig, dict) and isinstance(sig.get("enum"), list):
+        return set(sig["enum"])
+    return None
+
+
 def _extract_signal_from_path(output_path):
     if not output_path or not os.path.exists(output_path):
         return None
@@ -502,6 +519,7 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
                             "input_paths": [str(p) for p in input_paths],
                             "output_path": output_path,
                             "prompt": prompt,
+                            "output_schema": step.get("output_schema"),
                             "actions": ["executed", "abort"],
                         },
                     }
@@ -543,10 +561,33 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
             _save_state(workflow_id, state, project_dir, output_dir)
 
         signal = None
-        if output_path:
+        provided_signal = (state.get("step_signals") or {}).get(current_step_id)
+        if provided_signal is not None:
+            # Structured signal relayed by the model from the subagent's
+            # schema-validated output; preferred over scraping the artifact.
+            signal = provided_signal
+        elif output_path:
             signal = _extract_signal_from_path(output_path)
         elif isinstance(agent_return_value, dict):
             signal = agent_return_value.get("signal", None)
+
+        schema = step.get("output_schema")
+        if schema is not None and signal is not None:
+            allowed = _schema_allowed_signals(schema)
+            if allowed is not None and signal not in allowed:
+                _write_checkpoint(state, "Step '{}' signal '{}' violates output_schema".format(
+                    step["id"], signal))
+                state["status"] = "waiting_for_user"
+                _save_state(workflow_id, state, project_dir, output_dir)
+                return {
+                    "reason": "failure",
+                    "step_id": step["id"],
+                    "payload": {
+                        "error": "Signal '{}' is not permitted by output_schema (allowed: {})".format(
+                            signal, sorted(allowed)),
+                        "actions": ["retry", "skip", "abort"],
+                    },
+                }
 
         escalation = step.get("escalation")
         if escalation and signal == escalation.get("signal"):
@@ -669,6 +710,8 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
             completed.append(current_step_id)
 
         _write_checkpoint(state, "Completed step '{}'".format(current_step_id))
+        if isinstance(state.get("step_signals"), dict):
+            state["step_signals"].pop(current_step_id, None)
         state["current_step_id"] = next_step_id
         state["step_executed"] = None
         state["status"] = "active"
@@ -725,7 +768,14 @@ def resume_loop(workflow_id, decision, project_dir=".", deference_level="collabo
         # The model finished executing the step that yielded `execute_step` and
         # wrote its artifact. Mark it executed and re-enter the loop, which skips
         # invocation and runs post-processing (signal, routing, exit checks).
+        # The model may relay a structured signal from the subagent's
+        # schema-validated output; it takes precedence over scraping the artifact.
+        provided_signal = decision.get("signal")
+        if provided_signal is None and isinstance(decision.get("result"), dict):
+            provided_signal = decision["result"].get("signal")
         state["step_executed"] = current_step_id
+        if provided_signal is not None:
+            state.setdefault("step_signals", {})[current_step_id] = provided_signal
         state["status"] = "active"
         _save_state(workflow_id, state, project_dir, output_dir)
         return run_loop(workflow_id, project_dir=project_dir, deference_level=deference_level)
@@ -744,6 +794,8 @@ def resume_loop(workflow_id, decision, project_dir=".", deference_level="collabo
         if prior:
             state["current_step_id"] = prior["id"]
             state["step_executed"] = None
+            if isinstance(state.get("step_signals"), dict):
+                state["step_signals"].pop(prior["id"], None)
             state["status"] = "active"
             _save_state(workflow_id, state, project_dir, output_dir)
         return {"reason": "iterated", "step_id": state.get("current_step_id"), "payload": {}}
@@ -761,6 +813,8 @@ def resume_loop(workflow_id, decision, project_dir=".", deference_level="collabo
                     if os.path.exists(output_path):
                         os.remove(output_path)
         state["step_executed"] = None
+        if isinstance(state.get("step_signals"), dict):
+            state["step_signals"].pop(current_step_id, None)
         state["status"] = "active"
         _save_state(workflow_id, state, project_dir, output_dir)
         return run_loop(workflow_id, project_dir=project_dir, deference_level=deference_level)

@@ -75,8 +75,9 @@ The loop has reached a step whose work must be performed by a subagent. The Pyth
    - `input_paths` — files the subagent may read as input
    - `output_path` — where the subagent MUST write its output artifact (if non-null)
    - `prompt` — the assembled instruction to pass through
+   - `output_schema` — when non-null, the contract the subagent's result must satisfy (e.g. `signal.enum` lists the only valid signal values)
 2. Wait for the subagent to finish and confirm the artifact exists at `output_path` (when one is specified).
-3. Resume with `{"action": "executed"}` (Step 4). The loop re-enters, validates the artifact, extracts the routing signal, and advances.
+3. Resume with `{"action": "executed"}` (Step 4). When `output_schema` is present, relay the subagent's chosen signal: `{"action": "executed", "signal": "<value>"}` — it must be one of the schema's allowed values. A relayed signal takes precedence over scraping the artifact; if you omit it, the loop falls back to reading the signal from the artifact frontmatter. The loop re-enters, validates the artifact and signal, routes, and advances.
 
 Do not skip the subagent and write the artifact yourself — the point is the isolated subagent context. If the user wants to stop instead, resume with `{"action": "abort"}`.
 

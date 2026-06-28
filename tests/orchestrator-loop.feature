@@ -49,6 +49,28 @@ Feature: Orchestrator main loop
     Then it yields "gate" first
     And after approval it yields "execute_step"
 
+  # --- Structured-output contract ---
+
+  Scenario: execute_step payload carries the step output_schema
+    Given an agent step that declares an output_schema
+    When the loop delegates the step
+    Then the execute_step payload includes the output_schema
+
+  Scenario: A relayed signal takes precedence over the artifact
+    Given a step with routing and an output_schema
+    When the model resumes "executed" with a signal value
+    Then the loop routes on the relayed signal rather than scraping the artifact
+
+  Scenario: A signal outside the schema enum is rejected
+    Given a step whose output_schema enumerates valid signals
+    When the model relays a signal not in the enum
+    Then the loop yields a YieldPoint with reason "failure"
+
+  Scenario: Signal falls back to the artifact when none is relayed
+    Given a step with routing and no relayed signal
+    When the model resumes "executed"
+    Then the loop reads the signal from the artifact frontmatter
+
   # --- Gate enforcement ---
 
   Scenario: Soft gate yields for approval in collaborative mode
