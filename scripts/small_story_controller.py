@@ -879,7 +879,7 @@ def finalize_small_story(
             inconsistency["forbidden_phrases_detected"] = _forbidden_phrases(attempted_response)
             inconsistency["allowed_summary"] = _blocked_summary("blocked_state_inconsistent")
             return inconsistency
-    completion = _completion_result(project_dir=project_dir, workflow_id=workflow_id)
+    completion = _completion_result(project_dir=project_dir, workflow_id=resolved_workflow_id)
     forbidden = _forbidden_phrases(attempted_response)
     if not completion["ok"]:
         completion["completion_claim_allowed"] = False
@@ -889,7 +889,7 @@ def finalize_small_story(
     return {
         "ok": True,
         "status": "complete",
-        "workflow_id": workflow_id,
+        "workflow_id": resolved_workflow_id,
         "completion_claim_allowed": True,
         "forbidden_phrases_detected": forbidden,
         "allowed_summary": "Small-story completion validation passed. Controller state permits completion.",
@@ -917,8 +917,8 @@ def render_small_story_status(
                 "workflow_phase": inconsistency.get("workflow_phase"),
                 "phase_yaml_phase": inconsistency.get("phase_yaml_phase"),
             }
-    completion = _completion_result(project_dir=project_dir, workflow_id=workflow_id)
-    gate = _completion_gate_result(project_dir=project_dir, workflow_id=workflow_id)
+    completion = _completion_result(project_dir=project_dir, workflow_id=resolved_workflow_id)
+    gate = _completion_gate_result(project_dir=project_dir, workflow_id=resolved_workflow_id)
     details = _status_details(project, resolved_workflow_id, completion, gate)
     if completion["ok"]:
         return {
@@ -1032,8 +1032,10 @@ def _check_init_preconditions(project: Path) -> dict[str, Any] | None:
         return _failure(
             "blocked_not_on_main",
             f"Small-story init is blocked: current branch is '{display}', "
-            f"not '{main_branch}'. Switch to {main_branch} before starting a new story: "
-            f"git checkout {main_branch}",
+            f"not '{main_branch}'. init must run on the trunk branch. Correct sequence: "
+            f"commit the frozen contract on {main_branch}, run init on {main_branch}, then "
+            f"create your implementation branch (git checkout -b feat/<id>-...) to carry the "
+            f"workflow state forward.",
         )
 
     try:
@@ -1045,7 +1047,8 @@ def _check_init_preconditions(project: Path) -> dict[str, Any] | None:
             return _failure(
                 "blocked_dirty_tree",
                 "Small-story init is blocked: working tree has uncommitted changes. "
-                "Commit, stash, or discard changes before starting a new story.",
+                "Commit the frozen contract (or stash/discard other changes) on the trunk "
+                "branch before running init; create your implementation branch after init.",
             )
         if r.returncode != 0:
             return _failure(

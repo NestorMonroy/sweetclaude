@@ -2119,3 +2119,72 @@ class TestSetTerminalFromSync:
                 str(epic_file), "done", "user",
                 project_dir=str(project_dir),
             )
+
+
+# ---------------------------------------------------------------------------
+# Scenario: write_status() provenance-only update on an unchanged status
+# (bug: `set --source manual` was a silent no-op when status was unchanged)
+# ---------------------------------------------------------------------------
+
+class TestWriteStatusProvenanceOnly:
+    def test_set_source_manual_persists_when_status_unchanged(self, tmp_path):
+        project_dir = _setup_project_dir(tmp_path)
+        path = project_dir / "backlog" / "ISSUE-205-prov.md"
+        _frontmatter_file(path, {
+            "id": "ISSUE-205", "title": "Prov", "status": "on-hold",
+            "type": "enhancement", "created": "2026-06-28", "source": "auto",
+        })
+
+        # Status is already on-hold; mark the pause as deliberate (manual).
+        write_status(str(path), "on-hold", "doctor",
+                     project_dir=str(project_dir), source="manual")
+
+        fm = _read_frontmatter(path)
+        assert fm["status"] == "on-hold"
+        assert fm["source"] == "manual"
+
+    def test_provenance_only_update_appends_audit_entry(self, tmp_path):
+        project_dir = _setup_project_dir(tmp_path)
+        path = project_dir / "backlog" / "ISSUE-205-prov.md"
+        _frontmatter_file(path, {
+            "id": "ISSUE-205", "title": "Prov", "status": "on-hold",
+            "type": "enhancement", "created": "2026-06-28", "source": "auto",
+        })
+
+        write_status(str(path), "on-hold", "doctor",
+                     project_dir=str(project_dir), source="manual")
+
+        entry = next(e for e in _read_audit_entries(project_dir)
+                     if e.get("entity") == "ISSUE-205")
+        assert entry["actor"] == "doctor"
+        assert entry["old"] == "on-hold" and entry["new"] == "on-hold"
+
+    def test_autosync_does_not_downgrade_manual_on_unchanged_status(self, tmp_path):
+        project_dir = _setup_project_dir(tmp_path)
+        path = project_dir / "backlog" / "ISSUE-206-prot.md"
+        _frontmatter_file(path, {
+            "id": "ISSUE-206", "title": "Prot", "status": "on-hold",
+            "type": "enhancement", "created": "2026-06-28", "source": "manual",
+        })
+
+        # Auto-sync must never clobber a manual flag, even when status matches.
+        write_status(str(path), "on-hold", "auto-sync",
+                     project_dir=str(project_dir), source="auto", _from_sync=True)
+
+        fm = _read_frontmatter(path)
+        assert fm["source"] == "manual"
+
+    def test_noop_when_status_and_source_both_unchanged(self, tmp_path):
+        project_dir = _setup_project_dir(tmp_path)
+        path = project_dir / "backlog" / "ISSUE-207-noop.md"
+        _frontmatter_file(path, {
+            "id": "ISSUE-207", "title": "Noop", "status": "on-hold",
+            "type": "enhancement", "created": "2026-06-28", "source": "manual",
+        })
+
+        write_status(str(path), "on-hold", "doctor",
+                     project_dir=str(project_dir), source="manual")
+
+        # Nothing changed -> no audit entry written.
+        assert not [e for e in _read_audit_entries(project_dir)
+                    if e.get("entity") == "ISSUE-207"]

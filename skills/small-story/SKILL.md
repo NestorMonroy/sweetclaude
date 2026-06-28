@@ -102,6 +102,15 @@ entered them into the ledger.
    `python3 scripts/small_story_controller.py init --workflow-id {workflow_id}`.
    Do not write the workflow state file yourself.
 
+   **`init` must run on the trunk branch with a clean working tree.** Freeze and
+   commit the contract on trunk *first*, then run `init` on trunk. It writes the
+   uncommitted controller state (`.sweetclaude/state/workflows/{workflow_id}.yaml`).
+   Only **after** `init` do you create the implementation branch
+   (`git checkout -b feat/{workflow_id}-<slug>`) — the new branch carries that
+   uncommitted state forward, and you do DESIGN..SHIP on it, merging back with
+   `--no-ff`. Branching *before* `init` forces a cherry-pick/rebranch recovery
+   cycle, because `init` refuses to run off-trunk or on a dirty tree.
+
 After `init`, the contract is frozen and human-gated: any attempt to edit it
 raises an approval prompt that only the user can answer, in every permission
 mode. If the user approves an amendment, re-run
