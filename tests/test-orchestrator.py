@@ -50,9 +50,9 @@ from orchestrator import (
 
 class TestReadState:
     def test_read_state_returns_dict_for_valid_yaml(self, workflow_project_dir):
-        state = read_state("STORY-025", project_dir=str(workflow_project_dir))
+        state = read_state("ISSUE-025", project_dir=str(workflow_project_dir))
         assert isinstance(state, dict)
-        assert state["workflow_id"] == "STORY-025"
+        assert state["workflow_id"] == "ISSUE-025"
 
     def test_read_state_returns_none_for_missing_file(self, tmp_path):
         result = read_state("STORY-999", project_dir=str(tmp_path))
@@ -97,9 +97,9 @@ class TestWriteState:
         assert tmp_files == [], f"Stale .tmp file(s) left: {tmp_files}"
 
     def test_write_state_content_is_readable_by_read_state(self, tmp_path, sample_state):
-        write_state("STORY-025", sample_state, project_dir=str(tmp_path))
-        recovered = read_state("STORY-025", project_dir=str(tmp_path))
-        assert recovered["workflow_id"] == "STORY-025"
+        write_state("ISSUE-025", sample_state, project_dir=str(tmp_path))
+        recovered = read_state("ISSUE-025", project_dir=str(tmp_path))
+        assert recovered["workflow_id"] == "ISSUE-025"
         assert recovered["workflow_type"] == sample_state["workflow_type"]
 
 
