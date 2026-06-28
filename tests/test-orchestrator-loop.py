@@ -2410,3 +2410,79 @@ class TestParallelStepGroups:
                              project_dir=str(project_dir), deference_level="collaborative")
         assert result["reason"] == "execute_step"
         assert "parallel" in result["payload"]
+
+
+# ---------------------------------------------------------------------------
+# Scenario: per-workflow budget (steps + relayed tokens)
+# ---------------------------------------------------------------------------
+
+class TestBudget:
+    def _wf_state(self, tmp_path, workflow_id="STORY-025"):
+        path = tmp_path / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+        return yaml.safe_load(path.read_text())
+
+    def _set_budget(self, project_dir, max_steps=None, max_tokens=None, default_max=3):
+        data = {
+            "iteration_limits": {"default_max": default_max},
+            "paths": {"output_dir": ".sweetclaude/workflows"},
+            "subagent_types": {"allowlist": ["code", "research", "housekeeping"]},
+            "budget": {"max_steps": max_steps, "max_tokens": max_tokens},
+        }
+        (project_dir / "config" / "orchestrator-defaults.yaml").write_text(yaml.safe_dump(data))
+
+    def _two_agent_steps(self):
+        return [
+            _make_step("activate", phase="ACTIVATION", agent="housekeeping"),
+            _make_step("spec", phase="DEFINE", agent="spec-writer",
+                       output_artifact="spec_file", exit_checks=["file_exists"]),
+        ]
+
+    def test_max_steps_budget_yields_budget_exhausted(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="activate",
+                                    steps=self._two_agent_steps())
+        self._set_budget(project_dir, max_steps=1)
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+
+        assert result["reason"] == "budget_exhausted"
+        assert result["payload"]["limit"] == "max_steps"
+
+    def test_reset_clears_budget_and_continues(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="activate",
+                                    steps=self._two_agent_steps())
+        self._set_budget(project_dir, max_steps=1)
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        resume_loop("STORY-025", {"action": "executed"},
+                    project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025", {"action": "reset"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "reset"
+        assert self._wf_state(tmp_path)["budget_spent"]["steps"] == 0
+
+        result = run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "execute_step"
+        assert result["step_id"] == "spec"
+
+    def test_max_tokens_budget_from_relayed_spend(self, tmp_path):
+        project_dir = _full_project(tmp_path, current_step_id="activate",
+                                    steps=self._two_agent_steps())
+        self._set_budget(project_dir, max_tokens=100)
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025", {"action": "executed", "tokens": 150},
+                             project_dir=str(project_dir), deference_level="autonomous")
+
+        assert result["reason"] == "budget_exhausted"
+        assert result["payload"]["limit"] == "max_tokens"
+
+    def test_no_budget_is_unlimited(self, tmp_path):
+        steps = [_make_step("activate", phase="ACTIVATION", agent="housekeeping")]
+        project_dir = _full_project(tmp_path, current_step_id="activate", steps=steps)
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025", {"action": "executed", "tokens": 999999},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
