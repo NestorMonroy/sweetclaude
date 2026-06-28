@@ -73,18 +73,27 @@ def _save_state(workflow_id, state, project_dir, output_dir=None):
     state["updated_at"] = _now_iso()
 
     canonical = _canonical_state_path(workflow_id, project_dir)
-    os.makedirs(os.path.dirname(canonical), exist_ok=True)
-    tmp = canonical + ".tmp"
-    with open(tmp, "w") as f:
-        yaml.safe_dump(state, f, default_flow_style=False, allow_unicode=True)
-    os.replace(tmp, canonical)
-
     output_path = _output_dir_state_path(workflow_id, output_dir, project_dir)
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    tmp2 = output_path + ".tmp"
-    with open(tmp2, "w") as f:
-        yaml.safe_dump(state, f, default_flow_style=False, allow_unicode=True)
-    os.replace(tmp2, output_path)
+
+    # State is mirrored to a canonical location and an output-dir copy. Serialize
+    # once, write every temp file, then swap them all in: a write failure leaves
+    # both destinations untouched rather than half-updated.
+    data = yaml.safe_dump(state, default_flow_style=False, allow_unicode=True)
+
+    targets = [canonical]
+    if os.path.abspath(output_path) != os.path.abspath(canonical):
+        targets.append(output_path)
+
+    staged = []
+    for dest in targets:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        tmp = dest + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(data)
+        staged.append((tmp, dest))
+
+    for tmp, dest in staged:
+        os.replace(tmp, dest)
 
 
 def _load_sc_yaml(project_dir):
@@ -914,6 +923,12 @@ def run_loop(workflow_id, project_dir=".", deference_level="collaborative"):
         if exit_checks_list or output_artifact:
             passed, failures = validate_exit_checks(step, state, project_dir)
             if not passed:
+                # Don't leave state pointing at an artifact that was never
+                # produced. (file_exists reads state["artifacts"], so the pointer
+                # must be set *before* validation; drop it only when the file is
+                # genuinely missing. It is re-recorded if the step is retried.)
+                if output_artifact and output_path and not os.path.exists(output_path):
+                    state.get("artifacts", {}).pop(output_artifact, None)
                 _write_checkpoint(state, "Step '{}' exit checks failed: {}".format(
                     step["id"], "; ".join(failures)))
                 state["status"] = "waiting_for_user"

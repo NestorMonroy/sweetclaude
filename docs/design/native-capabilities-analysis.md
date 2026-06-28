@@ -4,7 +4,7 @@
 **Subject repo:** `/home/user/sweetclaude` (sweetclaude v4.1.12-beta)
 **Question:** Could native Claude Code plugin-developer capabilities — Plan Mode, subagents/agent-teams, and **dynamic Workflows** — natively carry some of the burden SweetClaude currently implements with custom machinery (23 bash hooks, ~38 Python scripts, an `orchestrator_loop.py`, 113 prose skills, custom YAML state, and shell-preprocessing state injection)?
 
-> **Implementation status (2026-06-28):** Addendum improvements #1 (the `execute_step` yield — model-as-runtime executor), #2 (structured-output contract), #3 (parallel/fan-out step groups), #4 (per-workflow budget), and #5 (adversarial-verify step shape) have all landed in `scripts/orchestrator_loop.py` and `skills/orchestrator/SKILL.md`, each with tests and Gherkin scenarios. Still open: the two smaller cleanups (artifact-set ordering, dual-write).
+> **Implementation status (2026-06-28):** Addendum improvements #1 (the `execute_step` yield — model-as-runtime executor), #2 (structured-output contract), #3 (parallel/fan-out step groups), #4 (per-workflow budget), and #5 (adversarial-verify step shape) have all landed in `scripts/orchestrator_loop.py` and `skills/orchestrator/SKILL.md`, each with tests and Gherkin scenarios. The two smaller cleanups have also landed: the artifact pointer is now dropped when exit checks fail on a missing file (exit checks read `state["artifacts"]`, so the pointer must still be set *before* validation — it cannot simply be reordered), and `_save_state` now stages every temp file before swapping any in, narrowing the dual-write half-fail window.
 
 ---
 
