@@ -2200,3 +2200,108 @@ class TestExecuteStepDelegation:
         result = resume_loop("STORY-025", {"action": "approve"},
                              project_dir=str(project_dir), deference_level="collaborative")
         assert result["reason"] == "execute_step"
+
+
+# ---------------------------------------------------------------------------
+# Scenario: structured-output contract (output_schema + relayed signal)
+#
+# A step may declare output_schema; the model relays a schema-validated signal
+# via resume("executed", signal=...), which the loop prefers over scraping the
+# artifact. Invalid signals are rejected against the schema enum.
+# ---------------------------------------------------------------------------
+
+class TestStructuredOutputContract:
+    def _wf_state(self, tmp_path, workflow_id="STORY-025"):
+        path = tmp_path / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+        return yaml.safe_load(path.read_text())
+
+    def _review_step(self, schema=True, routing=None):
+        step = _make_step("review", phase="VERIFY", agent="reviewer",
+                          output_artifact="review_file", routing=routing)
+        if schema:
+            step["output_schema"] = {"signal": {"enum": ["approve", "reject"]}}
+        return step
+
+    def test_execute_step_payload_includes_output_schema(self, tmp_path):
+        schema = {"signal": {"enum": ["done"]}}
+        step = _make_step("spec", phase="DEFINE", agent="spec-writer",
+                          output_artifact="spec_file", exit_checks=["file_exists"])
+        step["output_schema"] = schema
+        project_dir = _full_project(tmp_path, current_step_id="spec", steps=[step])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        assert result["payload"]["output_schema"] == schema
+
+    def test_relayed_signal_drives_routing(self, tmp_path):
+        step = self._review_step(routing={"approve": "continue", "reject": "hard_stop_report"})
+        project_dir = _full_project(tmp_path, current_step_id="review", steps=[step])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        out = result["payload"]["output_path"]
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w") as f:
+            f.write("# Review\nlooks good\n")
+
+        result = resume_loop("STORY-025", {"action": "executed", "signal": "approve"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+
+    def test_relayed_reject_signal_halts_via_routing(self, tmp_path):
+        step = self._review_step(routing={"approve": "continue", "reject": "hard_stop_report"})
+        project_dir = _full_project(tmp_path, current_step_id="review", steps=[step])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        out = result["payload"]["output_path"]
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w") as f:
+            f.write("# Review\nblocked\n")
+
+        result = resume_loop("STORY-025", {"action": "executed", "signal": "reject"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "halted"
+
+    def test_signal_outside_schema_enum_yields_failure(self, tmp_path):
+        step = self._review_step()  # enum is [approve, reject], no routing
+        project_dir = _full_project(tmp_path, current_step_id="review", steps=[step])
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        result = resume_loop("STORY-025", {"action": "executed", "signal": "banana"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "failure"
+        assert "output_schema" in result["payload"]["error"]
+
+    def test_file_scraped_signal_used_when_none_relayed(self, tmp_path):
+        # No output_schema; signal comes from the artifact frontmatter (fallback).
+        step = _make_step("review", phase="VERIFY", agent="reviewer",
+                          output_artifact="review_file",
+                          routing={"approve": "continue", "reject": "hard_stop_report"})
+        project_dir = _full_project(tmp_path, current_step_id="review", steps=[step])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        out = result["payload"]["output_path"]
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w") as f:
+            f.write("---\nsignal: approve\n---\n")
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+
+    def test_relayed_signal_cleared_after_advance(self, tmp_path):
+        step = self._review_step(routing={"approve": "continue", "reject": "hard_stop_report"})
+        project_dir = _full_project(tmp_path, current_step_id="review", steps=[step])
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        out = result["payload"]["output_path"]
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w") as f:
+            f.write("# Review\n")
+        resume_loop("STORY-025", {"action": "executed", "signal": "approve"},
+                    project_dir=str(project_dir), deference_level="autonomous")
+
+        assert (self._wf_state(tmp_path).get("step_signals") or {}).get("review") is None
