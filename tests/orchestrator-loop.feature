@@ -28,6 +28,27 @@ Feature: Orchestrator main loop
     When the loop runs
     Then it yields a YieldPoint with reason "halted"
 
+  # --- execute_step delegation ---
+
+  Scenario: Agent step delegates execution to the model in production
+    Given a workflow at an agent step with no injected executor
+    When the loop reaches the step
+    Then it yields a YieldPoint with reason "execute_step"
+    And the payload contains agent, model, output_path, and an "executed" action
+    And the state file shows status "waiting_for_agent"
+
+  Scenario: Resume executed advances after the model writes the artifact
+    Given a workflow that yielded "execute_step" for an agent step
+    When the model writes the output artifact and resumes with action "executed"
+    Then re-entry does not delete the artifact
+    And the step's exit checks pass and the loop advances
+
+  Scenario: Gate and execution are separate yields
+    Given a gated agent step in collaborative mode
+    When the loop reaches the step
+    Then it yields "gate" first
+    And after approval it yields "execute_step"
+
   # --- Gate enforcement ---
 
   Scenario: Soft gate yields for approval in collaborative mode

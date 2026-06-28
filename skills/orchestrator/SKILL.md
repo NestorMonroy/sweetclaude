@@ -64,6 +64,22 @@ Parse the JSON output. If the command fails or produces no output, report:
 
 The loop returns a JSON object with `reason`, `step_id`, and `payload`. Handle each reason:
 
+### reason: execute_step
+
+The loop has reached a step whose work must be performed by a subagent. The Python loop cannot spawn one itself — this is where you, the model, are the runtime.
+
+1. Spawn a subagent using the `payload`:
+   - `agent` — the role to assume (maps to an `agents/{agent}.md` definition where one exists)
+   - `subagent_type` — the agent type to launch
+   - `model` — the model to run it on
+   - `input_paths` — files the subagent may read as input
+   - `output_path` — where the subagent MUST write its output artifact (if non-null)
+   - `prompt` — the assembled instruction to pass through
+2. Wait for the subagent to finish and confirm the artifact exists at `output_path` (when one is specified).
+3. Resume with `{"action": "executed"}` (Step 4). The loop re-enters, validates the artifact, extracts the routing signal, and advances.
+
+Do not skip the subagent and write the artifact yourself — the point is the isolated subagent context. If the user wants to stop instead, resume with `{"action": "abort"}`.
+
 ### reason: gate
 
 Present via AskUserQuestion:
@@ -123,6 +139,7 @@ Stop. Do not continue to Step 4.
 ## Step 4: Resume loop
 
 Map the user's AskUserQuestion selection to an action:
+- "Executed" → `{"action": "executed"}`
 - "Approve" → `{"action": "approve"}`
 - "Iterate" → `{"action": "iterate"}`
 - "Retry" → `{"action": "retry"}`

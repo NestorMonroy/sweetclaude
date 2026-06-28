@@ -1805,10 +1805,13 @@ class TestYieldPayloadStructure:
 # ---------------------------------------------------------------------------
 
 class TestLoopExceptionBoundaries:
-    def test_keyerror_from_assemble_context_yields_failure(self, tmp_path, monkeypatch):
-        """If assemble_context_envelope raises KeyError, the loop yields failure instead of crashing."""
+    def test_keyerror_from_assemble_context_is_handled_then_no_output_fails(self, tmp_path, monkeypatch):
+        """A KeyError in assemble_context_envelope is caught (no crash) and the
+        step still delegates execution; if no artifact is produced, the
+        post-execute exit check surfaces the failure."""
         steps = [
-            _make_step("spec", phase="DEFINE", agent="spec-writer", output_artifact="spec_file", next="done"),
+            _make_step("spec", phase="DEFINE", agent="spec-writer", output_artifact="spec_file",
+                       exit_checks=["file_exists"]),
         ]
         project_dir = _full_project(tmp_path, current_step_id="spec", steps=steps)
 
@@ -1817,7 +1820,13 @@ class TestLoopExceptionBoundaries:
 
         monkeypatch.setattr("orchestrator_loop.assemble_context_envelope", broken_assemble)
 
+        # KeyError is caught: the loop delegates execution rather than crashing.
         result = run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "execute_step"
+
+        # Model reports executed but wrote no artifact -> exit check fails.
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
         assert result["reason"] == "failure"
 
     def test_action_dispatch_failure_yields_failure(self, tmp_path, monkeypatch):
@@ -2069,3 +2078,125 @@ class TestExtractOutputSignalNull:
         content = "---\nsignal: null\n---\n"
         result = extract_output_signal(content)
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Scenario: execute_step delegation (production executor seam)
+#
+# In production _invoke_agent cannot spawn a Claude subagent, so agent steps
+# yield reason "execute_step"; the model executes the step out of band and
+# resumes with action "executed".
+# ---------------------------------------------------------------------------
+
+class TestExecuteStepDelegation:
+    def _wf_state(self, tmp_path, workflow_id="STORY-025"):
+        path = tmp_path / ".sweetclaude" / "state" / "workflows" / f"{workflow_id}.yaml"
+        return yaml.safe_load(path.read_text())
+
+    def test_agent_step_yields_execute_step_in_production(self, tmp_path):
+        """With no injected executor, an agent step delegates via execute_step."""
+        steps = [_make_step("spec", phase="DEFINE", agent="spec-writer",
+                            model="opus", subagent_type="research",
+                            output_artifact="spec_file", exit_checks=["file_exists"])]
+        project_dir = _full_project(tmp_path, current_step_id="spec", steps=steps)
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+
+        assert result["reason"] == "execute_step"
+        assert result["step_id"] == "spec"
+        payload = result["payload"]
+        assert payload["agent"] == "spec-writer"
+        assert payload["model"] == "opus"
+        assert payload["subagent_type"] == "research"
+        assert payload["output_path"] is not None
+        assert "executed" in payload["actions"]
+
+    def test_waiting_for_agent_status_persisted_on_yield(self, tmp_path):
+        """The execute_step yield marks the workflow waiting_for_agent on disk."""
+        steps = [_make_step("spec", phase="DEFINE", agent="spec-writer",
+                            output_artifact="spec_file", exit_checks=["file_exists"])]
+        project_dir = _full_project(tmp_path, current_step_id="spec", steps=steps)
+
+        run_loop("STORY-025", project_dir=str(project_dir), deference_level="autonomous")
+
+        assert self._wf_state(tmp_path)["status"] == "waiting_for_agent"
+
+    def test_resume_executed_advances_after_model_writes_artifact(self, tmp_path):
+        """After the model writes the artifact, resume 'executed' completes the step."""
+        steps = [_make_step("spec", phase="DEFINE", agent="spec-writer",
+                            output_artifact="spec_file",
+                            exit_checks=["file_exists", "file_non_empty"])]
+        project_dir = _full_project(tmp_path, current_step_id="spec", steps=steps)
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        assert result["reason"] == "execute_step"
+
+        # Simulate the model spawning the subagent and writing the artifact.
+        out = result["payload"]["output_path"]
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w") as f:
+            f.write("# Spec\nReal content\n")
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+
+        assert result["reason"] == "complete"
+        # Re-entry must NOT have deleted the model's artifact.
+        assert os.path.exists(out)
+        assert "spec" in self._wf_state(tmp_path)["completed_steps"]
+
+    def test_reentry_preserves_artifact_and_clears_marker(self, tmp_path):
+        """step_executed is set during re-entry and cleared once the step advances."""
+        steps = [
+            _make_step("spec", phase="DEFINE", agent="spec-writer",
+                       output_artifact="spec_file", exit_checks=["file_exists"]),
+            _make_step("implement", phase="IMPLEMENT", agent="implementer",
+                       output_artifact="source_files", exit_checks=["file_exists"]),
+        ]
+        project_dir = _full_project(tmp_path, current_step_id="spec", steps=steps)
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        out = result["payload"]["output_path"]
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w") as f:
+            f.write("# Spec\n")
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+
+        # Advanced to the next agent step, which itself delegates; marker reset.
+        assert result["reason"] == "execute_step"
+        assert result["step_id"] == "implement"
+        assert self._wf_state(tmp_path).get("step_executed") is None
+
+    def test_agent_step_without_output_delegates_then_completes(self, tmp_path):
+        """An agent step with no output_artifact still delegates, then completes."""
+        steps = [_make_step("activate", phase="ACTIVATION", agent="housekeeping")]
+        project_dir = _full_project(tmp_path, current_step_id="activate", steps=steps)
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="autonomous")
+        assert result["reason"] == "execute_step"
+
+        result = resume_loop("STORY-025", {"action": "executed"},
+                             project_dir=str(project_dir), deference_level="autonomous")
+        assert result["reason"] == "complete"
+        assert "activate" in self._wf_state(tmp_path)["completed_steps"]
+
+    def test_gate_then_execute_step_are_separate_yields(self, tmp_path):
+        """A gated agent step yields the gate first, then execute_step after approval."""
+        steps = [_make_step("spec", phase="DEFINE", agent="spec-writer",
+                            output_artifact="spec_file", gate="user_approval",
+                            exit_checks=["file_exists"])]
+        project_dir = _full_project(tmp_path, current_step_id="spec", steps=steps)
+
+        result = run_loop("STORY-025", project_dir=str(project_dir),
+                          deference_level="collaborative")
+        assert result["reason"] == "gate"
+
+        result = resume_loop("STORY-025", {"action": "approve"},
+                             project_dir=str(project_dir), deference_level="collaborative")
+        assert result["reason"] == "execute_step"
