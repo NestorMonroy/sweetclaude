@@ -27,6 +27,22 @@ sys.path.insert(0, os.path.abspath(SCRIPTS_DIR))
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 TEST_PORT = 18411
 
+# Data precondition (ISSUE-236): this suite renders the live project's
+# .sweetclaude data, which is gitignored — CI checkouts have none, and an
+# empty dashboard fails every structural assertion. Skip visibly instead.
+# Full UI coverage runs locally; a fixture-project harness is tracked as
+# backlog follow-up.
+_EPIC_DATA = os.path.join(
+    PROJECT_DIR, ".sweetclaude", "product", "roadmap", "epics"
+)
+pytestmark = pytest.mark.skipif(
+    not (os.path.isdir(_EPIC_DATA) and any(
+        f.startswith("EP-") for _, _, files in os.walk(_EPIC_DATA) for f in files
+    )),
+    reason="dashboard UI tests require live project data "
+           "(.sweetclaude is gitignored and absent in CI checkouts)",
+)
+
 
 @pytest.fixture(scope="module")
 def dashboard_server():
