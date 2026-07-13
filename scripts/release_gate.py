@@ -1097,17 +1097,17 @@ def _issue_is_terminal(project_dir: Path, issue_id: str) -> bool:
     backlog_dir = product_base / "backlog"
     if not backlog_dir.is_dir():
         return True
-    found_any = False
     for subdir in ("done", "archived", ""):
         search_dir = backlog_dir / subdir if subdir else backlog_dir
         if not search_dir.is_dir():
             continue
         for candidate in search_dir.iterdir():
-            if not candidate.name.startswith(issue_id):
+            if candidate.name != f"{issue_id}.md" and not candidate.name.startswith(
+                f"{issue_id}-"
+            ):
                 continue
             if not candidate.name.endswith(".md"):
                 continue
-            found_any = True
             if subdir in ("done", "archived"):
                 return True
             try:
@@ -1122,7 +1122,7 @@ def _issue_is_terminal(project_dir: Path, issue_id: str) -> bool:
             except Exception:
                 pass
             return False
-    return not found_any
+    return False
 
 
 def _validate_issue_closeout(project_dir: Path, tag: str, channel: str) -> dict:
