@@ -888,20 +888,60 @@ def _migrate_orphan_scan_check(project: Path) -> dict[str, Any]:
     }
 
 
-def _update_skill_contract_check() -> dict[str, Any]:
-    skill = Path(__file__).resolve().parents[2] / "skills" / "update" / "SKILL.md"
+def _update_skill_contract_check(root: Path | None = None) -> dict[str, Any]:
+    base = root or Path(__file__).resolve().parents[2]
+    skill = base / "skills" / "update" / "SKILL.md"
     text = skill.read_text(encoding="utf-8")
+    # These anchors must match the Contract section of skills/update/SKILL.md
+    # and the assertions in tests/test_recovery_skill.py — the three files
+    # move together.
     required = [
-        "do not present a migration prompt",
-        "do not invoke",
-        "No files were changed",
-        "Do not write `doctor-prompt-pending.json`",
+        "Update never mutates project work-item state.",
+        "Update does not run project-state migrations inline; route project repair to `/sweetclaude:doctor`.",
+        "Do not present a migration prompt from update.",
+        "Do not write `doctor-prompt-pending.json` from update.",
     ]
     missing = [phrase for phrase in required if phrase not in text]
     return {
         "id": "update-skill-taxonomy-prompt-disabled",
         "status": "passed" if not missing else "failed",
         "missing_phrases": missing,
+    }
+
+
+def _update_script_contract_check(root: Path | None = None) -> dict[str, Any]:
+    base = root or Path(__file__).resolve().parents[2]
+    update_script = base / "scripts" / "update.py"
+    producer_script = base / "scripts" / "maintenance" / "plugin-state.py"
+    forbidden = [
+        "doctor-prompt-pending",
+        "reonboard-orphans",
+        "archive-orphans",
+        "acknowledge-orphans",
+        "resolve-orphan",
+        "group-orphans",
+    ]
+    producer_keys = ['"stale_beta_install"', '"SC_PLUGIN_STALE_BETA"']
+    missing_files = []
+    forbidden_found: list[str] = []
+    missing_keys: list[str] = []
+    try:
+        update_text = update_script.read_text(encoding="utf-8")
+        forbidden_found = [marker for marker in forbidden if marker in update_text]
+    except OSError:
+        missing_files.append(str(update_script))
+    try:
+        producer_text = producer_script.read_text(encoding="utf-8")
+        missing_keys = [key for key in producer_keys if key not in producer_text]
+    except OSError:
+        missing_files.append(str(producer_script))
+    passed = not forbidden_found and not missing_keys and not missing_files
+    return {
+        "id": "update-script-contract-markers",
+        "status": "passed" if passed else "failed",
+        "forbidden_markers_found": forbidden_found,
+        "missing_producer_keys": missing_keys,
+        "missing_files": missing_files,
     }
 
 
@@ -925,6 +965,7 @@ def _maintenance_entrypoint_checks(project: Path) -> list[dict[str, Any]]:
     checks.append(_doctor_migration_scan_check(project))
     checks.append(_migrate_orphan_scan_check(project))
     checks.append(_update_skill_contract_check())
+    checks.append(_update_script_contract_check())
     checks.append(_fix_skill_contract_check())
     return checks
 

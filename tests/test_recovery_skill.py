@@ -137,15 +137,16 @@ def test_update_skill_decouples_framework_sync_from_project_mutation():
         / "capability-surface.md"
     ).read_text(encoding="utf-8")
 
-    assert "does not run\nproject-state migrations inline" in skill
-    assert "--scan-drift" in skill
-    assert "--report-drift-for-skill" not in skill
+    # B2 contract anchors (ISSUE-234, decision log #32). These exact sentences
+    # are grep-anchored by recover_project.py's _update_skill_contract_check —
+    # rewording them requires updating the check's required list and this test
+    # in the same change.
+    assert "Update never mutates project work-item state." in skill
+    assert "Update does not run project-state migrations inline" in skill
+    assert "Do not present a migration prompt from update." in skill
+    assert "Do not write `doctor-prompt-pending.json` from update." in skill
+
     assert "No project files were changed by update." in skill
-    assert "Do not write `doctor-prompt-pending.json` from update" in skill
-    assert "Do not execute its project skill-state migration" in skill
-    assert "Skip feature configuration from update" in skill
-    assert "Skip plan-directory configuration from update" in skill
-    assert "Project-state migration is not run inline" in skill
     assert "invoke `sweetclaude:_migrate`" not in skill
     assert "invoke `sweetclaude:purge`" not in skill
     assert "invoke `sweetclaude:adopt`" not in skill
@@ -188,19 +189,37 @@ def test_user_docs_route_to_no_arg_recover_not_diagnose_subcommand():
 
 
 def test_stale_beta_plugin_guard_is_front_door_for_update_bootstrap_and_doctor():
+    """Three-legged guard (ISSUE-234): bootstrap and doctor consume
+    preflight.sh's SC_PLUGIN_STALE_BETA env var; update consumes update.py
+    preflight's stale_beta_install JSON key; both come from the single
+    producer scripts/maintenance/plugin-state.py. All three legs must stop
+    with the same message before any project mutation."""
     root = Path(__file__).parents[1]
+
     for rel in [
-        "skills/update/SKILL.md",
         "skills/bootstrap/SKILL.md",
         "skills/doctor/SKILL.md",
     ]:
         text = (root / rel).read_text(encoding="utf-8")
-        assert "SC_PLUGIN_STALE_BETA=true" in text
-        assert "SweetClaude beta plugin update required" in text
-        assert "{SC_PLUGIN_UPDATE_COMMAND}" in text
-        assert "Then restart Claude Code and run:" in text
-        assert "/sweetclaude:update" in text
-        assert "No project files were changed" in text
+        assert "SC_PLUGIN_STALE_BETA=true" in text, rel
+        assert "SweetClaude beta plugin update required" in text, rel
+        assert "{SC_PLUGIN_UPDATE_COMMAND}" in text, rel
+        assert "Then restart Claude Code and run:" in text, rel
+        assert "/sweetclaude:update" in text, rel
+        assert "No project files were changed" in text, rel
+
+    update = (root / "skills/update/SKILL.md").read_text(encoding="utf-8")
+    assert "stale_beta_install" in update
+    assert "SweetClaude beta plugin update required" in update
+    assert "Then restart Claude Code and run:" in update
+    assert "/sweetclaude:update" in update
+    assert "No project files were changed" in update
+
+    producer = (root / "scripts/maintenance/plugin-state.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"stale_beta_install"' in producer
+    assert '"SC_PLUGIN_STALE_BETA"' in producer
 
     doctor = (root / "skills/doctor/SKILL.md").read_text(encoding="utf-8")
     assert doctor.index("Plugin Update Guard") < doctor.index("Maintenance route preflight")
@@ -208,8 +227,7 @@ def test_stale_beta_plugin_guard_is_front_door_for_update_bootstrap_and_doctor()
     bootstrap = (root / "skills/bootstrap/SKILL.md").read_text(encoding="utf-8")
     assert bootstrap.index("SC_PLUGIN_STALE_BETA=true") < bootstrap.index("Handle missing or unparseable file")
 
-    update = (root / "skills/update/SKILL.md").read_text(encoding="utf-8")
-    assert update.index("SC_PLUGIN_STALE_BETA=true") < update.index("Read current install state")
+    assert update.index("stale_beta_install") < update.index("Present current state")
 
 
 def test_update_skill_does_not_invoke_orphan_mutations():
@@ -247,3 +265,90 @@ def test_doctor_skill_documents_orphan_resolution():
         assert option in text, (
             f"orphan resolution menu must offer {option!r}"
         )
+
+
+def test_update_skill_contract_check_passes_on_repo():
+    """ISSUE-234: the recovery postcondition's required anchors must exist in
+    the shipped update skill — this is the unit half of the guard whose
+    integration half is test_recovery_execute_project.py."""
+    from recovery.recover_project import _update_skill_contract_check
+
+    result = _update_skill_contract_check()
+    assert result["status"] == "passed", result["missing_phrases"]
+
+
+def test_update_skill_contract_check_fails_when_anchor_removed(tmp_path):
+    """Removing any single anchor sentence must fail the check and name the
+    missing phrase — the recurrence guard for prose/check drift."""
+    from recovery.recover_project import _update_skill_contract_check
+
+    repo = Path(__file__).parents[1]
+    original = (repo / "skills/update/SKILL.md").read_text(encoding="utf-8")
+
+    result = _update_skill_contract_check()
+    assert result["status"] == "passed"
+    required_now = [
+        "Update never mutates project work-item state.",
+        "Update does not run project-state migrations inline",
+        "Do not present a migration prompt from update.",
+        "Do not write `doctor-prompt-pending.json` from update.",
+    ]
+    for anchor in required_now:
+        assert anchor in original, f"repo skill must contain anchor {anchor!r}"
+        mutated_root = tmp_path / f"root-{required_now.index(anchor)}"
+        skill_dir = mutated_root / "skills" / "update"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            original.replace(anchor, ""), encoding="utf-8"
+        )
+        result = _update_skill_contract_check(root=mutated_root)
+        assert result["status"] == "failed", (
+            f"check must fail when anchor {anchor!r} is removed"
+        )
+        assert any(anchor.startswith(m) or m.startswith(anchor)
+                   for m in result["missing_phrases"]), result["missing_phrases"]
+
+
+def test_update_script_contract_markers_pass_on_repo():
+    """ISSUE-234 (A2 leg): code-behavior markers — update.py carries no
+    doctor-prompt writes and no mutating orphan subcommands; plugin-state.py
+    is the single stale-beta producer for all three entrypoint legs."""
+    from recovery.recover_project import _update_script_contract_check
+
+    result = _update_script_contract_check()
+    assert result["id"] == "update-script-contract-markers"
+    assert result["status"] == "passed", result
+
+
+def test_update_script_contract_markers_fail_on_forbidden_marker(tmp_path):
+    from recovery.recover_project import _update_script_contract_check
+
+    repo = Path(__file__).parents[1]
+    scripts = tmp_path / "scripts"
+    (scripts / "maintenance").mkdir(parents=True)
+    bad_update = (repo / "scripts/update.py").read_text(encoding="utf-8") + (
+        '\n# smuggled: subprocess.run(["acknowledge-orphans"])\n'
+    )
+    (scripts / "update.py").write_text(bad_update, encoding="utf-8")
+    (scripts / "maintenance" / "plugin-state.py").write_text(
+        (repo / "scripts/maintenance/plugin-state.py").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _update_script_contract_check(root=tmp_path)
+    assert result["status"] == "failed"
+    assert any("acknowledge-orphans" in str(v) for v in result.values()), result
+
+
+def test_maintenance_entrypoint_checks_include_script_markers(tmp_path):
+    """The A2 marker check must roll up into maintenance-entrypoints-safe via
+    _maintenance_entrypoint_checks like the prose checks do."""
+    from recovery.recover_project import _maintenance_entrypoint_checks
+
+    repo = Path(__file__).parents[1]
+    checks = _maintenance_entrypoint_checks(repo)
+    ids = {c["id"] for c in checks}
+    assert "update-skill-taxonomy-prompt-disabled" in ids
+    assert "update-script-contract-markers" in ids

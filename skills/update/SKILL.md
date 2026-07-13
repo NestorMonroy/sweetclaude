@@ -33,6 +33,17 @@ Do not attempt to continue the update without the script.
 
 ---
 
+## Contract
+
+<!-- The four sentences below are grep-anchored by recover_project.py's _update_skill_contract_check and tests/test_recovery_skill.py. If you reword them, update the check's required list and the tests in the same change. -->
+
+Update never mutates project work-item state.
+Update does not run project-state migrations inline; route project repair to `/sweetclaude:doctor`.
+Do not present a migration prompt from update.
+Do not write `doctor-prompt-pending.json` from update.
+
+---
+
 ## Step 1: Preflight
 
 ```bash
