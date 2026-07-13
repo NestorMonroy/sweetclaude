@@ -87,7 +87,7 @@ Feature: Doctor migration_currency checks
     And migrate-v3-to-v4.py exists and returns orphans
     When check_migration_currency runs against the project state
     Then no finding has id prefix "migration-currency:schema-drift"
-    And the findings include id "migration-currency:orphans:scan"
+    And the findings include an id with prefix "migration-currency:orphan:"
 
   # --- Taxonomy drift (old-prefixed files) ---
 
@@ -145,17 +145,19 @@ Feature: Doctor migration_currency checks
     When check_migration_currency runs against the project state
     Then no finding has id prefix "migration-currency:orphans"
 
-  Scenario: Orphan scan finds orphans produces warning
+  Scenario: Orphan scan finds orphans produces one prompted finding per file
     Given migrate-v3-to-v4.py exists and returns orphans
     When check_migration_currency runs against the project state
-    Then the findings include id "migration-currency:orphans:scan"
-    And the finding with id "migration-currency:orphans:scan" has severity "warning"
-    And the finding with id "migration-currency:orphans:scan" has fix_type "prompted"
+    Then the findings include one id "migration-currency:orphan:{file}" per orphan file
+    And each such finding has severity "warning"
+    And each such finding has fix_type "prompted"
+    And each such finding has fix_recipe type "resolve_orphans" carrying the file path
+    And no finding has id "migration-currency:orphans:scan"
 
   Scenario: Orphan scan finds no orphans produces no finding
     Given migrate-v3-to-v4.py exists and returns empty orphans
     When check_migration_currency runs against the project state
-    Then no finding has id "migration-currency:orphans:scan"
+    Then no finding has id prefix "migration-currency:orphan"
 
   Scenario: Orphan scan subprocess timeout is silently skipped
     Given migrate-v3-to-v4.py exists and will timeout

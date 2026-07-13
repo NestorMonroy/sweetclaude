@@ -210,3 +210,40 @@ def test_stale_beta_plugin_guard_is_front_door_for_update_bootstrap_and_doctor()
 
     update = (root / "skills/update/SKILL.md").read_text(encoding="utf-8")
     assert update.index("SC_PLUGIN_STALE_BETA=true") < update.index("Read current install state")
+
+
+def test_update_skill_does_not_invoke_orphan_mutations():
+    """ISSUE-235 (boundary B2): update never mutates work-item state. The
+    orphan-resolution actions live behind doctor; update only reports
+    orphan_count and routes there."""
+    root = Path(__file__).resolve().parent.parent
+    text = (root / "skills/update/SKILL.md").read_text(encoding="utf-8")
+    for mutating_subcommand in (
+        "reonboard-orphans",
+        "archive-orphans",
+        "acknowledge-orphans",
+        "resolve-orphan",
+        "group-orphans",
+    ):
+        assert mutating_subcommand not in text, (
+            f"update SKILL.md must not invoke {mutating_subcommand}"
+        )
+    assert "orphan" in text.lower(), (
+        "update must still report orphan_count and route to doctor"
+    )
+    assert "doctor" in text.lower()
+
+
+def test_doctor_skill_documents_orphan_resolution():
+    """ISSUE-235: doctor owns the orphan-resolution flow — its skill must
+    instruct the model to present the action menu and execute through the
+    resolve_orphans executor action (archived, reversible)."""
+    root = Path(__file__).resolve().parent.parent
+    text = (root / "skills/doctor/SKILL.md").read_text(encoding="utf-8")
+    assert "resolve_orphans" in text, (
+        "doctor SKILL.md must handle the resolve_orphans prompted recipe"
+    )
+    for option in ("cknowledge", "rchive", "e-onboard"):
+        assert option in text, (
+            f"orphan resolution menu must offer {option!r}"
+        )

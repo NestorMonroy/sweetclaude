@@ -242,23 +242,13 @@ Drift details:
 
 Run cleanup. Stop.
 
-**If `orphan_count` > 0:** present via AskUserQuestion:
+**If `orphan_count` > 0:** report non-blocking:
 
-> "Found {orphan_count} orphaned work item file(s). How would you like to handle them?"
-
-- **Acknowledge all — stop flagging these files**
-- **Re-onboard all as new ISSUE items**
-- **Review by group**
-- **Archive all**
-
-For each action, call the appropriate `migrate-v3-to-v4.py` subcommand using the
-`migrate_script` path from the output:
-
-- Re-onboard: `python3 {migrate_script} reonboard-orphans --project-dir . --paths '{json paths}'`
-- Archive: `python3 {migrate_script} archive-orphans --project-dir . --paths '{json paths}'`
-- Acknowledge: `python3 {migrate_script} acknowledge-orphans --project-dir . --paths '{json paths}'`
-- Review by group: `python3 {migrate_script} group-orphans --project-dir .` then iterate
-- Review one by one: iterate findings, `python3 {migrate_script} resolve-orphan --project-dir . --path "{file}" --action "{action}"`
+```
+Found {orphan_count} orphaned work item file(s).
+No files were changed. Run /sweetclaude:doctor to review and resolve them
+(resolution is archived and reversible).
+```
 
 **If `old_taxonomy_count` > 0:** report non-blocking:
 

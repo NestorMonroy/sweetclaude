@@ -147,6 +147,7 @@ EXECUTOR_SUPPORTED_ACTIONS = frozenset({
     "hook_restore",
     "file_move",
     "renumber_duplicate",
+    "resolve_orphans",
 })
 
 # Manual guidance for known-unsupported actions, surfaced when an auto/prompted
@@ -1024,17 +1025,23 @@ def check_migration_currency(state: ProjectState) -> list[Finding]:
             if r.returncode == 0:
                 orphan_data = json.loads(r.stdout)
                 orphans = orphan_data.get("findings", [])
-                if orphans:
+                for o in orphans:
+                    rel = o.get("file", "")
+                    if not rel:
+                        continue
                     findings.append(Finding(
-                        id="migration-currency:orphans:scan",
+                        id=f"migration-currency:orphan:{Path(rel).name}",
                         category="migration_currency",
                         severity="warning",
-                        summary=f"{len(orphans)} files may have been missed during migration",
-                        detail=f"orphan-scan: {', '.join(o.get('file', '') for o in orphans[:5])}",
-                        file_paths=[o.get("file", "") for o in orphans[:5]],
+                        summary=f"Orphaned work item file: {rel}",
+                        detail=(
+                            f"orphan: {rel} was not migrated; resolve via "
+                            "acknowledge, archive, or reonboard"
+                        ),
+                        file_paths=[rel],
                         fix_type="prompted",
-                        fix_recipe={"action": "prompt", "type": "migration",
-                                    "script": "migrate-v3-to-v4.py", "args": ["scan-orphans"]},
+                        fix_recipe={"action": "prompt", "type": "resolve_orphans",
+                                    "file": rel},
                     ))
         except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
             pass
@@ -3789,6 +3796,96 @@ def execute_recipe(
         recipe["file"] = str(target)
         recipe["moved_to"] = str(final_path)
         return RecipeResult("", recorded.before_hash, _hash_bytes(after_content),
+                            recorded.backup_path, True)
+
+    if action == "resolve_orphans":
+        # Resolve one orphaned work item file through the v3->v4 migration
+        # script, routing the mutation through the archive pipeline so it is
+        # reversible by restore. The script's filename is hyphenated (not
+        # importable), so — like the scan in check_migration_currency — it is
+        # invoked via subprocess.
+        #   - acknowledge: appends the path to the orphan registry (registry is
+        #     the mutated file; before = b"" when absent, restore reverts it).
+        #   - archive: moves the file into product archive/orphans; recorded
+        #     move-aware like file_move (before-image keyed to src, moved_to =
+        #     dest) so restore reverses the move.
+        #   - reonboard: copies the orphan to a new ISSUE file, source stays;
+        #     recorded with moved_to = the created file so restore deletes it
+        #     and rewrites the unchanged source.
+        orphan_action = recipe.get("orphan_action", "")
+        src = Path(recipe.get("path", ""))
+        if not src.is_absolute():
+            src = project_dir / src
+        subcmd = {
+            "acknowledge": "acknowledge-orphans",
+            "archive": "archive-orphans",
+            "reonboard": "reonboard-orphans",
+        }.get(orphan_action)
+        if subcmd is None:
+            return RecipeResult("", "", None, None, False,
+                                f"resolve_orphans: unknown orphan_action "
+                                f"'{orphan_action}' (expected acknowledge, "
+                                f"archive, or reonboard)")
+        if not _resolve_within(src, project_dir):
+            return RecipeResult("", "", None, None, False,
+                                f"resolve_orphans path outside project: {src}")
+        if not src.is_file():
+            return RecipeResult("", "", None, None, False,
+                                f"resolve_orphans source not found: {src}")
+        orphan_script = _SCRIPTS_DIR / "migrate" / "migrate-v3-to-v4.py"
+        if not orphan_script.exists():
+            return RecipeResult("", "", None, None, False,
+                                f"migration script not found: {orphan_script}")
+        rel = str(src.relative_to(project_dir))
+        registry = project_dir / ".sweetclaude" / "state" / "orphan-registry.yaml"
+        key_path = registry if orphan_action == "acknowledge" else src
+        before = key_path.read_bytes() if key_path.exists() else b""
+        try:
+            r = subprocess.run(
+                [sys.executable, str(orphan_script), subcmd,
+                 "--project-dir", str(project_dir),
+                 "--paths", json.dumps([rel])],
+                capture_output=True, text=True, timeout=30,
+            )
+        except (subprocess.TimeoutExpired, OSError) as e:
+            return RecipeResult("", "", None, None, False, str(e))
+        if r.returncode != 0:
+            return RecipeResult("", "", None, None, False,
+                                r.stderr or f"{subcmd} exited {r.returncode}")
+        try:
+            out = json.loads(r.stdout)
+        except json.JSONDecodeError:
+            return RecipeResult("", "", None, None, False,
+                                f"unparseable {subcmd} output: "
+                                f"{r.stderr or r.stdout}")
+        if orphan_action == "acknowledge":
+            after = registry.read_bytes() if registry.exists() else b""
+            recipe["file"] = str(registry)
+            return _record_mutation(archive_path, registry, before, after)
+        if orphan_action == "archive":
+            archived = out.get("archived") or []
+            if not archived:
+                return RecipeResult("", "", None, None, False,
+                                    f"archive-orphans did not archive {rel}")
+            dest = Path(archived[0].get("dest", ""))
+            if not dest.is_absolute():
+                dest = project_dir / dest
+            recorded = _record_mutation(archive_path, src, before, b"")
+            recipe["file"] = str(src)
+            recipe["moved_to"] = str(dest)
+            return RecipeResult("", recorded.before_hash, recorded.after_hash,
+                                recorded.backup_path, True)
+        reonboarded = out.get("reonboarded") or []
+        if not reonboarded:
+            return RecipeResult("", "", None, None, False,
+                                f"reonboard-orphans did not reonboard {rel}")
+        dest = Path(reonboarded[0].get("dest", ""))
+        if not dest.is_absolute():
+            dest = project_dir / dest
+        recorded = _record_mutation(archive_path, src, before, before)
+        recipe["file"] = str(src)
+        recipe["moved_to"] = str(dest)
+        return RecipeResult("", recorded.before_hash, recorded.after_hash,
                             recorded.backup_path, True)
 
     if action == "run_script":
