@@ -14,6 +14,15 @@ from evidence import validate_receipt, write_receipt
 ROOT = Path(__file__).resolve().parents[1]
 EFFORT = ROOT / ".sweetclaude" / "efforts" / "ms-007-failure-mode-controls"
 CONTROLS_MAP = EFFORT / "02-design" / "controls-map.md"
+
+# Data precondition (ISSUE-236, same pattern as test_dashboard_ui): the t024
+# lint tests read live effort artifacts under gitignored .sweetclaude/ —
+# absent in CI checkouts. Skip those tests visibly there; they run locally.
+requires_effort_artifacts = pytest.mark.skipif(
+    not CONTROLS_MAP.is_file(),
+    reason="requires live effort artifacts "
+           "(.sweetclaude is gitignored and absent in CI checkouts)",
+)
 TEST_STRATEGY = EFFORT / "04-test-strategy" / "beta-4x-control-test-strategy.md"
 IMPLEMENTATION_PLAN = (
     EFFORT / "03-implementation-plan" / "beta-4x-control-implementation-plan.md"
@@ -41,6 +50,7 @@ def _write_receipt(path: Path, **overrides):
     return path
 
 
+@requires_effort_artifacts
 def test_t024_active_control_artifacts_do_not_use_undefined_controls_or_ranges():
     lint_control_artifacts(
         controls_map_path=CONTROLS_MAP,
@@ -48,6 +58,7 @@ def test_t024_active_control_artifacts_do_not_use_undefined_controls_or_ranges()
     )
 
 
+@requires_effort_artifacts
 def test_t024_rejects_undefined_control_reference(tmp_path):
     artifact = tmp_path / "artifact.md"
     artifact.write_text("Controls: CTL-999\n", encoding="utf-8")
@@ -59,6 +70,7 @@ def test_t024_rejects_undefined_control_reference(tmp_path):
         )
 
 
+@requires_effort_artifacts
 def test_t024_rejects_implementation_significant_ranges(tmp_path):
     artifact = tmp_path / "artifact.md"
     bad_range = "T-001 " + "thr" + "ough T-002"
