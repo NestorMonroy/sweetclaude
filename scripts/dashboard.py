@@ -1533,6 +1533,7 @@ body {
 
 <script>
 let DATA = null;
+window.DATA = null;
 let currentSort = 'priority';
 const PRIORITY_ORDER = {P0: 0, now: 0, P1: 1, sooner: 1, P2: 2, soon: 2, P3: 3, later: 3, someday: 4};
 const STATUS_ORDER = {blocked: 0, 'on-hold': 1, active: 2, 'in-review': 3, ready: 4, 'new': 5, deferred: 6, done: 7, declined: 8, abandoned: 9, superseded: 10};
@@ -1543,6 +1544,7 @@ async function load() {
   const resp = await fetch('/api/data');
   DATA = await resp.json();
   render();
+  window.DATA = DATA;
 }
 
 function render() {
@@ -1751,7 +1753,7 @@ function renderEpicNode(ep, idx, relId) {
   html += `<span class="epic-id">${ep.id}</span>`;
   html += `<span class="epic-title-text">${esc(ep.title)}</span>`;
   if (isDone) html += ` <span class="done-check">&#10003;</span>`;
-  html += ` ${statusBadge(ep.status)}`;
+  html += ` ${statusBadge(ep.status, 'epic-status-badge')}`;
   html += ` ${sourceBadge(ep.source, ep.status, ep.derived_status)}`;
   html += `</div>`;
 
@@ -1865,14 +1867,15 @@ function sortItems(items) {
   });
 }
 
-function statusBadge(s) {
+function statusBadge(s, extraClass = '') {
   const cls = {
     done:'done', active:'active', new:'new', ready:'ready',
     'in-review':'in-review', blocked:'blocked', 'on-hold':'on-hold',
     deferred:'deferred', declined:'declined', abandoned:'abandoned',
     superseded:'superseded'
   }[s] || 'unknown';
-  return `<span class="status-badge status-${cls}">${s}</span>`;
+  const extra = extraClass ? ` ${extraClass}` : '';
+  return `<span class="status-badge status-${cls}${extra}">${s}</span>`;
 }
 
 function sourceBadge(source, status, derived) {
