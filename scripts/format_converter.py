@@ -19,7 +19,7 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from parse_utils import detect_format, parse_bold_metadata
+from parse_utils import detect_format, is_backup_artifact, parse_bold_metadata
 
 
 _BODY_SECTION_PATTERN = re.compile(r"^## ", re.MULTILINE)
@@ -120,6 +120,8 @@ def convert_project(project_dir: Path, *, dry_run: bool = False, backup: bool = 
                 continue
             seen.add(real)
             if p.name in ("INDEX.md", "MIGRATION-MAP.md") or p.name.endswith("-INDEX.md"):
+                continue
+            if is_backup_artifact(p.name):
                 continue
             result = convert_file(p, dry_run=dry_run, backup=backup)
             if result["action"] != "skip":
