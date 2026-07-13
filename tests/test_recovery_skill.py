@@ -210,3 +210,25 @@ def test_stale_beta_plugin_guard_is_front_door_for_update_bootstrap_and_doctor()
 
     update = (root / "skills/update/SKILL.md").read_text(encoding="utf-8")
     assert update.index("SC_PLUGIN_STALE_BETA=true") < update.index("Read current install state")
+
+
+def test_update_skill_does_not_invoke_orphan_mutations():
+    """ISSUE-235 (boundary B2): update never mutates work-item state. The
+    orphan-resolution actions live behind doctor; update only reports
+    orphan_count and routes there."""
+    root = Path(__file__).resolve().parent.parent
+    text = (root / "skills/update/SKILL.md").read_text(encoding="utf-8")
+    for mutating_subcommand in (
+        "reonboard-orphans",
+        "archive-orphans",
+        "acknowledge-orphans",
+        "resolve-orphan",
+        "group-orphans",
+    ):
+        assert mutating_subcommand not in text, (
+            f"update SKILL.md must not invoke {mutating_subcommand}"
+        )
+    assert "orphan" in text.lower(), (
+        "update must still report orphan_count and route to doctor"
+    )
+    assert "doctor" in text.lower()

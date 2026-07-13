@@ -10649,3 +10649,166 @@ class TestIdenticalDuplicateResolution:
         assert not Path(remove).exists()      # the duplicate copy is gone
         assert Path(keep).exists()            # the survivor remains
         assert res.backup_path is not None    # before-image archived -> restore-reversible
+
+
+# ---------------------------------------------------------------------------
+# ISSUE-235: orphan resolution through the executor (resolve_orphans)
+# ---------------------------------------------------------------------------
+
+class TestResolveOrphansExecutor:
+    """Orphan mutations run through doctor's backup pipeline; update's skill
+    no longer invokes migrate-v3-to-v4.py. One recipe per orphan file."""
+
+    REGISTRY = ".sweetclaude/state/orphan-registry.yaml"
+
+    def _plant_orphan(self, project_dir, name="BL-010-legacy.md", item_id="BL-010"):
+        bl = project_dir / ".sweetclaude" / "product" / "backlog"
+        bl.mkdir(parents=True, exist_ok=True)
+        p = bl / name
+        p.write_text(
+            f"---\nid: {item_id}\ntitle: Legacy item {item_id}\n"
+            f"status: new\ntype: story\n---\n\nlegacy body\n"
+        )
+        return p
+
+    def _finding(self, project_dir, orphan_action, abs_path):
+        rel = str(Path(abs_path).relative_to(project_dir))
+        return {
+            "id": f"migration-currency:orphan:{Path(abs_path).name}",
+            "category": "migration_currency",
+            "summary": f"orphan {Path(abs_path).name}",
+            "fix_type": "prompted",
+            "fix_recipe": {
+                "action": "resolve_orphans",
+                "orphan_action": orphan_action,
+                "path": rel,
+            },
+        }
+
+    def test_acknowledge_writes_registry_and_restore_reverses(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        orphan = self._plant_orphan(project_dir)
+        rel = str(orphan.relative_to(project_dir))
+        archive = create_archive(project_dir)
+
+        result = auto_fix(
+            project_dir,
+            [self._finding(project_dir, "acknowledge", orphan)],
+            archive, include_prompted=True,
+        )
+        assert result["actions"][0].get("error") is None
+        reg = project_dir / self.REGISTRY
+        assert reg.exists() and rel in reg.read_text()
+        assert orphan.exists(), "acknowledge must not touch the orphan file"
+
+        res = _p0_doctor.restore(project_dir, archive, restore_all=True)
+        assert res["restored"], "acknowledge must be restore-reversible"
+        assert rel not in (reg.read_text() if reg.exists() else "")
+
+    def test_archive_moves_file_and_restore_reverses_move(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        orphan = self._plant_orphan(project_dir)
+        original_bytes = orphan.read_bytes()
+        archive = create_archive(project_dir)
+
+        result = auto_fix(
+            project_dir,
+            [self._finding(project_dir, "archive", orphan)],
+            archive, include_prompted=True,
+        )
+        assert result["actions"][0].get("error") is None
+        assert not orphan.exists(), "archive must move the orphan out"
+        archived_dir = (
+            project_dir / ".sweetclaude" / "product" / "archive" / "orphans"
+        )
+        archived = list(archived_dir.glob("*.md"))
+        assert len(archived) == 1 and archived[0].read_bytes() == original_bytes
+
+        res = _p0_doctor.restore(project_dir, archive, restore_all=True)
+        assert res["restored"], "archive must be restore-reversible"
+        assert orphan.exists() and orphan.read_bytes() == original_bytes
+        assert not list(archived_dir.glob("*.md")), (
+            "restore must reverse the move, not duplicate the file"
+        )
+
+    def test_reonboard_creates_issue_and_restore_deletes_created(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        orphan = self._plant_orphan(project_dir)
+        original_bytes = orphan.read_bytes()
+        backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+        before_files = set(backlog.glob("ISSUE-*.md"))
+        archive = create_archive(project_dir)
+
+        result = auto_fix(
+            project_dir,
+            [self._finding(project_dir, "reonboard", orphan)],
+            archive, include_prompted=True,
+        )
+        assert result["actions"][0].get("error") is None
+        created = set(backlog.glob("ISSUE-*.md")) - before_files
+        assert len(created) == 1, "reonboard must create exactly one ISSUE file"
+        new_text = created.pop().read_text()
+        assert "reonboarded_from" in new_text
+        assert orphan.exists(), "reonboard leaves the source in place"
+
+        res = _p0_doctor.restore(project_dir, archive, restore_all=True)
+        assert res["restored"], "reonboard must be restore-reversible"
+        assert set(backlog.glob("ISSUE-*.md")) == before_files, (
+            "restore must delete the created ISSUE file"
+        )
+        assert orphan.exists() and orphan.read_bytes() == original_bytes
+
+    def test_unknown_orphan_action_fails_without_mutation(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        orphan = self._plant_orphan(project_dir)
+        original_bytes = orphan.read_bytes()
+        archive = create_archive(project_dir)
+
+        rel = str(orphan.relative_to(project_dir))
+        res = execute_recipe(
+            project_dir,
+            {"action": "resolve_orphans", "orphan_action": "delete", "path": rel},
+            archive,
+        )
+        assert res.success is False and res.error
+        assert orphan.exists() and orphan.read_bytes() == original_bytes
+        assert not (project_dir / self.REGISTRY).exists()
+
+    def test_missing_path_fails_cleanly(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path)
+        archive = create_archive(project_dir)
+        res = execute_recipe(
+            project_dir,
+            {"action": "resolve_orphans", "orphan_action": "archive",
+             "path": ".sweetclaude/product/backlog/BL-404-nope.md"},
+            archive,
+        )
+        assert res.success is False and res.error
+
+    def test_migration_currency_emits_per_file_resolve_orphans_findings(
+        self, tmp_path, fake_home
+    ):
+        project_dir = build_fixture(tmp_path)
+        self._plant_orphan(project_dir, "BL-010-legacy.md", "BL-010")
+        self._plant_orphan(project_dir, "BUG-001-legacy.md", "BUG-001")
+
+        state = build_project_state(project_dir)
+        findings = check_migration_currency(state)
+        orphan_findings = [
+            f for f in findings
+            if f.fix_recipe.get("type") == "resolve_orphans"
+        ]
+        assert len(orphan_findings) == 2, (
+            "one prompted resolve_orphans finding per orphan file"
+        )
+        for f in orphan_findings:
+            assert f.fix_type == "prompted"
+            assert f.fix_recipe.get("file"), "recipe must carry the orphan path"
