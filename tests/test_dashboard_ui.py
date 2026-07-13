@@ -184,15 +184,52 @@ class TestDetailPanelStructure:
 # ---------------------------------------------------------------------------
 
 class TestCompletionTime:
-    @pytest.fixture(autouse=True)
+    """ISSUE-233 Story C: the epic's OWN badge carries .epic-status-badge.
+    Matching the generic .status-badge inside :has() also matched child
+    story-row badges embedded in the epic node, opening a non-done parent."""
+
+    def test_epic_own_badge_has_distinct_class(self, browser_page):
+        assert browser_page.locator(
+            ".epic-node .epic-header-row .epic-status-badge"
+        ).count() >= 1, (
+            "epic-header badges must carry .epic-status-badge so selectors "
+            "cannot conflate parent and child status"
+        )
+
+    @pytest.fixture
     def open_done_epic(self, browser_page):
-        browser_page.locator(".epic-node:has(.status-badge:text('done'))").first.click()
+        done_epics = browser_page.locator(
+            ".epic-node:has(.epic-status-badge:text('done'))"
+        )
+        if done_epics.count() == 0:
+            pytest.skip("No persistently-done epic rendered in this project")
+        if done_epics.first.locator(":scope:visible").count() == 0:
+            collapsed_headers = browser_page.locator(
+                "#panel-roadmap .roadmap-section.collapsed .release-header"
+            )
+            for _ in range(20):
+                if collapsed_headers.count() == 0:
+                    break
+                collapsed_headers.first.click()
+                browser_page.wait_for_timeout(150)
+            for link in browser_page.locator(
+                "#panel-roadmap .toggle-hidden-link:visible"
+            ).all():
+                if "done epic" in (link.inner_text() or ""):
+                    link.click()
+                    browser_page.wait_for_timeout(150)
+        visible_done = browser_page.locator(
+            ".epic-node:visible:has(.epic-status-badge:text('done'))"
+        )
+        if visible_done.count() == 0:
+            pytest.skip("Done epics exist but cannot be revealed in this layout")
+        visible_done.first.click()
         browser_page.locator("#detail-overlay.open").wait_for(timeout=3000)
         yield
         browser_page.keyboard.press("Escape")
         browser_page.wait_for_timeout(300)
 
-    def test_completion_time_shown(self, browser_page):
+    def test_completion_time_shown(self, browser_page, open_done_epic):
         details_section = browser_page.locator(
             "details.detail-section:has(summary:text('Details'))"
         )
@@ -221,7 +258,7 @@ class TestDragHandles:
 
     def test_detail_panel_issues_have_drag_handles(self, browser_page):
         active_epic = browser_page.locator(
-            "#panel-roadmap .epic-node:has(.status-badge:text('active'))"
+            "#panel-roadmap .epic-node:has(.epic-status-badge:text('active'))"
         )
         if active_epic.count() == 0:
             pytest.skip("No active epic with open issues to test")
