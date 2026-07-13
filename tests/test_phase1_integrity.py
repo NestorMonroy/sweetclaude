@@ -484,6 +484,52 @@ class TestDoctorFormatConsistency:
         assert bold_findings[0].fix_type == "auto"
         assert bold_findings[0].fix_recipe["action"] == "convert_to_yaml"
 
+    def test_bold_backup_artifact_not_flagged(self, tmp_path, fake_home):
+        """Regression ISSUE-232: converter backup artifacts are not live work
+        items — flagging them re-converts them and spawns a new backup every
+        doctor run."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+        from test_doctor import build_fixture, build_project_state
+        from doctor import check_format_consistency
+
+        project_dir = build_fixture(tmp_path)
+        archived_dir = project_dir / ".sweetclaude" / "product" / "backlog" / "archived"
+        archived_dir.mkdir(parents=True, exist_ok=True)
+        for name in (
+            "I-001-agentic-skills-spike.bold-backup-20260610-093312.md",
+            "I-001-agentic-skills-spike.bold-backup-20260610-093312"
+            ".bold-backup-20260621-084233.md",
+        ):
+            (archived_dir / name).write_text(
+                "# I-001: Agentic skills spike\n\n"
+                "**Status:** done\n**Created:** 2026-01-01\n"
+            )
+
+        state = build_project_state(project_dir)
+        findings = check_format_consistency(state)
+        backup_findings = [f for f in findings if "bold-backup" in f.id]
+        assert backup_findings == []
+
+    def test_backup_like_slug_still_flagged(self, tmp_path, fake_home):
+        """The exclusion is suffix-anchored: a real work item whose slug
+        contains 'backup' must still be flagged."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+        from test_doctor import build_fixture, build_project_state
+        from doctor import check_format_consistency
+
+        project_dir = build_fixture(tmp_path)
+        backlog_dir = project_dir / ".sweetclaude" / "product" / "backlog"
+        backlog_dir.mkdir(parents=True, exist_ok=True)
+        (backlog_dir / "STORY-041-backup-and-restore.md").write_text(
+            "# STORY-041: Backup and restore\n\n"
+            "**Status:** new\n**Created:** 2026-01-01\n"
+        )
+
+        state = build_project_state(project_dir)
+        findings = check_format_consistency(state)
+        slug_findings = [f for f in findings if "STORY-041" in f.id]
+        assert len(slug_findings) == 1
+
     def test_yaml_file_not_flagged(self, tmp_path, fake_home):
         sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
         from test_doctor import build_fixture, build_project_state
@@ -1124,6 +1170,43 @@ class TestEndToEndPropagationChain:
                 assert detect_format(f.read_text()) == "yaml", (
                     f"{f} should be YAML after conversion"
                 )
+
+    def test_convert_project_skips_bold_backup_artifacts(self, tmp_path):
+        """Regression ISSUE-232: convert_project must not convert converter
+        backup artifacts, or each batch run mints a new backup generation."""
+        from format_converter import convert_project
+        from parse_utils import detect_format
+
+        project_dir = tmp_path / "proj"
+        sc = project_dir / ".sweetclaude"
+        (sc / "state").mkdir(parents=True)
+        (sc / "artifact-privacy.yaml").write_text(
+            yaml.dump({"product": {"base_path": ".sweetclaude/product"}})
+        )
+        backlog = project_dir / ".sweetclaude" / "product" / "backlog"
+        backlog.mkdir(parents=True)
+        backup_file = backlog / "I-001-spike.bold-backup-20260610-093312.md"
+        write_bold_file(
+            str(backup_file), "I-001: Spike",
+            {"ID": "I-001", "Type": "spike", "Title": "Spike",
+             "Status": "done", "Created": "2026-01-01"},
+        )
+        live_file = backlog / "I-002-live.md"
+        write_bold_file(
+            str(live_file), "I-002: Live",
+            {"ID": "I-002", "Type": "spike", "Title": "Live",
+             "Status": "new", "Created": "2026-01-01"},
+        )
+
+        results = convert_project(project_dir, dry_run=False, backup=False)
+        touched = {r["file"] for r in results}
+        assert str(backup_file) not in touched
+        assert detect_format(backup_file.read_text()) == "bold", (
+            "backup artifact must be left untouched"
+        )
+        assert detect_format(live_file.read_text()) == "yaml", (
+            "live bold file must still be converted"
+        )
 
     def test_no_bold_format_ever_created(self, tmp_path):
         """Regression: op_create never produces Bold format for any entity type."""

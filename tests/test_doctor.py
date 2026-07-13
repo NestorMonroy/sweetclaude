@@ -7968,6 +7968,37 @@ class TestP0Characterization:
         assert fm["status"] == "active"
         assert fm["created"] == "2026-01-01"
 
+    def test_convert_to_yaml_creates_no_sibling_backup(self, tmp_path, fake_home):
+        """Regression ISSUE-232: the executor already archives the before-image
+        via _record_mutation; a sibling .bold-backup-*.md file re-triggers the
+        format scan on the next run and the fix never converges."""
+        project_dir = build_fixture(tmp_path)
+        backlog_dir = project_dir / ".sweetclaude" / "product" / "backlog"
+        bold_path = backlog_dir / "ISSUE-043-widget.md"
+        bold_path.write_text(
+            "# ISSUE-043: Widget\n\n"
+            "**Type:** net-new-feature\n"
+            "**Status:** active\n"
+            "**Created:** 2026-01-01\n"
+        )
+
+        archive = create_archive(project_dir)
+        result = execute_recipe(
+            project_dir, {"action": "convert_to_yaml", "file": str(bold_path)}, archive
+        )
+
+        assert result.success is True
+        assert bold_path.read_text().startswith("---")
+        siblings = list(backlog_dir.glob("*bold-backup*"))
+        assert siblings == [], (
+            f"convert_to_yaml must not write sibling backups, found: {siblings}"
+        )
+        before_dir = Path(archive) / "before"
+        archived = list(before_dir.rglob("*")) if before_dir.is_dir() else []
+        assert any(p.is_file() for p in archived), (
+            "before-image must be recorded in the run archive"
+        )
+
     def test_delete_file_records_diffs_entry(self, tmp_path, fake_home):
         project_dir = build_fixture(tmp_path)
         target = project_dir / ".sweetclaude" / "state" / "pending-drift-decision.yaml"
