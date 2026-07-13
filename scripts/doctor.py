@@ -2061,7 +2061,7 @@ def check_format_consistency(state: ProjectState) -> list[Finding]:
         state.product_base / "cycles",
     ]
     try:
-        from parse_utils import detect_format
+        from parse_utils import detect_format, is_backup_artifact
     except ImportError:
         return findings
 
@@ -2070,6 +2070,8 @@ def check_format_consistency(state: ProjectState) -> list[Finding]:
             continue
         for p in scan_dir.rglob("*.md"):
             if p.name in ("INDEX.md", "MIGRATION-MAP.md") or p.name.endswith("-INDEX.md"):
+                continue
+            if is_backup_artifact(p.name):
                 continue
             try:
                 content = p.read_text()
@@ -3582,7 +3584,7 @@ def execute_recipe(
         try:
             before = target_path.read_bytes()
             from format_converter import convert_file
-            result = convert_file(target_path, dry_run=False, backup=True)
+            result = convert_file(target_path, dry_run=False, backup=False)
             if result["action"] == "converted":
                 after = target_path.read_bytes()
                 return _record_mutation(archive_path, target_path, before, after)

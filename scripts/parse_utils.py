@@ -15,6 +15,17 @@ NONE_SENTINELS = frozenset({
     "(rm-nnn when promoted)", "none", "",
 })
 
+# Suffix-anchored, case-insensitive: matches converter backup artifacts like
+# "I-001-spike.bold-backup-20260610-093312.md" (including chained backups of
+# backups). Must NOT match a real slug that merely contains "backup" mid-name
+# (e.g. "STORY-041-backup-and-restore.md").
+BACKUP_ARTIFACT_RE = re.compile(r"\.bold-backup-[^/\\]+\.md$", re.IGNORECASE)
+
+
+def is_backup_artifact(name: str) -> bool:
+    """Return True if the filename is a converter-generated backup artifact."""
+    return bool(BACKUP_ARTIFACT_RE.search(str(name)))
+
 BOLD_TO_YAML_FIELD_MAP = {
     "epic_id": "epic",
     "epic": "epic",
