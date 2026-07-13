@@ -1290,7 +1290,59 @@ def test_issue_is_not_terminal_when_active(tmp_path):
 
 
 def test_issue_is_not_terminal_when_missing(tmp_path):
+    """Fail-closed (ISSUE-233 Story B, decision log #33): when the backlog
+    exists but the referenced issue has no file, the gate blocks — a typo'd
+    or unfiled ID must not sail through closeout validation."""
+    backlog = tmp_path / ".sweetclaude" / "product" / "backlog"
+    backlog.mkdir(parents=True)
     assert _issue_is_terminal(tmp_path, "ISSUE-999") is False
+
+
+def test_issue_is_terminal_when_no_backlog_dir(tmp_path):
+    """CI pin: a checkout without the gitignored backlog directory stays
+    non-blocking (the tag workflow runs release_gate.py check there)."""
+    assert _issue_is_terminal(tmp_path, "ISSUE-999") is True
+
+
+def test_issue_id_matching_is_exact_boundary(tmp_path):
+    """Accepted matching rule (plan v1.3): a file matches only when named
+    exactly {ISSUE-ID}.md or beginning {ISSUE-ID}- . No prefix collisions."""
+    # ISSUE-23 must not match ISSUE-233-foo.md
+    _write_backlog_issue(tmp_path, "ISSUE-233", status="done", subdir="done")
+    assert _issue_is_terminal(tmp_path, "ISSUE-23") is False
+    assert _issue_is_terminal(tmp_path, "ISSUE-233") is True
+
+    # ISSUE-23 must not match ISSUE-23foo.md
+    done = tmp_path / ".sweetclaude" / "product" / "backlog" / "done"
+    (done / "ISSUE-23foo.md").write_text(
+        "---\nid: ISSUE-23foo\nstatus: done\n---\nTest.\n", encoding="utf-8"
+    )
+    assert _issue_is_terminal(tmp_path, "ISSUE-23") is False
+
+    # ISSUE-23 matches ISSUE-23-foo.md
+    (done / "ISSUE-23-foo.md").write_text(
+        "---\nid: ISSUE-23\nstatus: done\n---\nTest.\n", encoding="utf-8"
+    )
+    assert _issue_is_terminal(tmp_path, "ISSUE-23") is True
+
+
+def test_issue_id_matching_exact_filename(tmp_path):
+    """ISSUE-23 matches ISSUE-23.md (bare id, no slug)."""
+    done = tmp_path / ".sweetclaude" / "product" / "backlog" / "done"
+    done.mkdir(parents=True)
+    (done / "ISSUE-23.md").write_text(
+        "---\nid: ISSUE-23\nstatus: done\n---\nTest.\n", encoding="utf-8"
+    )
+    assert _issue_is_terminal(tmp_path, "ISSUE-23") is True
+
+
+def test_same_prefix_issues_resolve_independently(tmp_path):
+    """ISSUE-23 open in the backlog and ISSUE-233 done coexist: each id
+    resolves against its own file only."""
+    _write_backlog_issue(tmp_path, "ISSUE-23", status="new")
+    _write_backlog_issue(tmp_path, "ISSUE-233", status="done", subdir="done")
+    assert _issue_is_terminal(tmp_path, "ISSUE-23") is False
+    assert _issue_is_terminal(tmp_path, "ISSUE-233") is True
 
 
 def test_validate_issue_closeout_passes_when_all_closed(tmp_path):
