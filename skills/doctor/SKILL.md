@@ -626,6 +626,31 @@ For fix types that require further user input or skill delegation:
   ```
   After it succeeds, re-run the scan so the previously-blocked migration findings become actionable. Then record the prompted-fix action.
 
+- `resolve_orphans`: An orphaned work item file was found outside the primary
+  backlog (one prompted finding per file; `fix_recipe.file` carries its
+  project-relative path). Batch presentation applies: when several orphan
+  findings are pending, first ask once via AskUserQuestion how to handle the
+  group — **Acknowledge all** (stop flagging these files), **Re-onboard all as
+  new ISSUE items**, **Archive all**, **Review each**, plus the "Something
+  else" escape — then apply the chosen action per file (or per-file choices
+  under Review each: **Acknowledge** / **Re-onboard** / **Archive** / Skip).
+  Apply through the executor by building, for EACH file, a finding whose
+  recipe is the executable `resolve_orphans` action carrying the chosen
+  `orphan_action` (`acknowledge` / `reonboard` / `archive`) and the file's
+  `path`. Do **not** invoke `migrate-v3-to-v4.py` from the skill: the executor
+  wraps the migrate subcommand with a before-image through the backup
+  pipeline — acknowledge is keyed to the orphan registry, archive and
+  reonboard are recorded move-aware (`moved_to` carries the archived copy or
+  the created ISSUE file), so `restore` reverses each one (deletes the created
+  or archived copy, restores the source/registry bytes).
+  ```bash
+  echo '[{"id": "{finding_id}", "category": "migration_currency", "summary": "{summary}", "fix_type": "prompted", "fix_recipe": {"action": "resolve_orphans", "orphan_action": "{chosen_action}", "path": "{fix_recipe.file}"}}]' | python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py auto-fix --project-dir . --archive-dir {archive_dir} --include-prompted
+  ```
+  If the source file is genuinely absent the executor returns failure with a
+  clear error — surface that, never a silent skip. Report per action what
+  happened (acknowledged in registry / archived to `{dest}` / re-onboarded as
+  `{new_id}`). Then record the prompted-fix action.
+
 - `migration`: Delegate to the appropriate skill or script per Step 7. Record the result.
 
 - `yaml_repair`: Present three options via AskUserQuestion — **auto-fix** (let SweetClaude repair common frontmatter-delimiter breakage), **restore from archive** (revert the file to a prior doctor run's saved copy), **show for manual edit** (open the file for hand-editing). Apply through the executor by building a finding whose recipe is the executable `yaml_repair` action carrying the chosen `choice` (`auto` / `restore` / `manual`) and the file path the prompt recipe threaded (`fix_recipe.file`). Do not write the file directly.

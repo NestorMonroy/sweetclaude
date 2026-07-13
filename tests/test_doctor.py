@@ -2180,7 +2180,8 @@ class TestMigrationCurrency:
             f"Runner timeout should produce no schema-drift findings, got: {schema_ids}"
         )
 
-        orphan_ids = [f.id for f in findings if f.id == "migration-currency:orphans:scan"]
+        orphan_ids = [f.id for f in findings
+                      if f.id.startswith("migration-currency:orphan:")]
         assert len(orphan_ids) >= 1, (
             f"Runner timeout should not prevent orphan scan, got: {[f.id for f in findings]}"
         )
@@ -2389,7 +2390,7 @@ class TestMigrationCurrency:
         state = build_project_state(project_dir)
         findings = check_migration_currency(state)
 
-        orphan_ids = [f.id for f in findings if f.id.startswith("migration-currency:orphans")]
+        orphan_ids = [f.id for f in findings if f.id.startswith("migration-currency:orphan")]
         assert orphan_ids == [], (
             f"Absent orphan script should skip orphan check, got: {orphan_ids}"
         )
@@ -2409,13 +2410,20 @@ class TestMigrationCurrency:
         findings = check_migration_currency(state)
 
         ids = [f.id for f in findings]
-        assert "migration-currency:orphans:scan" in ids, (
-            f"Expected orphans:scan finding, got: {ids}"
+        assert "migration-currency:orphan:orphan.md" in ids, (
+            f"Expected one per-file orphan finding, got: {ids}"
+        )
+        assert "migration-currency:orphans:scan" not in ids, (
+            f"Aggregate orphan finding is retired (ISSUE-235) — per-file "
+            f"resolve_orphans findings replace it, got: {ids}"
         )
 
-        f = next(x for x in findings if x.id == "migration-currency:orphans:scan")
+        f = next(x for x in findings
+                 if x.id == "migration-currency:orphan:orphan.md")
         assert f.severity == "warning"
         assert f.fix_type == "prompted"
+        assert f.fix_recipe.get("type") == "resolve_orphans"
+        assert f.fix_recipe.get("file") == "orphan.md"
 
     # Scenario: Orphan scan finds no orphans produces no finding
     def test_orphan_scan_finds_no_orphans_produces_no_finding(
@@ -2431,8 +2439,9 @@ class TestMigrationCurrency:
         state = build_project_state(project_dir)
         findings = check_migration_currency(state)
 
-        ids = [f.id for f in findings]
-        assert "migration-currency:orphans:scan" not in ids, (
+        ids = [f.id for f in findings
+               if f.id.startswith("migration-currency:orphan")]
+        assert ids == [], (
             f"Empty orphans list should produce no finding, got: {ids}"
         )
 
@@ -2457,7 +2466,7 @@ class TestMigrationCurrency:
         state = build_project_state(project_dir)
         findings = check_migration_currency(state)
 
-        orphan_ids = [f.id for f in findings if f.id.startswith("migration-currency:orphans")]
+        orphan_ids = [f.id for f in findings if f.id.startswith("migration-currency:orphan")]
         assert orphan_ids == [], (
             f"Orphan scan timeout should be silently skipped, got: {orphan_ids}"
         )
@@ -2474,7 +2483,7 @@ class TestMigrationCurrency:
         state = build_project_state(project_dir)
         findings = check_migration_currency(state)
 
-        orphan_ids = [f.id for f in findings if f.id.startswith("migration-currency:orphans")]
+        orphan_ids = [f.id for f in findings if f.id.startswith("migration-currency:orphan")]
         assert orphan_ids == [], (
             f"Invalid JSON from orphan script should be silently skipped, got: {orphan_ids}"
         )
@@ -2491,7 +2500,7 @@ class TestMigrationCurrency:
         state = build_project_state(project_dir)
         findings = check_migration_currency(state)
 
-        orphan_ids = [f.id for f in findings if f.id.startswith("migration-currency:orphans")]
+        orphan_ids = [f.id for f in findings if f.id.startswith("migration-currency:orphan")]
         assert orphan_ids == [], (
             f"Non-zero orphan exit should be silently skipped, got: {orphan_ids}"
         )
@@ -6755,7 +6764,7 @@ class TestGracefulDegradation:
         state = build_project_state(project_dir)
         findings = check_migration_currency(state)
 
-        orphan_ids = [f.id for f in findings if f.id.startswith("migration-currency:orphans")]
+        orphan_ids = [f.id for f in findings if f.id.startswith("migration-currency:orphan")]
         assert orphan_ids == [], (
             f"orphan scan should be skipped when migrate-v3-to-v4.py is absent; "
             f"got: {orphan_ids}"
@@ -7727,6 +7736,7 @@ def test_executor_supported_actions_match_dispatch():
         "write_field", "write_frontmatter_field", "prompt",
         "sync_parent_status", "convert_to_yaml", "config_conflict",
         "yaml_repair", "hook_restore", "file_move", "renumber_duplicate",
+        "resolve_orphans",
     }
     assert set(EXECUTOR_SUPPORTED_ACTIONS) == dispatched
 
@@ -9524,6 +9534,10 @@ _CONTENT_MUTATING_ACTIONS = frozenset({
 _BACKED_UP_SUBPROCESS_ACTIONS = frozenset({
     "run_script",
     "rebuild_cache",
+    # resolve_orphans wraps migrate-v3-to-v4.py subcommands with before-images
+    # through _record_mutation (move-aware for archive/reonboard); its backup +
+    # restore behavior has dedicated coverage in TestResolveOrphansExecutor.
+    "resolve_orphans",
 })
 
 # Explicitly reversible:false — derived/regenerable output that carries no
