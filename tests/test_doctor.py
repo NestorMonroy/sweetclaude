@@ -3182,6 +3182,52 @@ class TestConfigCompat:
         )
         assert w3_findings[0].severity == "warning"
 
+    # Scenario (ISSUE-240): prohibitions are not conflicts. "Never skip
+    # tests" ENFORCES TDD; flagging it is a false positive that recurs on
+    # every scan.
+    def test_negated_skip_tests_is_not_flagged(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path, overrides={
+            "claude_md": "# Project\n\n- Never skip tests to ship faster.\n",
+        })
+        state = build_project_state(project_dir)
+        findings = check_config_compat(state)
+        w3 = [f for f in findings if f.id.startswith("config-compat:W3")]
+        assert w3 == [], (
+            f"prohibition must not be flagged as a skip-tests conflict: "
+            f"{[f.detail for f in w3]}"
+        )
+
+    def test_do_not_variants_are_not_flagged(self, tmp_path, fake_home):
+        project_dir = build_fixture(tmp_path, overrides={
+            "claude_md": (
+                "# Project\n\n"
+                "- Do not skip tests.\n"
+                "- You should never skip confirmation for destructive commands.\n"
+                "- Avoid time estimates; never estimate durations.\n"
+            ),
+        })
+        state = build_project_state(project_dir)
+        findings = check_config_compat(state)
+        flagged = [f for f in findings
+                   if f.id.startswith(("config-compat:W1", "config-compat:W3",
+                                       "config-compat:W4"))]
+        assert flagged == [], (
+            f"negated phrases must not be flagged: {[f.detail for f in flagged]}"
+        )
+
+    def test_intrinsically_negative_pattern_still_flagged(
+        self, tmp_path, fake_home
+    ):
+        # "don't write tests" IS the anti-TDD instruction — the negation is
+        # part of the pattern, not a prohibition of it.
+        project_dir = build_fixture(tmp_path, overrides={
+            "claude_md": "# Project\n\nFor spikes you don't write tests.\n",
+        })
+        state = build_project_state(project_dir)
+        findings = check_config_compat(state)
+        w3 = [f for f in findings if f.id.startswith("config-compat:W3")]
+        assert len(w3) >= 1, "anti-TDD instruction must still be flagged"
+
     # ------------------------------------------------------------------
     # W4: skip-confirmation instructions
     # ------------------------------------------------------------------
