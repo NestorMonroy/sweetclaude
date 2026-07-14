@@ -1,7 +1,18 @@
 # Installing SweetClaude 4.x Beta
 
 Use this page only if you intentionally want the 4.x beta channel. For normal
-active project work, use the install guide on the `stable-3.x` branch.
+active project work, install the stable channel, which now tracks the 4.x line
+on `main`:
+
+```text
+/plugin marketplace add carson-sweet/sweetclaude@main
+/plugin install sweetclaude@sweetclaude-stable
+```
+
+**Upgrading from 3.x:** The stable channel moved from `stable-3.x` to the 4.x
+line on `main`. To switch a 3.x install, re-add the stable marketplace and
+reinstall as above, then run `/sweetclaude:update` inside each project to
+migrate your data.
 
 ## Marketplace Install
 

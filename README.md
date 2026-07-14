@@ -8,7 +8,7 @@
 
 Start Claude Code and run:
 ```
-/plugin marketplace add carson-sweet/sweetclaude@stable-3.x
+/plugin marketplace add carson-sweet/sweetclaude@main
 /plugin install sweetclaude@sweetclaude-stable
 /sweetclaude:help
 ```
@@ -51,7 +51,7 @@ There are too many Claude Code plugins to count, so it's important to know if on
 Start Claude Code in your project folder as you normally would, then inside Claude Code run these commands:
 
 ```
-/plugin marketplace add carson-sweet/sweetclaude@stable-3.x
+/plugin marketplace add carson-sweet/sweetclaude@main
 /plugin install sweetclaude@sweetclaude-stable
 ```
 
@@ -66,6 +66,14 @@ For an existing beta install, update the plugin package first and restart Claude
 
 ```
 /plugin update sweetclaude@sweetclaude-beta
+```
+
+**Upgrading from 3.x:** The stable channel now tracks the 4.x line on `main`. To switch a 3.x install, re-add the stable marketplace and reinstall, then let SweetClaude migrate your project data:
+
+```
+/plugin marketplace add carson-sweet/sweetclaude@main
+/plugin install sweetclaude@sweetclaude-stable
+/sweetclaude:update
 ```
 
 Once install is complete, run:

@@ -476,13 +476,19 @@ def _artifact_sort_key(path: Path) -> tuple[int, int, int, str]:
     return (numbers[0], numbers[1], numbers[2], prerelease)
 
 
+def _channel_matches(channel: str, version: str) -> bool:
+    config = channel_config(channel)
+    expected_major = int(config["major_version"])
+    prerelease_required = bool(config.get("prerelease_required"))
+    if _major(version) != expected_major:
+        return False
+    return _has_prerelease(version) == prerelease_required
+
+
 def _channel_artifact(project_dir: Path, *, channel: str, release_tag: str) -> tuple[str, Path]:
     release_version = _version_from_tag(release_tag)
     release_artifact = _release_artifact(project_dir, release_version)
-    release_major = _major(release_version)
-    if channel == "stable" and release_major == 3 and not _has_prerelease(release_version):
-        return release_tag, release_artifact
-    if channel == "beta" and release_major == 4 and _has_prerelease(release_version):
+    if _channel_matches(channel, release_version):
         return release_tag, release_artifact
 
     candidates: list[tuple[str, Path]] = []
@@ -490,13 +496,8 @@ def _channel_artifact(project_dir: Path, *, channel: str, release_tag: str) -> t
         version = _artifact_version(artifact)
         if not version:
             continue
-        tag = f"v{version}"
-        major = _major(version)
-        prerelease = _has_prerelease(version)
-        if channel == "stable" and major == 3 and not prerelease:
-            candidates.append((tag, artifact))
-        if channel == "beta" and major == 4 and prerelease:
-            candidates.append((tag, artifact))
+        if _channel_matches(channel, version):
+            candidates.append((f"v{version}", artifact))
     if not candidates:
         raise ValueError(f"No {channel} release artifact found under {project_dir / 'dist'}")
     return max(candidates, key=lambda item: _artifact_sort_key(item[1]))
@@ -605,7 +606,7 @@ def _write_release_identity_receipt(
         artifact=artifact,
     )
     update_discovery: dict[str, dict] = {}
-    for discovery_channel in ("stable", "beta"):
+    for discovery_channel in load_manifest().get("channels") or {}:
         discovery_tag, discovery_artifact = _channel_artifact(
             project_dir,
             channel=discovery_channel,

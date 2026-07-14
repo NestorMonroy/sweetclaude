@@ -117,8 +117,16 @@ def _write_release_project(project_dir: Path, version: str = "3.9.0") -> None:
         "artifact\n",
         encoding="utf-8",
     )
+    (project_dir / "dist" / "sweetclaude-4.99.0.tgz").write_text(
+        "stable artifact\n",
+        encoding="utf-8",
+    )
     (project_dir / "dist" / "sweetclaude-4.1.99-beta.tgz").write_text(
         "beta artifact\n",
+        encoding="utf-8",
+    )
+    (project_dir / "dist" / "sweetclaude-3.99.0.tgz").write_text(
+        "legacy artifact\n",
         encoding="utf-8",
     )
 
@@ -240,10 +248,30 @@ def _release_identity_receipt(
     **overrides,
 ) -> Path:
     artifact = project_dir / "dist" / f"sweetclaude-{version}.tgz"
-    beta_artifact = project_dir / "dist" / "sweetclaude-4.1.99-beta.tgz"
-    beta_artifact.write_text("beta artifact\n", encoding="utf-8")
     branch = str(overrides.get("branch", "stable-3.x"))
+    channel = str(overrides.get("channel", "legacy"))
     tag = str(overrides.get("tag", f"v{version}"))
+    channel_defaults = {
+        "stable": ("v4.99.0", project_dir / "dist" / "sweetclaude-4.99.0.tgz"),
+        "beta": ("v4.1.99-beta", project_dir / "dist" / "sweetclaude-4.1.99-beta.tgz"),
+        "legacy": ("v3.99.0", project_dir / "dist" / "sweetclaude-3.99.0.tgz"),
+    }
+    default_discovery: dict[str, dict] = {}
+    for disc_channel, (default_tag, default_artifact) in channel_defaults.items():
+        if disc_channel == channel:
+            disc_tag, disc_artifact = tag, artifact
+        else:
+            disc_tag, disc_artifact = default_tag, default_artifact
+        if not disc_artifact.exists():
+            disc_artifact.write_text(f"{disc_channel} artifact\n", encoding="utf-8")
+        default_discovery[disc_channel] = _discovery_entry(
+            project_dir,
+            disc_artifact,
+            branch=branch,
+            commit=commit,
+            channel=disc_channel,
+            tag=disc_tag,
+        )
     data = {
         "branch": branch,
         "commit": commit,
@@ -251,25 +279,8 @@ def _release_identity_receipt(
         "package_version": version,
         "plugin_version": version,
         "changelog_version": version,
-        "channel": "stable",
-        "update_discovery": {
-            "stable": _discovery_entry(
-                project_dir,
-                artifact,
-                branch=branch,
-                commit=commit,
-                channel="stable",
-                tag=f"v{version}",
-            ),
-            "beta": _discovery_entry(
-                project_dir,
-                beta_artifact,
-                branch=branch,
-                commit=commit,
-                channel="beta",
-                tag="v4.1.99-beta",
-            ),
-        },
+        "channel": channel,
+        "update_discovery": default_discovery,
         "install_path": str(project_dir),
         "artifact_path": str(artifact),
         "artifact_sha256": "will-be-overwritten",
@@ -724,7 +735,7 @@ def test_release_readiness_requires_release_identity_and_public_distribution(tmp
         check_release_readiness(
             tmp_path,
             tag="v3.9.0",
-            channel="stable",
+            channel="legacy",
             branch="stable-3.x",
             receipt_path=receipt,
         )
@@ -738,7 +749,7 @@ def test_release_readiness_accepts_identity_and_public_distribution(tmp_path):
     result = check_release_readiness(
         tmp_path,
         tag="v3.9.0",
-        channel="stable",
+        channel="legacy",
         branch="stable-3.x",
         receipt_path=receipt,
     )
@@ -760,7 +771,7 @@ def test_release_readiness_rejects_stale_release_identity_commit(tmp_path):
         check_release_readiness(
             tmp_path,
             tag="v3.9.0",
-            channel="stable",
+            channel="legacy",
             branch="stable-3.x",
             receipt_path=receipt,
         )
@@ -782,7 +793,7 @@ def test_release_readiness_rejects_missing_docs_capability(tmp_path):
         check_release_readiness(
             tmp_path,
             tag="v3.9.0",
-            channel="stable",
+            channel="legacy",
             branch="stable-3.x",
             receipt_path=receipt,
         )
@@ -812,11 +823,11 @@ def test_release_readiness_rejects_wrong_discovery_tag_for_release_channel(tmp_p
         update_discovery={
             "stable": _discovery_entry(
                 tmp_path,
-                tmp_path / "dist" / "sweetclaude-3.99.0.tgz",
+                tmp_path / "dist" / "sweetclaude-4.99.0.tgz",
                 branch="beta-4.x",
                 commit=commit,
                 channel="stable",
-                tag="v3.99.0",
+                tag="v4.99.0",
             ),
             "beta": _discovery_entry(
                 tmp_path,
@@ -825,6 +836,14 @@ def test_release_readiness_rejects_wrong_discovery_tag_for_release_channel(tmp_p
                 commit=commit,
                 channel="beta",
                 tag="v4.1.99-beta",
+            ),
+            "legacy": _discovery_entry(
+                tmp_path,
+                tmp_path / "dist" / "sweetclaude-3.99.0.tgz",
+                branch="beta-4.x",
+                commit=commit,
+                channel="legacy",
+                tag="v3.99.0",
             ),
         },
     )
@@ -877,7 +896,7 @@ def test_release_readiness_rejects_off_project_artifact_path(tmp_path):
         check_release_readiness(
             tmp_path,
             tag="v3.9.0",
-            channel="stable",
+            channel="legacy",
             branch="stable-3.x",
             receipt_path=receipt,
         )

@@ -73,7 +73,7 @@ def _write_release_project(project_dir: Path, version: str) -> None:
         "artifact\n",
         encoding="utf-8",
     )
-    (project_dir / "dist" / "sweetclaude-3.99.0.tgz").write_text(
+    (project_dir / "dist" / "sweetclaude-4.99.0.tgz").write_text(
         "stable artifact\n",
         encoding="utf-8",
     )
@@ -81,13 +81,21 @@ def _write_release_project(project_dir: Path, version: str) -> None:
         "beta artifact\n",
         encoding="utf-8",
     )
+    (project_dir / "dist" / "sweetclaude-3.99.0.tgz").write_text(
+        "legacy artifact\n",
+        encoding="utf-8",
+    )
 
 
 def _write_release_receipt(project_dir: Path, tag: str, checks=None, status="pass") -> Path:
     checks = checks or REQUIRED_CHECKS
     version = tag.removeprefix("v")
-    channel = "beta" if "-" in version or version.startswith("4.") else "stable"
-    branch = "beta-4.x" if channel == "beta" else "stable-3.x"
+    if "-" in version:
+        channel, branch = "beta", "beta-4.x"
+    elif version.split(".", 1)[0] == "3":
+        channel, branch = "legacy", "stable-3.x"
+    else:
+        channel, branch = "stable", "main"
     commit = _current_test_commit(project_dir) or "abc123"
     check_entries = []
     for name in checks:
@@ -235,16 +243,6 @@ def _write_release_identity_receipt(
     commit: str,
 ) -> Path:
     artifact = project_dir / "dist" / f"sweetclaude-{version}.tgz"
-    stable_artifact = project_dir / "dist" / "sweetclaude-3.99.0.tgz"
-    if not stable_artifact.exists():
-        stable_artifact.write_text("stable artifact\n", encoding="utf-8")
-    beta_artifact = (
-        artifact
-        if channel == "beta"
-        else project_dir / "dist" / "sweetclaude-4.1.99-beta.tgz"
-    )
-    if not beta_artifact.exists():
-        beta_artifact.write_text("beta artifact\n", encoding="utf-8")
     build_receipt = _write_release_artifact_build_receipt(
         project_dir,
         artifact,
@@ -252,29 +250,39 @@ def _write_release_identity_receipt(
         commit=commit,
         tag=tag,
     )
-    stable_tag = tag if channel == "stable" else "v3.99.0"
-    stable_artifact_for_discovery = artifact if channel == "stable" else stable_artifact
-    stable_command = f"git ls-remote --tags origin {stable_tag}"
-    beta_tag = tag if channel == "beta" else "v4.1.99-beta"
-    beta_command = f"git ls-remote --tags origin {beta_tag}"
-    stable_execution = _write_update_discovery_execution_receipt(
-        project_dir,
-        stable_artifact_for_discovery,
-        branch=branch,
-        commit=commit,
-        channel="stable",
-        tag=stable_tag,
-        command=stable_command,
-    )
-    beta_execution = _write_update_discovery_execution_receipt(
-        project_dir,
-        beta_artifact,
-        branch=branch,
-        commit=commit,
-        channel="beta",
-        tag=beta_tag,
-        command=beta_command,
-    )
+    channel_defaults = {
+        "stable": ("v4.99.0", project_dir / "dist" / "sweetclaude-4.99.0.tgz"),
+        "beta": ("v4.1.99-beta", project_dir / "dist" / "sweetclaude-4.1.99-beta.tgz"),
+        "legacy": ("v3.99.0", project_dir / "dist" / "sweetclaude-3.99.0.tgz"),
+    }
+    update_discovery: dict[str, dict] = {}
+    for discovery_channel, (default_tag, default_artifact) in channel_defaults.items():
+        if discovery_channel == channel:
+            discovery_tag, discovery_artifact = tag, artifact
+        else:
+            discovery_tag, discovery_artifact = default_tag, default_artifact
+        if not discovery_artifact.exists():
+            discovery_artifact.write_text(f"{discovery_channel} artifact\n", encoding="utf-8")
+        command = f"git ls-remote --tags origin {discovery_tag}"
+        execution = _write_update_discovery_execution_receipt(
+            project_dir,
+            discovery_artifact,
+            branch=branch,
+            commit=commit,
+            channel=discovery_channel,
+            tag=discovery_tag,
+            command=command,
+        )
+        update_discovery[discovery_channel] = {
+            "channel": discovery_channel,
+            "tag": discovery_tag,
+            "artifact": str(discovery_artifact),
+            "artifact_sha256": hash_file(discovery_artifact),
+            "source": f"{discovery_channel} release discovery",
+            "command": command,
+            "last_run_result": "pass",
+            "execution_receipt_path": str(execution),
+        }
     return _write_control_receipt(
         project_dir / ".sweetclaude" / "state" / "evidence" / f"{tag}-release-identity.json",
         "release-identity",
@@ -286,28 +294,7 @@ def _write_release_identity_receipt(
         plugin_version=version,
         changelog_version=version,
         channel=channel,
-        update_discovery={
-            "stable": {
-                "channel": "stable",
-                "tag": stable_tag,
-                "artifact": str(stable_artifact_for_discovery),
-                "artifact_sha256": hash_file(stable_artifact_for_discovery),
-                "source": "stable release discovery",
-                "command": stable_command,
-                "last_run_result": "pass",
-                "execution_receipt_path": str(stable_execution),
-            },
-            "beta": {
-                "channel": "beta",
-                "tag": beta_tag,
-                "artifact": str(beta_artifact),
-                "artifact_sha256": hash_file(beta_artifact),
-                "source": "beta release discovery",
-                "command": beta_command,
-                "last_run_result": "pass",
-                "execution_receipt_path": str(beta_execution),
-            },
-        },
+        update_discovery=update_discovery,
         install_path=str(project_dir),
         artifact_path=str(artifact),
         artifact_sha256=hash_file(artifact),

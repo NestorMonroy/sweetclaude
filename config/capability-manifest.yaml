@@ -5,8 +5,8 @@ schema_version: 1
 
 channels:
   stable:
-    branch: stable-3.x
-    major_version: 3
+    branch: main
+    major_version: 4
     expected_marketplace: sweetclaude-stable
     prerelease_required: false
     prerelease_allowed: false
@@ -18,6 +18,13 @@ channels:
     prerelease_required: true
     prerelease_allowed: true
     minimum_safe_version: 4.1.9-beta
+
+  legacy:
+    branch: stable-3.x
+    major_version: 3
+    expected_marketplace: sweetclaude-legacy
+    prerelease_required: false
+    prerelease_allowed: false
 
 release:
   required_evidence_checks:
