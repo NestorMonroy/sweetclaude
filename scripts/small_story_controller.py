@@ -1008,7 +1008,76 @@ def _has_commits(project: Path) -> bool:
         return False
 
 
-def _check_init_preconditions(project: Path) -> dict[str, Any] | None:
+# Untracked files under these prefixes are init inputs (the frozen contract,
+# the backlog story, and controller-owned state init is about to write), not
+# unrelated in-progress work, so they do not trip the clean-tree gate.
+_INIT_INPUT_UNTRACKED_PREFIXES = (".sweetclaude/", "docs/product/")
+
+
+def _blocking_dirty_entries(porcelain: str) -> list[str]:
+    """Porcelain lines that count as a dirty tree, ignoring init-input untracked files."""
+    blocking: list[str] = []
+    for line in porcelain.splitlines():
+        if not line.strip():
+            continue
+        status = line[:2]
+        path = line[3:].strip().strip('"')
+        if status == "??" and path.startswith(_INIT_INPUT_UNTRACKED_PREFIXES):
+            continue
+        blocking.append(line)
+    return blocking
+
+
+def _slugify(text: str) -> str:
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", (text or "").lower())).strip("-")
+
+
+def _story_branch_name(project: Path, workflow_id: str) -> str:
+    slug = ""
+    backlog = find_backlog_file(project, workflow_id, exclude_done=True)
+    if backlog is not None:
+        stem = backlog.stem
+        remainder = stem[len(workflow_id):] if stem.lower().startswith(workflow_id.lower()) else stem
+        slug = _slugify(remainder)
+    wf_lower = workflow_id.lower()
+    return f"{wf_lower}/{slug}" if slug else f"story/{wf_lower}"
+
+
+def _create_story_branch(project: Path, workflow_id: str) -> dict[str, Any]:
+    """Create and switch to the story's dedicated branch off current HEAD.
+
+    Off-git projects are a silent no-op. If git operations fail we do not crash
+    init; we return a warning and leave the branch unchanged.
+    """
+    if not _is_git_repo(project):
+        return {}
+    name = _story_branch_name(project, workflow_id)
+    try:
+        r = subprocess.run(
+            ["git", "checkout", "-b", name],
+            cwd=str(project), capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0:
+            r2 = subprocess.run(
+                ["git", "checkout", name],
+                cwd=str(project), capture_output=True, text=True, timeout=10,
+            )
+            if r2.returncode != 0:
+                return {
+                    "branch": None,
+                    "branch_warning": (
+                        f"could not create or switch to story branch '{name}': "
+                        f"{(r.stderr or r2.stderr).strip()}"
+                    ),
+                }
+        return {"branch": name}
+    except Exception as exc:  # noqa: BLE001 - init must not crash on git failure
+        return {"branch": None, "branch_warning": f"branch creation failed: {exc}"}
+
+
+def _check_init_preconditions(
+    project: Path, *, workflow_id: str | None = None
+) -> dict[str, Any] | None:
     if not _is_git_repo(project):
         return None
 
@@ -1027,7 +1096,10 @@ def _check_init_preconditions(project: Path) -> dict[str, Any] | None:
         return None
 
     main_branch = _detect_main_branch(project)
-    if not current_branch or current_branch != main_branch:
+    # Re-init of an existing workflow legitimately runs from that workflow's own
+    # dedicated story branch (ISSUE-222 switches off trunk at init), so tolerate it.
+    story_branch = _story_branch_name(project, workflow_id) if workflow_id else None
+    if not current_branch or (current_branch != main_branch and current_branch != story_branch):
         display = current_branch if current_branch and current_branch != "HEAD" else "(detached)"
         return _failure(
             "blocked_not_on_main",
@@ -1040,10 +1112,10 @@ def _check_init_preconditions(project: Path) -> dict[str, Any] | None:
 
     try:
         r = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "-uall"],
             cwd=str(project), capture_output=True, text=True, timeout=10,
         )
-        if r.returncode == 0 and r.stdout.strip():
+        if r.returncode == 0 and _blocking_dirty_entries(r.stdout):
             return _failure(
                 "blocked_dirty_tree",
                 "Small-story init is blocked: working tree has uncommitted changes. "
@@ -1100,18 +1172,24 @@ def init_workflow(
             f"{VALID_ID_RE.pattern} (no path separators or traversal).",
         )
     project = Path(project_dir).expanduser().resolve(strict=False)
-    precondition_failure = _check_init_preconditions(project)
+    precondition_failure = _check_init_preconditions(project, workflow_id=workflow_id)
     if precondition_failure is not None:
         return precondition_failure
     if find_backlog_file(project, workflow_id, exclude_done=True) is None:
-        return _failure(
-            "blocked_init_no_story",
-            f"Small-story init is blocked: no backlog file found for {workflow_id}. "
-            "A backlog item must exist before a workflow can start. "
-            "Create one by: (1) interview — walk through a structured intake, "
-            "(2) point to a file — seed from an existing spec or scratch note, "
-            "(3) search for WIP — scan scratch/, .sweetclaude/work/, and feature branches.",
-        )
+        return {
+            **_failure(
+                "needs_story_creation",
+                f"Small-story init is paused: no backlog file exists for {workflow_id} yet. "
+                "This is not a dead-end — init will RESUME once the story is created. "
+                "Route the user through story creation now by one of: "
+                "(1) interview — walk through a structured intake, "
+                "(2) point to a file — seed from an existing spec or scratch note, "
+                "(3) search for WIP — scan scratch/, .sweetclaude/work/, and feature branches. "
+                f"Once the story exists, re-run init with the same workflow_id ({workflow_id}) to resume.",
+            ),
+            "resume_after_story_creation": True,
+            "workflow_id": workflow_id,
+        }
     existing = [
         (existing_id, state)
         for existing_id, state in _active_small_story_workflows(project)
@@ -1162,6 +1240,7 @@ def init_workflow(
     )
     _sync_phase_yaml(project, workflow_id, "DEFINE")
     _sync_sweetclaude_yaml_active(project, workflow_id, "DEFINE")
+    branch_info = _create_story_branch(project, workflow_id)
     return {
         "ok": True,
         "status": "define",
@@ -1171,6 +1250,7 @@ def init_workflow(
         "success_criteria_ledger_path": str(CANONICAL_LEDGER_REL),
         "next_allowed_stage": "design",
         "message": "Small-story workflow state initialized by controller.",
+        **branch_info,
     }
 
 

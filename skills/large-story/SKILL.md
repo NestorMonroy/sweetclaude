@@ -102,6 +102,23 @@ entered them into the ledger.
    `python3 scripts/large_story_controller.py init --workflow-id {workflow_id}`.
    Do not write the workflow state file yourself.
 
+   **`init` runs on trunk and creates the story branch.** In a git repo, `init`
+   writes controller state and then **automatically creates and switches to the
+   story's dedicated branch** (ISSUE-222) off trunk's HEAD — you never run a
+   workflow on trunk. The branch name is returned in the init result under
+   `branch`; do DESIGN..SHIP on it. Off-git projects skip branch creation
+   silently. Do not create the branch yourself — init owns it.
+
+   **No-story signal — route and resume (never dead-end).** If `init` returns
+   `code: "needs_story_creation"` (with `resume_after_story_creation: true`), no
+   backlog story exists for `{workflow_id}` yet. Do NOT proceed storyless and do
+   NOT auto-invent a story. Route the user through creation via one of:
+   (1) interview — a structured intake, (2) point to a file — seed from an
+   existing spec or scratch note, (3) search for WIP — scan `scratch/`,
+   `.sweetclaude/work/`, and feature branches. Once the real story exists,
+   **resume by re-running `init` with the same `{workflow_id}`.** The workflow
+   only continues once init succeeds against a real story.
+
 After `init`, the contract is frozen and human-gated: any attempt to edit it
 raises an approval prompt that only the user can answer, in every permission
 mode. If the user approves an amendment, re-run

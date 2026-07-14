@@ -894,11 +894,14 @@ def test_gate_ignores_small_story_workflow(tmp_path):
 
 
 def test_init_workflow_fails_without_backlog_file(tmp_path):
-    """ISSUE-215 regression: init must refuse if no backlog file exists."""
+    """ISSUE-215 + ISSUE-223: init must not proceed storyless. ISSUE-223
+    supersedes bare refusal with a resumable route-and-resume signal — but the
+    phantom-workflow invariant still holds: no workflow state is written."""
     project = tmp_path
     _write_contract(project, _contract("PHANTOM-001"))
     result = init_workflow(project_dir=project, workflow_id="PHANTOM-001")
     assert result["ok"] is False
-    assert result["code"] == "blocked_init_no_story"
+    assert result["code"] == "needs_story_creation"
+    assert result.get("resume_after_story_creation") is True
     wf_path = project / ".sweetclaude" / "state" / "workflows" / "PHANTOM-001.yaml"
     assert not wf_path.exists(), "No workflow state should be written without a backlog story"
