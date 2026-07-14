@@ -91,7 +91,7 @@ def test_inspect_detects_stable_channel_from_stable_marketplace(tmp_path):
     result = plugin_state.inspect_state(tmp_path, None, None)
 
     assert result["channel"] == "stable"
-    assert result["expected_ref"] == "stable-3.x"
+    assert result["expected_ref"] == "main"
     assert result["expected_marketplace"] == "sweetclaude-stable"
 
 

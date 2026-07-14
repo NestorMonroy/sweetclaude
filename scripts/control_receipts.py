@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from maintenance.capability_manifest import load_manifest
+
 
 PASS_RESULTS = {"pass", "passed", "ok", "success", "judgment_pass"}
 CONTROL_LINT_RECEIPT_TYPE = "control-lint"
@@ -1443,26 +1445,29 @@ def validate_release_identity_receipt(
     update_discovery = receipt.get("update_discovery")
     if not isinstance(update_discovery, dict):
         raise ValueError("Release identity receipt update_discovery must be an object")
-    stable = _require_discovery_entry(update_discovery, "stable")
-    beta = _require_discovery_entry(update_discovery, "beta")
-    for channel, entry in (("stable", stable), ("beta", beta)):
+    manifest_channels = load_manifest().get("channels") or {}
+    for channel, channel_facts in manifest_channels.items():
+        entry = _require_discovery_entry(update_discovery, channel)
         validate_update_discovery_execution_receipt(
             _resolve_receipt_path(receipt, entry["execution_receipt_path"]),
             expected_context=expected_context,
             expected_discovery=entry,
         )
-    stable_major, stable_prerelease = _parse_semver_tag(
-        stable["tag"],
-        context="Release identity receipt stable update discovery",
-    )
-    beta_major, beta_prerelease = _parse_semver_tag(
-        beta["tag"],
-        context="Release identity receipt beta update discovery",
-    )
-    if stable["channel"] != "stable" or stable_major != 3 or stable_prerelease:
-        raise ValueError("Release identity receipt stable update discovery routes to beta")
-    if beta["channel"] != "beta" or beta_major != 4 or not beta_prerelease:
-        raise ValueError("Release identity receipt beta update discovery must route to beta")
+        expected_major = int(channel_facts["major_version"])
+        prerelease_required = bool(channel_facts.get("prerelease_required"))
+        major, prerelease = _parse_semver_tag(
+            entry["tag"],
+            context=f"Release identity receipt {channel} update discovery",
+        )
+        if (
+            entry["channel"] != channel
+            or major != expected_major
+            or prerelease != prerelease_required
+        ):
+            raise ValueError(
+                f"Release identity receipt {channel} update discovery "
+                f"does not match the {channel} channel contract"
+            )
 
     if expected_identity:
         for field, expected in expected_identity.items():
@@ -1477,7 +1482,7 @@ def validate_release_identity_receipt(
         expected_channel = str(expected_identity.get("channel", "")).strip()
         expected_tag = str(expected_identity.get("tag", "")).strip()
         expected_artifact = expected_identity.get("artifact_path")
-        if expected_channel in {"stable", "beta"}:
+        if expected_channel in manifest_channels:
             channel_entry = update_discovery[expected_channel]
             if channel_entry["tag"] != expected_tag:
                 raise ValueError(
@@ -1501,7 +1506,7 @@ def validate_release_identity_receipt(
                 "Release identity artifact hash mismatch: "
                 f"expected {receipt['artifact_sha256']}, got {actual}"
             )
-        for channel in ("stable", "beta"):
+        for channel in manifest_channels:
             entry = update_discovery[channel]
             discovery_artifact = _resolve_receipt_path(receipt, str(entry["artifact"]))
             discovery_actual = hash_file(discovery_artifact)

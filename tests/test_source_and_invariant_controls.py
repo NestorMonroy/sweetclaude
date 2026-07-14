@@ -116,12 +116,16 @@ def _write_release_project(project_dir: Path, version: str = "3.9.0") -> None:
         "artifact\n",
         encoding="utf-8",
     )
-    (project_dir / "dist" / "sweetclaude-3.99.0.tgz").write_text(
+    (project_dir / "dist" / "sweetclaude-4.99.0.tgz").write_text(
         "stable artifact\n",
         encoding="utf-8",
     )
     (project_dir / "dist" / "sweetclaude-4.1.99-beta.tgz").write_text(
         "beta artifact\n",
+        encoding="utf-8",
+    )
+    (project_dir / "dist" / "sweetclaude-3.99.0.tgz").write_text(
+        "legacy artifact\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "-C", str(project_dir), "init"], check=True, capture_output=True, text=True)
@@ -249,8 +253,6 @@ def _write_release_identity_receipt(
 ) -> Path:
     commit = _current_test_commit(project_dir) or "abc123"
     artifact = project_dir / "dist" / f"sweetclaude-{version}.tgz"
-    beta_artifact = project_dir / "dist" / "sweetclaude-4.1.99-beta.tgz"
-    beta_artifact.write_text("beta artifact\n", encoding="utf-8")
     build_receipt = _write_release_artifact_build_receipt(
         project_dir,
         artifact,
@@ -258,10 +260,27 @@ def _write_release_identity_receipt(
         commit=commit,
         tag=tag,
     )
-    stable_artifact = (
-        artifact if channel == "stable" else project_dir / "dist" / "sweetclaude-3.99.0.tgz"
-    )
-    stable_tag = tag if channel == "stable" else "v3.99.0"
+    channel_defaults = {
+        "stable": ("v4.99.0", project_dir / "dist" / "sweetclaude-4.99.0.tgz"),
+        "beta": ("v4.1.99-beta", project_dir / "dist" / "sweetclaude-4.1.99-beta.tgz"),
+        "legacy": ("v3.99.0", project_dir / "dist" / "sweetclaude-3.99.0.tgz"),
+    }
+    update_discovery: dict[str, dict] = {}
+    for discovery_channel, (default_tag, default_artifact) in channel_defaults.items():
+        if discovery_channel == channel:
+            discovery_tag, discovery_artifact = tag, artifact
+        else:
+            discovery_tag, discovery_artifact = default_tag, default_artifact
+        if not discovery_artifact.exists():
+            discovery_artifact.write_text(f"{discovery_channel} artifact\n", encoding="utf-8")
+        update_discovery[discovery_channel] = _discovery_entry(
+            project_dir,
+            discovery_artifact,
+            branch=branch,
+            commit=commit,
+            channel=discovery_channel,
+            tag=discovery_tag,
+        )
     return _write_control_receipt(
         project_dir / ".sweetclaude" / "state" / "evidence" / f"{tag}-release-identity.json",
         "release-identity",
@@ -273,24 +292,7 @@ def _write_release_identity_receipt(
         plugin_version=version,
         changelog_version=version,
         channel=channel,
-        update_discovery={
-            "stable": _discovery_entry(
-                project_dir,
-                stable_artifact,
-                branch=branch,
-                commit=commit,
-                channel="stable",
-                tag=stable_tag,
-            ),
-            "beta": _discovery_entry(
-                project_dir,
-                beta_artifact,
-                branch=branch,
-                commit=commit,
-                channel="beta",
-                tag="v4.1.99-beta",
-            ),
-        },
+        update_discovery=update_discovery,
         install_path=str(project_dir),
         artifact_path=str(artifact),
         artifact_sha256=hash_file(artifact),
@@ -431,8 +433,12 @@ def _write_release_receipt(
     risk_severity: str | None = None,
 ) -> Path:
     version = tag.removeprefix("v")
-    channel = "beta" if "-" in version or version.startswith("4.") else "stable"
-    branch = "beta-4.x" if channel == "beta" else "stable-3.x"
+    if "-" in version:
+        channel, branch = "beta", "beta-4.x"
+    elif version.split(".", 1)[0] == "3":
+        channel, branch = "legacy", "stable-3.x"
+    else:
+        channel, branch = "stable", "main"
     release_checks = checks or [
         {
             "name": name,
@@ -608,7 +614,7 @@ def test_t014_release_rejects_contract_claim_without_executable_evidence(tmp_pat
         check_release_readiness(
             tmp_path,
             tag="v3.9.0",
-            channel="stable",
+            channel="legacy",
             branch="stable-3.x",
             receipt_path=receipt,
         )
@@ -648,7 +654,7 @@ def test_t014_release_accepts_contract_claim_with_executable_evidence(tmp_path):
     result = check_release_readiness(
         tmp_path,
         tag="v3.9.0",
-        channel="stable",
+        channel="legacy",
         branch="stable-3.x",
         receipt_path=receipt,
     )
@@ -664,7 +670,7 @@ def test_t015_high_critical_release_requires_invariant_check(tmp_path):
         check_release_readiness(
             tmp_path,
             tag="v3.9.0",
-            channel="stable",
+            channel="legacy",
             branch="stable-3.x",
             receipt_path=receipt,
         )
@@ -709,7 +715,7 @@ def test_t015_release_accepts_invariant_claim_with_executable_evidence(tmp_path)
     result = check_release_readiness(
         tmp_path,
         tag="v3.9.0",
-        channel="stable",
+        channel="legacy",
         branch="stable-3.x",
         receipt_path=receipt,
     )
@@ -748,7 +754,7 @@ def test_t016_release_rejects_vague_exemption_for_missing_evidence(tmp_path):
         check_release_readiness(
             tmp_path,
             tag="v3.9.0",
-            channel="stable",
+            channel="legacy",
             branch="stable-3.x",
             receipt_path=receipt,
         )
@@ -789,7 +795,7 @@ def test_t016_release_rejects_expired_high_critical_exemption(tmp_path):
         check_release_readiness(
             tmp_path,
             tag="v3.9.0",
-            channel="stable",
+            channel="legacy",
             branch="stable-3.x",
             receipt_path=receipt,
         )
@@ -834,7 +840,7 @@ def test_t016_release_accepts_valid_high_critical_exemption(tmp_path):
     result = check_release_readiness(
         tmp_path,
         tag="v3.9.0",
-        channel="stable",
+        channel="legacy",
         branch="stable-3.x",
         receipt_path=receipt,
     )
