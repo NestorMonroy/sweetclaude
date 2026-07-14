@@ -180,6 +180,11 @@ Feature: Doctor config_compat checks
     Then the result contains at least 1 finding with id prefix "config-compat:W3"
     And the first W3 finding has severity "warning"
 
+  Scenario: A negated skip-tests prohibition is not flagged (ISSUE-240)
+    Given CLAUDE.md contains the text "never skip tests to ship faster"
+    When check_config_compat runs against the project state
+    Then the result contains no finding with id prefix "config-compat:W3"
+
   # --- W4: skip-confirmation instructions ---
 
   Scenario: CLAUDE.md containing "proceed without asking" produces W4 warning
