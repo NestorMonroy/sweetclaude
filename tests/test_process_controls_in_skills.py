@@ -94,7 +94,7 @@ def test_large_story_4x_canonical_entrypoint_is_large_story_skill():
     go = _read("skills/go/SKILL.md")
     large_story = _read("skills/large-story/SKILL.md")
     john_wick = _read("skills/john-wick/SKILL.md")
-    skills_reference = _read("docs/user-guide/4.x-beta/skills-reference.md")
+    skills_reference = _read("docs/user-guide/skills-reference.md")
     find_skill_routes = _read("skills/find-skill/routing-tables.md")
 
     assert "Users start complete large/high-rigor story workflows through `/sweetclaude:go`" in process_controls

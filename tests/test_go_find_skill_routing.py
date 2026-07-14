@@ -48,7 +48,7 @@ def test_large_story_is_not_publicly_invocable():
 
 
 def test_large_story_removed_from_public_skills_reference():
-    text = _read("docs/user-guide/4.x-beta/skills-reference.md")
+    text = _read("docs/user-guide/skills-reference.md")
 
     assert "| **Large Story** |" not in text
     assert "`/sweetclaude:large-story`" not in text

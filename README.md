@@ -2,7 +2,7 @@
 
 # SweetClaude
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.4.1--beta-blue)](https://github.com/carson-sweet/sweetclaude/releases/tag/v4.4.1-beta) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/4.x-beta/behavioral-contracts.md)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.4.1--beta-blue)](https://github.com/carson-sweet/sweetclaude/releases/tag/v4.4.1-beta) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/behavioral-contracts.md)
 
 ## TL;DR
 
@@ -13,7 +13,7 @@ Start Claude Code and run:
 /sweetclaude:help
 ```
 
-**Beta safety note:** 4.x beta releases before `v4.1.9-beta` had known update/recovery risks. Do not install old beta tags on active projects. Use the current `beta-4.x` channel, and see [4.x Beta Rescue](docs/user-guide/4.x-beta/beta-rescue.md) if an existing beta install reports `4.1.8-beta` or older.
+**Beta safety note:** 4.x beta releases before `v4.1.9-beta` had known update/recovery risks. Do not install old beta tags on active projects. Use the current `beta-4.x` channel, and see [4.x Beta Rescue](docs/user-guide/beta-rescue.md) if an existing beta install reports `4.1.8-beta` or older.
 
 To intentionally install the 4.x beta channel, add and install the beta plugin channel explicitly. Do not use `/sweetclaude:update` to move a stable 3.x install onto beta.
 
@@ -92,13 +92,13 @@ A few other key commands to know about are:
 
 We've tried to design SweetClaude to be intuitive, but additional documentation is available if needed or desired:
 
-→ [Stable 3.x install, update, and uninstall](docs/user-guide/3.x/install.md)
+→ [Stable 3.x install, update, and uninstall](https://github.com/carson-sweet/sweetclaude/blob/stable-3.x/docs/user-guide/install.md)
 
-→ [4.x beta guide, update, migration, and rescue](docs/user-guide/4.x-beta/index.md)
+→ [4.x guide, update, migration, and rescue](docs/user-guide/index.md)
 
 → [Choose the right user-guide track](docs/user-guide/index.md)
 
-→ [First stable session walkthrough](docs/user-guide/3.x/quickstart.md)
+→ [First stable session walkthrough](https://github.com/carson-sweet/sweetclaude/blob/stable-3.x/docs/user-guide/quickstart.md)
 
 → [Full skills reference by track](docs/user-guide/index.md)
 
@@ -174,12 +174,12 @@ You can invoke skills directly if you know what you want. These are the most com
 | `/sweetclaude:update` | Sync SweetClaude framework files inside the installed channel |
 | `/sweetclaude:doctor` | Diagnostic scan and maintenance front door |
 | `/sweetclaude:recover` | Recover stuck update, doctor, repair, or unsafe migration states |
-| `/sweetclaude:hook-repair` | Restore broken installed hooks from backup. Uses Bash only — works when Write/Edit are blocked. See [hook-development.md](docs/user-guide/4.x-beta/hook-development.md) for manual and emergency procedures. |
+| `/sweetclaude:hook-repair` | Restore broken installed hooks from backup. Uses Bash only — works when Write/Edit are blocked. See [hook-development.md](docs/user-guide/hook-development.md) for manual and emergency procedures. |
 
 ### Advanced
 | Command | What it does |
 |---|---|
-| `/sweetclaude:behavioral-regression` | Run the 15-contract behavioral test suite — validates that the current model version honors SweetClaude's behavioral contracts. Run after any Claude model upgrade. **15/15 passing on claude-sonnet-4-6 (2026-05-01).** [Contract status by model version →](docs/user-guide/4.x-beta/behavioral-contracts.md) · [Full contract list →](skills/behavioral-regression/SKILL.md) |
+| `/sweetclaude:behavioral-regression` | Run the 15-contract behavioral test suite — validates that the current model version honors SweetClaude's behavioral contracts. Run after any Claude model upgrade. **15/15 passing on claude-sonnet-4-6 (2026-05-01).** [Contract status by model version →](docs/user-guide/behavioral-contracts.md) · [Full contract list →](skills/behavioral-regression/SKILL.md) |
 | `/sweetclaude:guardian-on` | Enable Protocol Guardian — enforces skill invocations and protocol steps for the session |
 | `/sweetclaude:guardian-off` | Disable Protocol Guardian |
 | `/sweetclaude:session-export` | Export a Claude.ai session as a structured document |
@@ -197,7 +197,7 @@ Individual workflow skills (product, design, code, testing, corpus) are accessib
 |---|---|---|---|
 | [mcp-local-rag](https://www.npmjs.com/package/mcp-local-rag) | MIT | Optional | Local semantic search — per-project vector index, no external services |
 
-For dependency risk, failure modes, and contingency plans → [Platform Dependencies](docs/user-guide/4.x-beta/platform-dependencies.md)
+For dependency risk, failure modes, and contingency plans → [Platform Dependencies](docs/user-guide/platform-dependencies.md)
 
 
 

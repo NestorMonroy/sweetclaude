@@ -10,9 +10,9 @@ Stable 3.x is the recommended channel for normal active project work.
 
 | Item | Link |
 |---|---|
-| User guide index | [3.x Stable User Guide](user-guide/3.x/index.md) |
-| Install and update | [3.x Install](user-guide/3.x/install.md) |
-| How it works | [3.x How It Works](user-guide/3.x/how-it-works.md) |
+| User guide index | [3.x Stable User Guide (stable-3.x branch)](https://github.com/carson-sweet/sweetclaude/blob/stable-3.x/docs/user-guide/index.md) |
+| Install and update | [3.x Install (stable-3.x branch)](https://github.com/carson-sweet/sweetclaude/blob/stable-3.x/docs/user-guide/install.md) |
+| How it works | [3.x How It Works (stable-3.x branch)](https://github.com/carson-sweet/sweetclaude/blob/stable-3.x/docs/user-guide/how-it-works.md) |
 | Changelog | [Stable 3.x changelog notes](../CHANGELOG.md#stable-3x-channel--current-3686) |
 
 Stable 3.x uses:
@@ -33,11 +33,11 @@ taxonomy model.
 
 | Item | Link |
 |---|---|
-| User guide index | [4.x Beta User Guide](user-guide/4.x-beta/index.md) |
-| Install and update | [4.x Beta Install](user-guide/4.x-beta/install.md) |
-| How it works | [4.x Beta How It Works](user-guide/4.x-beta/how-it-works.md) |
-| Migration and recovery | [4.x Migration and Recovery](user-guide/4.x-beta/migration-and-recovery.md) |
-| Rescue guide | [4.x Beta Rescue](user-guide/4.x-beta/beta-rescue.md) |
+| User guide index | [4.x Beta User Guide](user-guide/index.md) |
+| Install and update | [4.x Beta Install](user-guide/install.md) |
+| How it works | [4.x Beta How It Works](user-guide/how-it-works.md) |
+| Migration and recovery | [4.x Migration and Recovery](user-guide/migration-and-recovery.md) |
+| Rescue guide | [4.x Beta Rescue](user-guide/beta-rescue.md) |
 | Changelog | [4.x beta release history](../CHANGELOG.md#4112-beta--2026-05-25) |
 
 4.x beta uses:
