@@ -102,14 +102,24 @@ entered them into the ledger.
    `python3 scripts/small_story_controller.py init --workflow-id {workflow_id}`.
    Do not write the workflow state file yourself.
 
-   **`init` must run on the trunk branch with a clean working tree.** Freeze and
-   commit the contract on trunk *first*, then run `init` on trunk. It writes the
-   uncommitted controller state (`.sweetclaude/state/workflows/{workflow_id}.yaml`).
-   Only **after** `init` do you create the implementation branch
-   (`git checkout -b feat/{workflow_id}-<slug>`) — the new branch carries that
-   uncommitted state forward, and you do DESIGN..SHIP on it, merging back with
-   `--no-ff`. Branching *before* `init` forces a cherry-pick/rebranch recovery
-   cycle, because `init` refuses to run off-trunk or on a dirty tree.
+   **`init` must run on the trunk branch.** Freeze and commit the contract on
+   trunk *first*, then run `init` on trunk. `init` writes the uncommitted
+   controller state (`.sweetclaude/state/workflows/{workflow_id}.yaml`) and then,
+   in a git repo, **automatically creates and switches to the story's dedicated
+   branch** (ISSUE-222) off trunk's HEAD — you never run a workflow on trunk. The
+   created branch name is returned in the init result under `branch`; do
+   DESIGN..SHIP on it and merge back with `--no-ff`. Off-git projects skip branch
+   creation silently. Do not create the branch yourself — init owns it.
+
+   **No-story signal — route and resume (never dead-end).** If `init` returns
+   `code: "needs_story_creation"` (with `resume_after_story_creation: true`), no
+   backlog story exists for `{workflow_id}` yet. Do NOT proceed storyless and do
+   NOT auto-invent a story. Route the user through creation via one of:
+   (1) interview — a structured intake, (2) point to a file — seed from an
+   existing spec or scratch note, (3) search for WIP — scan `scratch/`,
+   `.sweetclaude/work/`, and feature branches. Once the real story exists,
+   **resume by re-running `init` with the same `{workflow_id}`.** The workflow
+   only continues once init succeeds against a real story.
 
 After `init`, the contract is frozen and human-gated: any attempt to edit it
 raises an approval prompt that only the user can answer, in every permission
