@@ -1152,6 +1152,17 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
     i2_patterns = [r"propose don't ask", r"give recommendation with reasoning",
                    r"propose not ask"]
 
+    _negation_re = re.compile(r"\b(?:never|don't|do not|avoid|no)\b")
+
+    def _is_negated(text_lower: str, match_start: int) -> bool:
+        line_start = text_lower.rfind("\n", 0, match_start) + 1
+        window_start = line_start
+        for term in ".!?;:":
+            pos = text_lower.rfind(term, line_start, match_start)
+            if pos + 1 > window_start:
+                window_start = pos + 1
+        return _negation_re.search(text_lower, window_start, match_start) is not None
+
     def _scan_text(code: str, patterns: list[str], source: str) -> list[str]:
         matched = []
         lower = source.lower()
@@ -1159,8 +1170,11 @@ def check_config_compat(state: ProjectState) -> list[Finding]:
             return []
         text_lower = code.lower()
         for pat in patterns:
-            if pat.lower() in text_lower:
-                matched.append(pat)
+            pat_lower = pat.lower()
+            for m in re.finditer(re.escape(pat_lower), text_lower):
+                if not _is_negated(text_lower, m.start()):
+                    matched.append(pat)
+                    break
         return matched
 
     for src_name, src_content, src_path in _text_sources:
