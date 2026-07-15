@@ -77,3 +77,25 @@ def test_marketplace_name_ref_pair_is_manifest_consistent():
         f"marketplace name {name!r} does not match channel for ref {ref!r} "
         f"(expected {by_branch[ref]!r})"
     )
+
+
+def test_changelog_fallback_reads_top_section(tmp_path):
+    """ISSUE-246: a shallow clone can't compute a git range, so update notes
+    must fall back to the top CHANGELOG.md section instead of showing blank."""
+    import update as u
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n---\n\n"
+        "## [4.5.2] — 2026-07-16 (stable channel)\n\n"
+        "Latest stable notes.\n\n"
+        "---\n\n## [4.5.1] — 2026-07-15\n\nolder.\n",
+        encoding="utf-8",
+    )
+    out = u._top_changelog_section(str(tmp_path))
+    assert "4.5.2" in out
+    assert "Latest stable notes" in out
+    assert "4.5.1" not in out  # only the top section
+
+
+def test_changelog_fallback_empty_when_no_file(tmp_path):
+    import update as u
+    assert u._top_changelog_section(str(tmp_path)) == ""
