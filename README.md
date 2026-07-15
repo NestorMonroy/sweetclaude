@@ -2,7 +2,7 @@
 
 # SweetClaude
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.5.0-blue)](https://github.com/carson-sweet/sweetclaude/releases/tag/v4.5.0) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/behavioral-contracts.md)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.5.1-blue)](https://github.com/carson-sweet/sweetclaude/releases/tag/v4.5.1) [![Behavioral Contracts](https://img.shields.io/badge/behavioral_contracts-15%2F15_passing-brightgreen)](docs/user-guide/behavioral-contracts.md)
 
 ## TL;DR
 
@@ -62,18 +62,31 @@ For the 4.x beta channel, add and install the beta plugin channel explicitly. Do
 /plugin install sweetclaude@sweetclaude-beta
 ```
 
-For an existing beta install, update the plugin package first and restart Claude Code before running `/sweetclaude:update`:
-
-```
-/plugin update sweetclaude@sweetclaude-beta
-```
-
-**Upgrading from 3.x:** The stable channel now tracks the 4.x line on `main`. To switch a 3.x install, re-add the stable marketplace and reinstall, then let SweetClaude migrate your project data:
+**Moving from the beta channel to stable (recommended):** the beta channel is being retired. Switch in this order so you are never double-installed (both channels' skills and hooks would load at once):
 
 ```
 /plugin marketplace add carson-sweet/sweetclaude@main
 /plugin install sweetclaude@sweetclaude-stable
+/plugin marketplace remove sweetclaude-beta
+```
+
+Removing the beta marketplace uninstalls its plugin, so add and install stable first. Then run `/sweetclaude:update` on the stable channel.
+
+**Upgrading from 3.x:** The stable channel now tracks the 4.x line on `main`, and the 3.x channel has been renamed to `sweetclaude-legacy`. To move a 3.x install onto 4.x:
+
+```
+/plugin marketplace add carson-sweet/sweetclaude@main
+/plugin install sweetclaude@sweetclaude-stable
+/plugin marketplace remove sweetclaude-stable
 /sweetclaude:update
+```
+
+To stay on 3.x, re-add the renamed legacy marketplace (a one-time step — the marketplace name changed):
+
+```
+/plugin marketplace remove sweetclaude-stable
+/plugin marketplace add carson-sweet/sweetclaude@stable-3.x
+/plugin install sweetclaude@sweetclaude-legacy
 ```
 
 Once install is complete, run:
