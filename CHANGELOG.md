@@ -4,6 +4,33 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.5.1] — 2026-07-15 (stable channel)
+
+### Fixed — stable channel is now installable
+
+The 4.5.0 promotion updated the release machinery but not the plugin
+marketplace definition, so `/plugin marketplace add …@main` registered a
+beta-named marketplace and the documented stable install did not resolve to
+the 4.x line. The `main` marketplace is now `sweetclaude-stable` tracking the
+4.x line, and the 3.x channel is renamed to `sweetclaude-legacy`. Install and
+channel-switch instructions are corrected in the README.
+
+### Added — beta-to-stable migration nudge
+
+Running `/sweetclaude:update` on the beta channel now detects that a stable
+release exists, notes that the beta channel is being retired, and prints the
+one-time switch — ordered so the beta plugin is removed only after stable is
+installed, avoiding a double-install.
+
+### Note for 3.x users
+
+The 3.x marketplace name changed from `sweetclaude-stable` to
+`sweetclaude-legacy`. Existing 3.x installs need a one-time re-add (remove the
+old marketplace, add `@stable-3.x`, reinstall `sweetclaude-legacy`) — see the
+README. No 3.x functionality changed.
+
+---
+
 ## [4.5.0] — 2026-07-15 (stable channel)
 
 The first stable 4.x release. SweetClaude 4.x, in beta since May, is promoted to

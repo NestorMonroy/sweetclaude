@@ -56,3 +56,24 @@ def test_update_skill_surfaces_beta_migration():
     assert "beta_stable_migration_notice" in skill or "beta-migration" in skill, (
         "update SKILL.md must surface the beta->stable migration notice"
     )
+
+
+def test_marketplace_name_ref_pair_is_manifest_consistent():
+    """ISSUE-245: a branch's marketplace.json (name, ref) must be a consistent
+    channel pair per the capability manifest — the promotion merge left main
+    carrying the beta channel's definition. Branch-agnostic: whatever ref this
+    branch's file pins, its name must match that channel's expected_marketplace."""
+    import json, sys
+    root = Path(__file__).parents[1]
+    sys.path.insert(0, str(root / "scripts"))
+    from maintenance.capability_manifest import load_manifest
+    mp = json.loads((root / ".claude-plugin" / "marketplace.json").read_text())
+    name = mp["name"]
+    ref = mp["plugins"][0]["source"]["ref"]
+    channels = load_manifest(root / "config" / "capability-manifest.yaml")["channels"]
+    by_branch = {c["branch"]: c["expected_marketplace"] for c in channels.values()}
+    assert ref in by_branch, f"marketplace ref {ref!r} is not a known channel branch"
+    assert name == by_branch[ref], (
+        f"marketplace name {name!r} does not match channel for ref {ref!r} "
+        f"(expected {by_branch[ref]!r})"
+    )
