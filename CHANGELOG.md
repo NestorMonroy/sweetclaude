@@ -22,6 +22,19 @@ release exists, notes that the beta channel is being retired, and prints the
 one-time switch — ordered so the beta plugin is removed only after stable is
 installed, avoiding a double-install.
 
+### Fixed — update never shows a blank changelog
+
+`/sweetclaude:update` clones shallow, so it couldn't always compute the commit
+range and showed no update notes (which read like an error). It now falls back
+to the top CHANGELOG.md section, so an update always shows human-readable notes.
+
+### Fixed — release closeout counts only delivered issues
+
+The release closeout gate matched every issue ID in a commit's subject and
+body, so an issue merely mentioned as related/future work in a commit body
+could block a release. It now counts only subject-line refs — the delivered
+work — not passing mentions.
+
 ### Note for 3.x users
 
 The 3.x marketplace name changed from `sweetclaude-stable` to
