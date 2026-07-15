@@ -4,6 +4,72 @@ All notable changes to SweetClaude are documented here. SweetClaude has separate
 
 ---
 
+## [4.5.0] — 2026-07-15 (stable channel)
+
+The first stable 4.x release. SweetClaude 4.x, in beta since May, is promoted to
+the stable channel, which now tracks the 4.x line on `main`. Existing 3.x
+installs continue to work; to move to 4.x, re-add the stable marketplace and
+reinstall, then let SweetClaude migrate your project data. The full set of
+non-development skills — product discovery, personas, competitive analysis,
+roadmaps, document corpus, and the rest — ships in the stable release
+unchanged.
+
+### Added — stable channel on main
+
+The release system now recognizes a stable 4.x channel served from `main`, a
+3.x `legacy` channel on `stable-3.x`, and the existing beta channel. The
+release gate validates channel, branch, and version alignment from the
+capability manifest rather than hardcoded assumptions.
+
+### Added — continuous integration on pull requests
+
+The full test suite runs on every pull request into a release branch, with
+SHA-pinned actions and least-privilege permissions. Regressions surface before
+merge rather than at release time.
+
+### Fixed — recovery verification completes end to end
+
+A stale internal contract check caused recovery execute, rollback, and resume
+runs to report a verification failure even when the recovery itself succeeded.
+The contract is re-anchored to the current update skill and cross-checked from
+both its instructions and its script behavior on every run.
+
+### Changed — orphan resolution moved behind doctor
+
+The update skill no longer mutates work items. Orphan re-onboard, archive, and
+acknowledge actions now run through doctor, where each is recorded with a
+before-image and is reversible with a doctor rollback.
+
+### Fixed — story workflows create a branch and never start storyless
+
+Small- and large-story workflows now create a dedicated branch on every init,
+and when no backlog story exists they route through story creation and resume
+rather than dead-ending. No workflow runs on `main`.
+
+### Fixed — release gate issue matching and closeout
+
+The release closeout gate matches issue files exactly (so `ISSUE-23` no longer
+matches `ISSUE-233`), and a merged issue referenced with no backlog file blocks
+the release and is named in the error.
+
+### Fixed — doctor stability
+
+The format-consistency fix no longer re-flags the backup files it creates, and
+config-compatibility checks no longer flag prohibitions such as "never skip
+tests" as conflicts.
+
+### Fixed — dashboard status badges
+
+An epic's own status badge is now distinct from its child items' badges, so the
+dashboard and its tests no longer conflate parent and child status.
+
+### Changed — single documentation track
+
+The user guide is consolidated to a single track for the 4.x line; 3.x
+documentation lives on the `stable-3.x` branch.
+
+---
+
 ## [4.4.1-beta] — 2026-06-28 (4.x beta channel)
 
 ### Fixed — small-story workflow resolution and status provenance
