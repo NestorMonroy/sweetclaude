@@ -20,6 +20,22 @@ discovery_artifacts:
 compliance_context: string | null
 d1_flags: []
 
+success_criteria_contract:
+  path: string | null
+  success_criteria_contract_hash: string | null
+  criterion_ids:
+    - string
+  criteria_amendment_requests:
+    - path: string
+      status: proposed | approved | rejected | routed
+
+success_criteria_ledger:
+  path: string | null
+  evaluated_contract_hash: string | null
+  all_success_criteria_passed: boolean | null
+  missing_or_failed_criterion_ids:
+    - string
+
 created_artifacts:
   - step: string
     type: prd | stories | gherkin | architecture | tech_spec | contract_analysis | tests | report | pr
@@ -41,6 +57,22 @@ checkin_outputs:
     path: string
     findings: none | minor | significant
     escalated: boolean
+
+process_control:
+  budget_approved: boolean
+  max_caucus_rounds_per_step: integer
+  max_reviewer_agents_per_budget: integer
+  max_blocking_caucus_failures_per_step: integer
+  max_process_failures_before_gate: integer
+  active_stop_disposition: string | null
+  human_resume_approved: boolean
+  steps:
+    STEP_ID:
+      caucus_rounds_used: integer
+      reviewer_agents_used: integer
+      blocking_caucus_failures: integer
+      process_failure_count: integer
+      adversarial_pass_state_bypasses: integer
 
 interactive_gate_pending:
   step: string | null

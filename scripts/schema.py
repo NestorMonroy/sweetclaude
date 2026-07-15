@@ -7,8 +7,9 @@ from typing import Any
 
 VALID_TYPES: frozenset[str] = frozenset({
     "epic", "milestone",
-    "enhancement", "bug-fix", "tech-debt", "spike", "net-new-feature",
+    "enhancement", "bug-fix", "tech-debt", "spike", "net-new-feature", "story",
     "sprint", "theme", "goal",
+    "roadmap_item", "release", "pitch", "cycle",
 })
 
 REQUIRED_FIELDS: dict[str, list[str]] = {
@@ -17,7 +18,7 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
     "milestone": ["target_release"],
 }
 
-_ID_PATTERN = re.compile(r"^(ISSUE|EP|MS)-\d{2,}$")
+_ID_PATTERN = re.compile(r"^(ISSUE|EP|MS|SP|TH|RM|REL|PITCH|CYC|I)-\d{2,}$")
 _MILESTONE_PATTERN = re.compile(r"^MS-\d{2,}$")
 
 VALID_SOURCE_VALUES: frozenset[str] = frozenset({"auto", "manual"})
@@ -36,8 +37,26 @@ def _get_canonical_statuses() -> frozenset[str]:
     return CANONICAL_STATUSES
 
 
+_STATUS_ALIASES = {
+    "complete": "done",
+    "completed": "done",
+    "closed": "done",
+    "cancelled": "declined",
+    "planned": "new",
+    "pending": "new",
+    "backlog": "new",
+    "draft": "new",
+    "planning": "new",
+    "in_progress": "active",
+    "in-progress": "active",
+    "achieved": "done",
+    "missed": "declined",
+    "paused": "on-hold",
+}
+
+
 def normalize_status(value: str) -> str:
-    """Strip legacy annotations (em-dash suffixes, parentheticals) from status values."""
+    """Normalize status to canonical form: strip annotations, remap aliases."""
     if not value or not isinstance(value, str):
         return value
     for sep in [' — ', '—']:
@@ -46,7 +65,8 @@ def normalize_status(value: str) -> str:
             break
     if '(' in value:
         value = value.split('(')[0]
-    return value.strip()
+    value = value.strip()
+    return _STATUS_ALIASES.get(value, value)
 
 
 def normalize_milestone(value) -> str | None:

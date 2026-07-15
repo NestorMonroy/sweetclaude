@@ -477,6 +477,7 @@ def build_api_data(project_dir):
         },
         'events': query_events(project_dir),
         'generated_at': datetime.utcnow().isoformat() + 'Z',
+        'project_name': os.path.basename(os.path.realpath(project_dir)),
     }
 
 
@@ -485,7 +486,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SweetClaude Dashboard</title>
+<title>SweetClaude Dashboard</title><!-- updated by JS -->
 <style>
 :root {
   --bg: #1a1a2e;
@@ -997,6 +998,8 @@ body {
 }
 
 .roadmap-section { margin-bottom: 24px; }
+.roadmap-section.collapsed .epic-tree { display: none; }
+.roadmap-section.collapsed .release-header { border-radius: 8px; }
 
 .release-header {
   background: var(--surface);
@@ -1006,9 +1009,21 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  cursor: pointer;
+  transition: background 0.1s;
 }
+.release-header:hover { background: var(--surface-hover, rgba(255,255,255,0.04)); }
 
 .release-header.standalone { border-radius: 8px; }
+
+.ms-chevron {
+  font-size: 12px;
+  color: var(--text-dim);
+  transition: transform 0.15s;
+  margin-right: 6px;
+  display: inline-block;
+}
+.roadmap-section.collapsed .ms-chevron { transform: rotate(-90deg); }
 
 .release-title {
   font-size: 15px;
@@ -1170,6 +1185,22 @@ body {
 }
 
 .story-rows.expanded { display: block; }
+
+.hidden-section .hidden-items { display: none; }
+.hidden-section.revealed .hidden-items { display: block; }
+.hidden-section.revealed > .show-link { display: none; }
+.hidden-section:not(.revealed) > .show-link { display: inline; }
+.toggle-hidden-link {
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+  display: inline-block;
+}
+.toggle-hidden-link.show-link { color: var(--green-dim); }
+.toggle-hidden-link.show-link:hover { color: var(--green); text-decoration: underline; }
+.toggle-hidden-link.hide-link { color: var(--text-dim); }
+.toggle-hidden-link.hide-link:hover { color: var(--text); text-decoration: underline; }
 
 .story-row {
   display: flex;
@@ -1408,7 +1439,7 @@ body {
 </head>
 <body>
 <div class="header">
-  <h1><span>SweetClaude</span> Dashboard</h1>
+  <h1 id="header-title"><span>SweetClaude</span> Dashboard</h1>
   <div class="header-meta">
     <span class="branch-badge" id="branch-badge"></span>
     <span id="generated-at"></span>
@@ -1502,6 +1533,7 @@ body {
 
 <script>
 let DATA = null;
+window.DATA = null;
 let currentSort = 'priority';
 const PRIORITY_ORDER = {P0: 0, now: 0, P1: 1, sooner: 1, P2: 2, soon: 2, P3: 3, later: 3, someday: 4};
 const STATUS_ORDER = {blocked: 0, 'on-hold': 1, active: 2, 'in-review': 3, ready: 4, 'new': 5, deferred: 6, done: 7, declined: 8, abandoned: 9, superseded: 10};
@@ -1512,6 +1544,7 @@ async function load() {
   const resp = await fetch('/api/data');
   DATA = await resp.json();
   render();
+  window.DATA = DATA;
 }
 
 function render() {
@@ -1525,6 +1558,11 @@ function render() {
   renderActivity();
   document.getElementById('branch-badge').textContent = DATA.git.status.branch;
   document.getElementById('generated-at').textContent = DATA.generated_at.replace('T',' ').split('.')[0] + ' UTC';
+  if (DATA.project_name) {
+    const pn = DATA.project_name;
+    document.title = 'SweetClaude Dashboard: ' + pn;
+    document.getElementById('header-title').innerHTML = '<span>SweetClaude</span> Dashboard: ' + pn;
+  }
 }
 
 function renderSummary() {
@@ -1586,10 +1624,10 @@ function renderRoadmap() {
     const totalStories = ms.epics.reduce((a, e) => a + e.stories.length, 0);
     const doneStories = ms.epics.reduce((a, e) => a + e.stories.filter(s => TERMINAL.has(s.status)).length, 0);
 
-    html += `<div class="roadmap-section">`;
-    html += `<div class="release-header${ms.epics.length ? '' : ' standalone'}">`;
+    html += `<div class="roadmap-section${isDone ? ' collapsed' : ''}" id="ms-section-${ms.id}">`;
+    html += `<div class="release-header${ms.epics.length ? '' : ' standalone'}" onclick="toggleMilestone('${ms.id}')">`;
     html += `<div class="release-title">`;
-    html += `<span class="release-id">${ms.id}</span> ${esc(ms.title)}`;
+    html += `<span class="ms-chevron">&#9660;</span><span class="release-id">${ms.id}</span> ${esc(ms.title)}`;
     if (isDone) html += ` <span class="done-check">&#10003;</span>`;
     if (isCurrent) html += ` <span class="current-badge">current</span>`;
     html += ` ${sourceBadge(ms.source, ms.status, ms.derived_status)}`;
@@ -1600,8 +1638,18 @@ function renderRoadmap() {
     html += `</div></div>`;
 
     if (ms.epics.length) {
+      const openEpics = ms.epics.filter(e => !TERMINAL.has(e.status));
+      const doneEpics = ms.epics.filter(e => TERMINAL.has(e.status));
       html += `<div class="epic-tree">`;
-      html += ms.epics.map((ep, i) => renderEpicNode(ep, i, ms.id)).join('');
+      html += openEpics.map((ep, i) => renderEpicNode(ep, i, ms.id)).join('');
+      if (doneEpics.length > 0) {
+        const deid = 'done-epics-' + ms.id;
+        html += `<div class="hidden-section" id="${deid}">`;
+        html += `<a class="toggle-hidden-link show-link" onclick="event.stopPropagation(); toggleHidden('${deid}')">(+${doneEpics.length} done epic${doneEpics.length > 1 ? 's' : ''}, not shown)</a>`;
+        html += `<div class="hidden-items">${doneEpics.map((ep, i) => renderEpicNode(ep, openEpics.length + i, ms.id)).join('')}`;
+        html += `<a class="toggle-hidden-link hide-link" onclick="event.stopPropagation(); toggleHidden('${deid}')">Hide done epics</a></div>`;
+        html += `</div>`;
+      }
       html += `</div>`;
     }
     html += `</div>`;
@@ -1705,7 +1753,7 @@ function renderEpicNode(ep, idx, relId) {
   html += `<span class="epic-id">${ep.id}</span>`;
   html += `<span class="epic-title-text">${esc(ep.title)}</span>`;
   if (isDone) html += ` <span class="done-check">&#10003;</span>`;
-  html += ` ${statusBadge(ep.status)}`;
+  html += ` ${statusBadge(ep.status, 'epic-status-badge')}`;
   html += ` ${sourceBadge(ep.source, ep.status, ep.derived_status)}`;
   html += `</div>`;
 
@@ -1727,6 +1775,7 @@ function renderEpicNode(ep, idx, relId) {
     const hiddenOpen = openStories.length - visibleStories.length;
     html += `<span class="story-toggle" onclick="event.stopPropagation(); toggleStories('${uid}')">${ep.stories.length} ${ep.stories.length === 1 ? 'issue' : 'issues'} &rsaquo;</span>`;
     html += `<div class="story-rows dnd-stories" id="stories-${uid}" data-epic="${ep.id}">`;
+    const hiddenOpenStories = openStories.slice(20);
     html += visibleStories.map(s => {
       return `<div class="story-row" data-id="${s.id}" onclick="event.stopPropagation(); showDetail('${s.id}')">
         <span class="drag-handle" style="font-size:12px">&#x2630;</span>
@@ -1736,8 +1785,32 @@ function renderEpicNode(ep, idx, relId) {
         ${s.priority ? priorityBadge(s.priority) : ''}
       </div>`;
     }).join('');
-    if (hiddenOpen > 0) html += `<div style="font-size:11px;color:var(--text-dim);padding:4px 0">(+${hiddenOpen} more open)</div>`;
-    if (doneStories.length > 0) html += `<div style="font-size:11px;color:var(--green-dim);padding:4px 0">(+${doneStories.length} done, not shown)</div>`;
+    if (hiddenOpen > 0) {
+      html += `<div class="hidden-section" id="hidden-open-${uid}">`;
+      html += `<a class="toggle-hidden-link show-link" onclick="event.stopPropagation(); toggleHidden('hidden-open-${uid}')">(+${hiddenOpen} more open)</a>`;
+      html += `<div class="hidden-items">${hiddenOpenStories.map(s => `<div class="story-row" data-id="${s.id}" onclick="event.stopPropagation(); showDetail('${s.id}')">
+        <span class="drag-handle" style="font-size:12px">&#x2630;</span>
+        <span class="story-id">${s.id}</span>
+        <span class="story-title">${esc(s.title)}</span>
+        ${statusBadge(s.status)}
+        ${s.priority ? priorityBadge(s.priority) : ''}
+      </div>`).join('')}
+      <a class="toggle-hidden-link hide-link" onclick="event.stopPropagation(); toggleHidden('hidden-open-${uid}')">Hide extra issues</a></div>`;
+      html += `</div>`;
+    }
+    if (doneStories.length > 0) {
+      html += `<div class="hidden-section" id="hidden-done-${uid}">`;
+      html += `<a class="toggle-hidden-link show-link" onclick="event.stopPropagation(); toggleHidden('hidden-done-${uid}')">(+${doneStories.length} done, not shown)</a>`;
+      html += `<div class="hidden-items">${doneStories.map(s => `<div class="story-row" data-id="${s.id}" onclick="event.stopPropagation(); showDetail('${s.id}')">
+        <span class="drag-handle" style="font-size:12px">&#x2630;</span>
+        <span class="story-id">${s.id}</span>
+        <span class="story-title">${esc(s.title)}</span>
+        ${statusBadge(s.status)}
+        ${s.priority ? priorityBadge(s.priority) : ''}
+      </div>`).join('')}
+      <a class="toggle-hidden-link hide-link" onclick="event.stopPropagation(); toggleHidden('hidden-done-${uid}')">Hide done issues</a></div>`;
+      html += `</div>`;
+    }
     html += `</div>`;
   }
 
@@ -1748,6 +1821,16 @@ function renderEpicNode(ep, idx, relId) {
 function toggleStories(uid) {
   const el = document.getElementById('stories-' + uid);
   if (el) el.classList.toggle('expanded');
+}
+
+function toggleHidden(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('revealed');
+}
+
+function toggleMilestone(id) {
+  const el = document.getElementById('ms-section-' + id);
+  if (el) el.classList.toggle('collapsed');
 }
 
 function getFiltered() {
@@ -1784,14 +1867,15 @@ function sortItems(items) {
   });
 }
 
-function statusBadge(s) {
+function statusBadge(s, extraClass = '') {
   const cls = {
     done:'done', active:'active', new:'new', ready:'ready',
     'in-review':'in-review', blocked:'blocked', 'on-hold':'on-hold',
     deferred:'deferred', declined:'declined', abandoned:'abandoned',
     superseded:'superseded'
   }[s] || 'unknown';
-  return `<span class="status-badge status-${cls}">${s}</span>`;
+  const extra = extraClass ? ` ${extraClass}` : '';
+  return `<span class="status-badge status-${cls}${extra}">${s}</span>`;
 }
 
 function sourceBadge(source, status, derived) {
@@ -2028,7 +2112,8 @@ function showDetail(id) {
     if (!v) return '';
     if (v.includes('T')) {
       const d = new Date(v);
-      return d.toISOString().replace('T', ' ').replace(/\\.\\d+Z$/, ' UTC');
+      // Drop fractional seconds and the Z, label the timezone explicitly as UTC.
+      return d.toISOString().slice(0, 19).replace('T', ' ') + ' UTC';
     }
     return v + ' 00:00 UTC';
   }
@@ -2069,8 +2154,9 @@ function showDetail(id) {
 
   if (item.stories?.length) {
     const nonDone = item.stories.filter(s => !TERMINAL.has(s.status));
-    const doneCount = item.stories.length - nonDone.length;
-    html += `<details class="detail-section" open><summary>Issues (${item.stories.filter(s=>TERMINAL.has(s.status)).length}/${item.stories.length} done)</summary><div class="section-content">
+    const doneIssues = item.stories.filter(s => TERMINAL.has(s.status));
+    const doneCount = doneIssues.length;
+    html += `<details class="detail-section" open><summary>Issues (${doneCount}/${item.stories.length} done)</summary><div class="section-content">
       <div class="dnd-stories" id="detail-stories" data-epic="${item.id}" style="margin-top:4px">${nonDone.map(s => `
         <div class="story-row" data-id="${s.id}" onclick="showDetail('${s.id}')" style="padding:6px 8px;border-bottom:1px solid var(--border)">
           <span class="drag-handle" style="font-size:12px">&#x2630;</span>
@@ -2078,7 +2164,19 @@ function showDetail(id) {
           <span class="story-title">${esc(s.title)}</span>
           ${statusBadge(s.status)}
         </div>`).join('')}</div>`;
-    if (doneCount > 0) html += `<div style="font-size:11px;color:var(--green-dim);padding:4px 0">(+${doneCount} done, not shown)</div>`;
+    if (doneCount > 0) {
+      html += `<div class="hidden-section" id="hidden-done-detail-${item.id}">`;
+      html += `<a class="toggle-hidden-link show-link" onclick="toggleHidden('hidden-done-detail-${item.id}')">(+${doneCount} done, not shown)</a>`;
+      html += `<div class="hidden-items">${doneIssues.map(s => `
+        <div class="story-row" data-id="${s.id}" onclick="showDetail('${s.id}')" style="padding:6px 8px;border-bottom:1px solid var(--border)">
+          <span class="drag-handle" style="font-size:12px">&#x2630;</span>
+          <span class="id-cell">${s.id}</span>
+          <span class="story-title">${esc(s.title)}</span>
+          ${statusBadge(s.status)}
+        </div>`).join('')}
+      <a class="toggle-hidden-link hide-link" onclick="toggleHidden('hidden-done-detail-${item.id}')">Hide done issues</a></div>`;
+      html += `</div>`;
+    }
     html += `</div></details>`;
   }
 

@@ -4,9 +4,8 @@ user-invocable: true
 description: "Compliance control testing and evidence collection."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:testing-compliance" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash
 COMPLIANCE_FILE="$PWD/.sweetclaude/state/compliance.yaml"
@@ -233,7 +232,7 @@ PYEOF
 For `gap` status: ask "File a remediation issue?" On yes — create a project issue:
 
 ```bash
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_create issue '{
   "title": "Compliance gap: <control title>",
   "type": "story",

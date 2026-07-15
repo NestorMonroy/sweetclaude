@@ -208,10 +208,12 @@ class TestFullMigrationMixedFormatCorpus:
 
 class TestMigrationWithSpikeReportsAndBodyRefs:
     def test_spike_bl_archived_verbatim_while_referenced_bl_migrates(self, project_dir):
-        # Spikes are archived verbatim to archive/spikes/ — they are NOT converted
-        # to ISSUE-NNN (see the spike_archive tests in test-migrate-taxonomy-plan.py,
-        # e.g. test_spike_archive_excluded_from_new_id_uniqueness_check). A BL the
-        # spike references still migrates to its ISSUE-NNN on its own.
+        # A spike report is archived verbatim to archive/spikes/ — it is NOT
+        # converted to ISSUE-NNN. The backlog issue for future review is the
+        # spike's actionable follow-up (here BL-027), which migrates to its
+        # ISSUE-NNN on its own. This matches the implementation and the
+        # spike_archive tests in test-migrate-taxonomy-plan.py (e.g.
+        # test_spike_archive_excluded_from_new_id_uniqueness_check).
         bl = backlog_dir(project_dir)
         bl.mkdir(parents=True, exist_ok=True)
         make_yaml_frontmatter_file(
@@ -233,12 +235,12 @@ class TestMigrationWithSpikeReportsAndBodyRefs:
 
         assert result.spike_archived == 1
 
-        # The spike is archived under archive/spikes/, not converted to ISSUE-016.
+        # The spike report is archived under archive/spikes/, not converted to ISSUE-016.
         spike_files = list((product_base(project_dir) / "archive" / "spikes").glob("spike-016-*.md"))
         assert len(spike_files) == 1
         assert not list(product_base(project_dir).rglob("ISSUE-016-*.md"))
 
-        # The referenced BL-027 migrates to ISSUE-027 in the backlog.
+        # The actionable follow-up BL-027 is the backlog issue: it migrates to ISSUE-027.
         issue_files = list((product_base(project_dir) / "backlog").glob("ISSUE-027-*.md"))
         assert len(issue_files) == 1
 

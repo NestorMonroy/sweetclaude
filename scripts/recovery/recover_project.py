@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import tarfile
@@ -21,10 +22,25 @@ from typing import Any
 
 import yaml
 
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from maintenance.capability_manifest import capability_config, project_shape_config
+from mutation_safety import (
+    hash_payload,
+    should_stop_repair_loop,
+    validate_approval_scope,
+    validate_postconditions,
+    validate_restore_proof,
+    validate_snapshot_scope,
+    validate_write_set,
+)
+
 try:
-    from recovery.characterize_project import characterize_project
+    from recovery.characterize_project import characterize_project, is_derived_file
 except ModuleNotFoundError:  # Allows direct script execution.
-    from characterize_project import characterize_project
+    from characterize_project import characterize_project, is_derived_file
 
 
 SCHEMA_VERSION = 1
@@ -88,6 +104,7 @@ def _read_sweetclaude_state(project: Path) -> dict[str, Any]:
         "taxonomy_recovery_status": None,
         "taxonomy_migration_required": None,
         "taxonomy_blind_migration_allowed": None,
+        "taxonomy_compatibility_exited": None,
     }
     if not state_path.exists():
         return state
@@ -121,6 +138,9 @@ def _read_sweetclaude_state(project: Path) -> dict[str, Any]:
             state["taxonomy_blind_migration_allowed"] = taxonomy.get(
                 "blind_taxonomy_migration_allowed"
             )
+            state["taxonomy_compatibility_exited"] = taxonomy.get(
+                "compatibility_exited"
+            )
 
     return state
 
@@ -133,6 +153,28 @@ def _project_relative_path(project: Path, path: Path | str) -> str:
         except ValueError:
             return str(candidate)
     return candidate.as_posix()
+
+
+def _project_file_fingerprint(project: Path) -> dict[str, str]:
+    fingerprint: dict[str, str] = {}
+    for path in sorted(project.rglob("*")):
+        if path.is_file():
+            fingerprint[_project_relative_path(project, path)] = _sha256_file(path)
+    return fingerprint
+
+
+def _changed_paths(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    changed = [
+        path
+        for path, digest in after.items()
+        if before.get(path) != digest
+    ]
+    removed = [
+        path
+        for path in before
+        if path not in after
+    ]
+    return sorted(set(changed + removed))
 
 
 def _resolve_project_path(project: Path, rel_path: str) -> Path:
@@ -215,6 +257,37 @@ def _has_failure(diagnosis: dict[str, Any], code: str) -> bool:
     return code in diagnosis.get("failure_class_codes", [])
 
 
+def _state_schema_drift_findings(project: Path) -> list[dict[str, Any]]:
+    """Read-only drift report from the migration runner's registry.
+
+    Drift is resolved by the runner (bootstrap Step 5c offers it; doctor
+    auto-fixes through it), not by recovery — so callers report these as
+    informational, never as route-driving failure classes.
+    """
+    runner = SCRIPTS_DIR / "migrations" / "runner.py"
+    if not runner.is_file():
+        return []
+    completed = subprocess.run(
+        [sys.executable, str(runner), "--project-dir", str(project),
+         "--report-drift-for-skill"],
+        capture_output=True, text=True, check=False,
+    )
+    if completed.returncode != 0:
+        return []
+    findings: list[dict[str, Any]] = []
+    for line in completed.stdout.splitlines():
+        if not line.startswith("FINDING|"):
+            continue
+        parts = line.split("|")
+        findings.append({
+            "file": parts[1] if len(parts) > 1 else "",
+            "migration": parts[2] if len(parts) > 2 else "",
+            "chain": (parts[3].removeprefix("chain=")
+                      if len(parts) > 3 else ""),
+        })
+    return findings
+
+
 def _taxonomy_recovery_accepts_legacy_layout(state: dict[str, Any]) -> bool:
     return (
         state.get("migration_status") == "deferred"
@@ -264,6 +337,147 @@ def _diagnosis_summary(diagnosis: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _recovery_project_shape(route: str) -> str:
+    if route == "stabilize-without-migration":
+        return "recovery_required"
+    if route == "typed-legacy-migrate":
+        return "typed_legacy_backlog"
+    if route == "manual-escalation":
+        return "manual_escalation"
+    if route == "no-recovery-needed":
+        return "current_layout"
+    return "manual_escalation"
+
+
+def _recovery_capability_contract(project_shape: str) -> dict[str, Any]:
+    shape = project_shape_config(project_shape)
+    capability_id = str(shape.get("recovery_capability", "") or "")
+    if not capability_id:
+        return {
+            "capability_id": "",
+            "project_shape": project_shape,
+            "manifest_supported": False,
+            "supported_project_shapes": [],
+            "safety_contract": [],
+            "verification_commands": [],
+        }
+    capability = capability_config(capability_id)
+    supported_shapes = list(capability.get("supports_project_shapes") or [])
+    return {
+        "capability_id": capability_id,
+        "project_shape": project_shape,
+        "manifest_supported": project_shape in supported_shapes,
+        "supported_project_shapes": supported_shapes,
+        "safety_contract": list(capability.get("safety_contract") or []),
+        "verification_commands": list(capability.get("verification_commands") or []),
+        "requires_approval": bool(capability.get("requires_approval", False)),
+        "mutates_project": bool(capability.get("mutates_project", False)),
+    }
+
+
+def _validate_recovery_plan_capability(plan: dict[str, Any]) -> None:
+    capability_id = str(plan.get("capability_id", "") or "")
+    project_shape = str(plan.get("project_shape", "") or "")
+    if not capability_id or not project_shape:
+        raise ValueError("recovery plan is missing manifest capability metadata")
+    capability = capability_config(capability_id)
+    supported_shapes = list(capability.get("supports_project_shapes") or [])
+    if project_shape not in supported_shapes:
+        raise ValueError(
+            f"recovery capability {capability_id} does not support project_shape={project_shape}"
+        )
+
+
+def _approval_context(project: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "project_dir": str(project),
+        "plan_id": plan.get("plan_id"),
+        "capability_id": plan.get("capability_id"),
+        "project_shape": plan.get("project_shape"),
+    }
+
+
+def _recovery_write_set(plan: dict[str, Any]) -> list[str]:
+    write_set = {str(path) for path in plan.get("affected_paths", [])}
+    write_set.add((RECOVERY_RUNS_DIR.as_posix()).rstrip("/") + "/")
+    return sorted(write_set)
+
+
+def _recovery_plan_payload(plan: dict[str, Any], write_set: list[str]) -> dict[str, Any]:
+    return {
+        "plan_id": plan.get("plan_id"),
+        "capability_id": plan.get("capability_id"),
+        "project_shape": plan.get("project_shape"),
+        "operations": list(plan.get("operations", [])),
+        "declared_write_set": write_set,
+        "declared_blast_radius": list(plan.get("snapshot", {}).get("paths", [])),
+        "verification": list(plan.get("verification", [])),
+    }
+
+
+def _attach_mutation_plan(project: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    write_set = _recovery_write_set(plan)
+    payload = _recovery_plan_payload(plan, write_set)
+    plan_hash = hash_payload(payload)
+    write_set_hash = hash_payload(write_set)
+    mutation_plan = {
+        "status": "approval-required" if plan.get("can_execute_after_snapshot") else "not-executable",
+        "plan_hash": plan_hash,
+        "write_set_hash": write_set_hash,
+        "declared_write_set": write_set,
+        "declared_blast_radius": list(payload["declared_blast_radius"]),
+        "postconditions": [
+            {"id": check.get("id"), "status": "pending"}
+            for check in plan.get("verification", [])
+        ] + [{"id": "verification", "status": "pending"}],
+        "approval_receipt_template": {
+            "schema_version": 1,
+            "kind": "sweetclaude.recovery.approval",
+            "approved": False,
+            "plan_hash": plan_hash,
+            "write_set_hash": write_set_hash,
+            "snapshot_hash": "",
+            "context": _approval_context(project, plan),
+        },
+    }
+    plan["mutation_plan"] = mutation_plan
+    return plan
+
+
+def _load_approval_receipt(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid approval receipt: {exc}") from None
+    if not isinstance(data, dict):
+        raise ValueError("invalid approval receipt: not a JSON object")
+    return data
+
+
+def _validate_approval_receipt(
+    *,
+    receipt: dict[str, Any],
+    project: Path,
+    plan: dict[str, Any],
+) -> dict[str, Any]:
+    if receipt.get("schema_version") != 1:
+        raise ValueError("approval receipt schema_version must be 1")
+    if receipt.get("kind") != "sweetclaude.recovery.approval":
+        raise ValueError("approval receipt kind mismatch")
+    if receipt.get("approved") is not True:
+        raise ValueError("approval receipt is not approved")
+    mutation_plan = plan["mutation_plan"]
+    return validate_approval_scope(
+        receipt,
+        plan_hash=mutation_plan["plan_hash"],
+        write_set_hash=mutation_plan["write_set_hash"],
+        snapshot_hash=str(receipt.get("snapshot_hash", "")),
+        context=_approval_context(project, plan),
+    )
+
+
 def _snapshot_paths(project: Path, diagnosis: dict[str, Any]) -> list[str]:
     paths = [".sweetclaude/state"]
     artifact_privacy = project / ".sweetclaude" / "artifact-privacy.yaml"
@@ -300,6 +514,29 @@ def _state_operations(project: Path, diagnosis: dict[str, Any]) -> list[dict[str
                 "target": state_target,
                 "yaml_path": ["framework", "migration_status"],
                 "value": current_status,
+            },
+        })
+    elif (
+        _has_failure(diagnosis, "unsupported-typed-backlog-layout")
+        and state.get("migration_status") == "incomplete"
+    ):
+        operations.append({
+            "id": "set-migration-status-deferred",
+            "action": "yaml-set",
+            "target": state_target,
+            "yaml_path": ["framework", "migration_status"],
+            "current_value": "incomplete",
+            "planned_value": "deferred",
+            "reason": (
+                "Normalize an interrupted (incomplete) migration to deferred so "
+                "the recovered typed-legacy project can be migrated rather than "
+                "cycling back into recovery."
+            ),
+            "rollback": {
+                "action": "yaml-set",
+                "target": state_target,
+                "yaml_path": ["framework", "migration_status"],
+                "value": "incomplete",
             },
         })
 
@@ -357,18 +594,7 @@ def _pending_prompt_operations(
 
 
 def _blocked_actions(diagnosis: dict[str, Any]) -> list[dict[str, Any]]:
-    blocked: list[dict[str, Any]] = []
-    if _has_failure(diagnosis, "unsupported-typed-backlog-layout"):
-        blocked.append({
-            "id": "taxonomy-migration",
-            "reason": (
-                "Typed backlog layout and duplicate ID risk require a "
-                "layout-specific migration manifest. Stabilization must not "
-                "move or rename product artifacts."
-            ),
-            "until": "A SynCog-layout taxonomy migrator passes dry-run, rollback, and verification drills.",
-        })
-    return blocked
+    return []
 
 
 def _get_yaml_path(data: dict[str, Any], path: list[str]) -> Any:
@@ -456,6 +682,7 @@ def _create_snapshot(project: Path, plan: dict[str, Any]) -> dict[str, Any]:
         "run_id": run_id,
         "run_dir": str(run_dir),
         "path": str(snapshot_path),
+        "sha256": _sha256_file(snapshot_path),
         "paths": snapshot_paths,
         "file_count": len(files),
         "files": files,
@@ -562,6 +789,19 @@ def _run_json_command(cmd: list[str], timeout: int = 30) -> dict[str, Any]:
     return result
 
 
+def _is_supported_migration_capability(capability_id: str) -> bool:
+    """A migration capability is safe to offer iff the manifest marks it
+    supported (not explicitly ``supported: false``) and declares the shapes it
+    handles. Post-WI-017 the typed-legacy migrator is supported, so offering it
+    is the sanctioned exit from compatibility mode — not the old unsafe loop."""
+    if not capability_id:
+        return False
+    capability = capability_config(capability_id)
+    return capability.get("supported", True) is not False and bool(
+        capability.get("supports_project_shapes")
+    )
+
+
 def _doctor_migration_scan_check(project: Path) -> dict[str, Any]:
     doctor = Path(__file__).resolve().parents[1] / "doctor.py"
     result = _run_json_command([
@@ -578,6 +818,15 @@ def _doctor_migration_scan_check(project: Path) -> dict[str, Any]:
     migration_recommendations = (
         data.get("migration_recommendations", []) if isinstance(data, dict) else []
     )
+    # Post-WI-017 a safe, supported migrator exists, so a migration finding or
+    # recommendation is no longer the old "blind/unsafe migration" loop the
+    # check was guarding against. The postcondition now fails only if doctor
+    # recommends an UNSUPPORTED migration capability; surfacing the supported
+    # migrator (or a prompted old-prefix finding it can resolve) is safe.
+    unsupported_recommendations = [
+        rec for rec in migration_recommendations
+        if not _is_supported_migration_capability(rec.get("capability_id", ""))
+    ]
     prompted_migration_findings = [
         finding.get("id")
         for finding in findings
@@ -597,14 +846,14 @@ def _doctor_migration_scan_check(project: Path) -> dict[str, Any]:
     passed = (
         result["returncode"] == 0
         and "json_error" not in result
-        and not migration_recommendations
-        and not prompted_migration_findings
+        and not unsupported_recommendations
     )
     return {
         "id": "doctor-migration-scan-safe",
         "status": "passed" if passed else "failed",
         "returncode": result["returncode"],
         "migration_recommendation_count": len(migration_recommendations),
+        "unsupported_recommendation_count": len(unsupported_recommendations),
         "prompted_migration_findings": prompted_migration_findings,
         "taxonomy_findings": taxonomy_findings[:10],
         "stderr": result.get("stderr", ""),
@@ -639,20 +888,60 @@ def _migrate_orphan_scan_check(project: Path) -> dict[str, Any]:
     }
 
 
-def _update_skill_contract_check() -> dict[str, Any]:
-    skill = Path(__file__).resolve().parents[2] / "skills" / "update" / "SKILL.md"
+def _update_skill_contract_check(root: Path | None = None) -> dict[str, Any]:
+    base = root or Path(__file__).resolve().parents[2]
+    skill = base / "skills" / "update" / "SKILL.md"
     text = skill.read_text(encoding="utf-8")
+    # These anchors must match the Contract section of skills/update/SKILL.md
+    # and the assertions in tests/test_recovery_skill.py — the three files
+    # move together.
     required = [
-        "do not present a migration prompt",
-        "do not invoke",
-        "No files were changed",
-        "Do not write `doctor-prompt-pending.json`",
+        "Update never mutates project work-item state.",
+        "Update does not run project-state migrations inline; route project repair to `/sweetclaude:doctor`.",
+        "Do not present a migration prompt from update.",
+        "Do not write `doctor-prompt-pending.json` from update.",
     ]
     missing = [phrase for phrase in required if phrase not in text]
     return {
         "id": "update-skill-taxonomy-prompt-disabled",
         "status": "passed" if not missing else "failed",
         "missing_phrases": missing,
+    }
+
+
+def _update_script_contract_check(root: Path | None = None) -> dict[str, Any]:
+    base = root or Path(__file__).resolve().parents[2]
+    update_script = base / "scripts" / "update.py"
+    producer_script = base / "scripts" / "maintenance" / "plugin-state.py"
+    forbidden = [
+        "doctor-prompt-pending",
+        "reonboard-orphans",
+        "archive-orphans",
+        "acknowledge-orphans",
+        "resolve-orphan",
+        "group-orphans",
+    ]
+    producer_keys = ['"stale_beta_install"', '"SC_PLUGIN_STALE_BETA"']
+    missing_files = []
+    forbidden_found: list[str] = []
+    missing_keys: list[str] = []
+    try:
+        update_text = update_script.read_text(encoding="utf-8")
+        forbidden_found = [marker for marker in forbidden if marker in update_text]
+    except OSError:
+        missing_files.append(str(update_script))
+    try:
+        producer_text = producer_script.read_text(encoding="utf-8")
+        missing_keys = [key for key in producer_keys if key not in producer_text]
+    except OSError:
+        missing_files.append(str(producer_script))
+    passed = not forbidden_found and not missing_keys and not missing_files
+    return {
+        "id": "update-script-contract-markers",
+        "status": "passed" if passed else "failed",
+        "forbidden_markers_found": forbidden_found,
+        "missing_producer_keys": missing_keys,
+        "missing_files": missing_files,
     }
 
 
@@ -676,6 +965,7 @@ def _maintenance_entrypoint_checks(project: Path) -> list[dict[str, Any]]:
     checks.append(_doctor_migration_scan_check(project))
     checks.append(_migrate_orphan_scan_check(project))
     checks.append(_update_skill_contract_check())
+    checks.append(_update_script_contract_check())
     checks.append(_fix_skill_contract_check())
     return checks
 
@@ -846,6 +1136,7 @@ def _finalize_execution_result(
 def execute_project(
     project_dir: Path | str,
     approve: bool = False,
+    approval_receipt: Path | str | None = None,
     fail_after_operations: int | None = None,
 ) -> dict[str, Any]:
     if not approve:
@@ -855,8 +1146,25 @@ def execute_project(
     plan = plan_project(project)
     if not plan.get("can_execute_after_snapshot"):
         raise ValueError(f"plan is not executable: {plan.get('plan_status')}")
+    _validate_recovery_plan_capability(plan)
+    if approval_receipt is None:
+        raise PermissionError("execute requires an approval receipt")
+    receipt = _load_approval_receipt(Path(approval_receipt))
+    approval_validation = _validate_approval_receipt(
+        receipt=receipt or {},
+        project=project,
+        plan=plan,
+    )
 
+    before_fingerprint = _project_file_fingerprint(project)
     snapshot = _create_snapshot(project, plan)
+    receipt_snapshot_hash = str((receipt or {}).get("snapshot_hash", ""))
+    if receipt_snapshot_hash and receipt_snapshot_hash != snapshot["sha256"]:
+        raise ValueError("snapshot_hash mismatch")
+    snapshot_scope_validation = validate_snapshot_scope(
+        declared_blast_radius=plan["mutation_plan"]["declared_blast_radius"],
+        snapshot_paths=snapshot["paths"],
+    )
     run_dir = Path(snapshot["run_dir"])
     result: dict[str, Any] = {
         "schema_version": EXECUTION_SCHEMA_VERSION,
@@ -869,6 +1177,7 @@ def execute_project(
         "snapshot": snapshot,
         "operations": [],
         "verification": [],
+        "max_resume_attempts": 3,
     }
     manifest_path = run_dir / "execution-manifest.json"
     _atomic_write_json(manifest_path, result)
@@ -887,6 +1196,25 @@ def execute_project(
                 )
 
         _finalize_execution_result(project, snapshot, result, manifest_path)
+        after_fingerprint = _project_file_fingerprint(project)
+        write_set_validation = validate_write_set(
+            project,
+            approved_write_set=plan["mutation_plan"]["declared_write_set"],
+            actual_changed_paths=_changed_paths(before_fingerprint, after_fingerprint),
+        )
+        postcondition_validation = validate_postconditions(
+            exit_code=0,
+            postconditions=result["verification"],
+        )
+        result["mutation_lifecycle"] = {
+            "status": "pass",
+            "mutation_plan": plan["mutation_plan"],
+            "approval": approval_validation,
+            "snapshot_scope_validation": snapshot_scope_validation,
+            "write_set_validation": write_set_validation,
+            "postcondition_validation": postcondition_validation,
+        }
+        _atomic_write_json(manifest_path, result)
     except Exception as exc:
         result["status"] = "failed"
         result["error"] = str(exc)
@@ -908,6 +1236,7 @@ def resume_project(run_dir: Path | str) -> dict[str, Any]:
 
     result = json.loads(manifest_path.read_text(encoding="utf-8"))
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    _validate_recovery_plan_capability(plan)
     project = Path(result["project_dir"]).resolve()
     snapshot = result.get("snapshot")
     if not isinstance(snapshot, dict):
@@ -915,6 +1244,22 @@ def resume_project(run_dir: Path | str) -> dict[str, Any]:
     snapshot_path = Path(snapshot["path"])
     if not snapshot_path.exists():
         raise FileNotFoundError(f"snapshot not found: {snapshot_path}")
+
+    repair_loop = should_stop_repair_loop(
+        attempts=int(result.get("resume_count", 0) or 0),
+        max_attempts=int(result.get("max_resume_attempts", 3) or 3),
+        previous_postcondition_hash=result.get("previous_postcondition_hash"),
+        current_postcondition_hash=result.get("current_postcondition_hash"),
+        new_regressions=list(result.get("new_regressions", []) or []),
+    )
+    if repair_loop["stop"]:
+        result = dict(result)
+        result["command"] = "resume"
+        result["status"] = "stopped"
+        result["repair_loop"] = repair_loop
+        result["report_path"] = _write_recovery_report(run_path, result)
+        _atomic_write_json(manifest_path, result)
+        return result
 
     if result.get("status") == "succeeded":
         result = dict(result)
@@ -973,6 +1318,13 @@ def rollback_project(run_dir: Path | str) -> dict[str, Any]:
                 raise ValueError(f"snapshot member escapes project root: {member.name}")
         tar.extractall(project)
 
+    proof = validate_restore_proof({
+        "method": "command",
+        "status": "pass",
+        "command": f"python3 scripts/recovery/recover_project.py rollback --run-dir {run_path}",
+        "evidence": f"restored snapshot {snapshot_path}",
+    })
+
     result = {
         "schema_version": EXECUTION_SCHEMA_VERSION,
         "command": "rollback",
@@ -981,6 +1333,7 @@ def rollback_project(run_dir: Path | str) -> dict[str, Any]:
         "run_dir": str(run_path),
         "status": "rolled_back",
         "snapshot_path": str(snapshot_path),
+        "restore_proof": proof,
     }
     result["report_path"] = _write_recovery_report(run_path, manifest, rollback=result)
     _atomic_write_json(run_path / "rollback-manifest.json", result)
@@ -992,11 +1345,17 @@ def plan_project(project_dir: Path | str) -> dict[str, Any]:
     diagnosis = diagnose_project(project)
     route = diagnosis["recovery_route"]
     can_plan = bool(diagnosis["can_plan_recovery"])
+    project_shape = _recovery_project_shape(route)
+    capability = _recovery_capability_contract(project_shape)
 
     operations: list[dict[str, Any]] = []
     blocked = _blocked_actions(diagnosis)
 
-    if can_plan and route == "stabilize-without-migration":
+    if (
+        can_plan
+        and route == "stabilize-without-migration"
+        and capability["manifest_supported"]
+    ):
         operations.extend(_state_operations(project, diagnosis))
         operations.extend(_pending_prompt_operations(diagnosis))
 
@@ -1006,6 +1365,9 @@ def plan_project(project_dir: Path | str) -> dict[str, Any]:
     elif can_plan and operations:
         plan_status = "planned"
         next_step = "Create the required snapshot, review the manifest, then execute with approval."
+    elif can_plan and not capability["manifest_supported"]:
+        plan_status = "manual-review"
+        next_step = "Recovery route is recognized, but the manifest capability does not support it."
     elif can_plan:
         plan_status = "manual-review"
         next_step = "Recovery is recognized, but this route has no executable operations yet."
@@ -1016,7 +1378,7 @@ def plan_project(project_dir: Path | str) -> dict[str, Any]:
     plan_id = _plan_id(project, route, operations)
     affected_paths = sorted(dict.fromkeys(op["target"] for op in operations))
 
-    return {
+    plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "command": "plan",
         "plan_id": plan_id,
@@ -1024,6 +1386,12 @@ def plan_project(project_dir: Path | str) -> dict[str, Any]:
         "project_dir": str(project),
         "plan_status": plan_status,
         "recovery_route": route,
+        "capability_id": capability["capability_id"],
+        "project_shape": project_shape,
+        "manifest_supported": capability["manifest_supported"],
+        "supported_project_shapes": capability["supported_project_shapes"],
+        "safety_contract": capability["safety_contract"],
+        "verification_commands": capability["verification_commands"],
         "mutating_actions_allowed": False,
         "execute_requires_approval": True,
         "requires_snapshot_before_execute": can_plan,
@@ -1063,6 +1431,7 @@ def plan_project(project_dir: Path | str) -> dict[str, Any]:
         ] if can_plan else [],
         "next_step": next_step,
     }
+    return _attach_mutation_plan(project, plan)
 
 
 def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
@@ -1086,7 +1455,15 @@ def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
     failure_classes: list[dict[str, Any]] = []
     blocking_factors: list[dict[str, Any]] = []
 
-    if has_typed_backlog_dirs and taxonomy_candidate_count and not accepted_legacy_layout:
+    migration_complete_no_old = (
+        sweetclaude_state.get("migration_status") == "complete"
+        and old_prefix_count == 0
+    )
+    compatibility_exited = bool(sweetclaude_state.get("taxonomy_compatibility_exited"))
+    # S7: emit unsupported-typed-backlog-layout whenever typed layout + old prefixes exist,
+    # even if accepted_legacy_layout is True — migration is now supported so this is
+    # a resolvable failure class, not suppressed.
+    if has_typed_backlog_dirs and taxonomy_candidate_count and not migration_complete_no_old and not compatibility_exited:
         _add_failure_class(
             failure_classes,
             code="unsupported-typed-backlog-layout",
@@ -1098,7 +1475,7 @@ def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
                 ),
                 "taxonomy_candidate_count": taxonomy_candidate_count,
             },
-            recovery_strategy="stabilize-without-migration",
+            recovery_strategy="migrate",
         )
 
     migration_status = sweetclaude_state.get("migration_status")
@@ -1150,13 +1527,48 @@ def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
             "detail": sweetclaude_state["parse_error"],
         })
 
+    drift_findings = _state_schema_drift_findings(project)
+    if drift_findings:
+        _add_failure_class(
+            failure_classes,
+            code="state-schema-drift",
+            severity="informational",
+            title="State files are behind the registry schema",
+            evidence={"findings": drift_findings},
+            recovery_strategy="run-migration-runner",
+        )
+
     failure_codes = [entry["code"] for entry in failure_classes]
     cannot_plan = any(factor["severity"] == "cannot-plan" for factor in blocking_factors)
-    has_recoverable_state = bool(failure_classes) and not cannot_plan
+    # Informational classes are reported but never drive the route: schema
+    # drift belongs to the migration runner (bootstrap Step 5c / doctor
+    # auto-fix), not to recovery planning.
+    route_driving_classes = [
+        entry for entry in failure_classes
+        if entry.get("severity") != "informational"
+    ]
+    has_recoverable_state = bool(route_driving_classes) and not cannot_plan
 
-    if not failure_classes and not blocking_factors:
+    has_typed_backlog_failure = _has_failure(
+        {"failure_class_codes": [e["code"] for e in route_driving_classes]},
+        "unsupported-typed-backlog-layout",
+    )
+
+    if not route_driving_classes and not blocking_factors:
         recovery_route = "no-recovery-needed"
-        next_step = "No recovery action is currently indicated by read-only diagnosis."
+        if drift_findings:
+            drifted = ", ".join(f["file"] for f in drift_findings)
+            next_step = (
+                f"No recovery action is needed, but state schema drift was "
+                f"detected ({drifted}). The migration runner resolves it — "
+                "bootstrap offers this at session start, or run "
+                "/sweetclaude:doctor to auto-fix."
+            )
+        else:
+            next_step = "No recovery action is currently indicated by read-only diagnosis."
+    elif has_recoverable_state and has_typed_backlog_failure and migration_status != "incomplete":
+        recovery_route = "typed-legacy-migrate"
+        next_step = "Run /sweetclaude:migrate to migrate the typed legacy backlog to unified ISSUE-NNN taxonomy."
     elif has_recoverable_state:
         recovery_route = "stabilize-without-migration"
         next_step = "Run recovery plan generation after creating a project snapshot."
@@ -1165,7 +1577,22 @@ def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
         next_step = "Resolve blocking factors before automated recovery planning."
 
     recommended_actions: list[dict[str, str]] = []
-    if has_recoverable_state:
+    if recovery_route == "typed-legacy-migrate":
+        recommended_actions.extend([
+            {
+                "id": "snapshot-before-migration",
+                "description": "Create a complete snapshot of SweetClaude state and product artifacts before migrating.",
+            },
+            {
+                "id": "run-typed-legacy-migration",
+                "description": "Run the supported typed-legacy to ISSUE-NNN migrator (dry-run, then execute with rollback).",
+            },
+            {
+                "id": "verify-migration",
+                "description": "Verify the migrated project re-characterizes as a clean v4 layout.",
+            },
+        ])
+    elif has_recoverable_state:
         recommended_actions.extend([
             {
                 "id": "snapshot-before-recovery",
@@ -1205,6 +1632,395 @@ def diagnose_project(project_dir: Path | str) -> dict[str, Any]:
     }
 
 
+def graduation_check(project_dir: Path | str) -> dict[str, Any]:
+    """Read-only validation: is this project v4-compliant and ready to exit compatibility mode?"""
+    project = Path(project_dir).expanduser().resolve()
+    characterization = characterize_project(project)
+    state = _read_sweetclaude_state(project)
+
+    taxonomy_status = state.get("taxonomy_recovery_status")
+    if taxonomy_status not in ("stabilized-without-migration", "migrated", None):
+        if taxonomy_status == "graduated":
+            return {
+                "graduation_allowed": False,
+                "reason": "already-graduated",
+                "detail": "This project has already graduated from compatibility mode.",
+            }
+
+    accepted = _taxonomy_recovery_accepts_legacy_layout(state)
+    # S7: also allow graduation after successful typed-legacy migration
+    migrated = taxonomy_status == "migrated"
+    if not accepted and not migrated and taxonomy_status != "stabilized-without-migration":
+        return {
+            "graduation_allowed": False,
+            "reason": "not-in-compatibility-mode",
+            "detail": "Project is not in compatibility mode or accepted legacy taxonomy state.",
+        }
+
+    v4c = characterization.get("v4_compliance", {})
+    blockers: list[dict[str, Any]] = []
+
+    if not v4c.get("is_v4_only"):
+        blockers.append({
+            "code": "old-prefix-files-remain",
+            "detail": f"{v4c.get('old_prefix_count', 0)} files with old taxonomy prefixes remain.",
+        })
+
+    if not v4c.get("no_duplicates"):
+        dup_count = characterization.get("ids", {}).get("duplicate_count", 0)
+        blockers.append({
+            "code": "duplicate-ids",
+            "detail": f"{dup_count} duplicate work-item IDs found.",
+        })
+
+    if not v4c.get("has_required_fields"):
+        blockers.append({
+            "code": "missing-required-fields",
+            "detail": "One or more work items are missing required fields (id, type, title, status).",
+        })
+
+    if not v4c.get("canonical_types_only"):
+        blockers.append({
+            "code": "legacy-type-aliases",
+            "detail": "One or more work items use legacy type aliases (bug, feature, debt, chore).",
+        })
+
+    if characterization.get("frontmatter", {}).get("parse_errors", 0) > 0:
+        blockers.append({
+            "code": "frontmatter-parse-errors",
+            "detail": f"{characterization['frontmatter']['parse_errors']} files have unparseable frontmatter.",
+        })
+
+    if not v4c.get("standard_structure"):
+        blockers.append({
+            "code": "non-standard-structure",
+            "detail": "Project layout does not match standard v4 structure.",
+        })
+
+    if blockers:
+        return {
+            "graduation_allowed": False,
+            "reason": "validation-failures",
+            "blockers": blockers,
+            "v4_compliance": v4c,
+        }
+
+    return {
+        "graduation_allowed": True,
+        "reason": "v4-compliant",
+        "v4_compliance": v4c,
+    }
+
+
+def graduate(project_dir: Path | str) -> dict[str, Any]:
+    """Execute graduation: write state marking project as graduated from compatibility mode.
+
+    Precondition: graduation_check must pass. This function re-validates before writing.
+    """
+    project = Path(project_dir).expanduser().resolve()
+    check = graduation_check(project)
+    if not check.get("graduation_allowed"):
+        return {
+            "status": "blocked",
+            "reason": check.get("reason", "unknown"),
+            "detail": check.get("blockers", check.get("detail", "")),
+        }
+
+    sc_path = project / ".sweetclaude" / "state" / "sweetclaude.yaml"
+    if not sc_path.exists():
+        return {"status": "error", "reason": "sweetclaude-yaml-missing"}
+
+    data = _load_yaml_mapping(sc_path)
+    now = datetime.now(timezone.utc).isoformat()
+
+    recovery = data.setdefault("recovery", {})
+    taxonomy = recovery.setdefault("taxonomy", {})
+    taxonomy["status"] = "graduated"
+    taxonomy["compatibility_exited"] = True
+    taxonomy["migration_required"] = False
+    taxonomy["graduated_at"] = now
+
+    framework = data.setdefault("framework", {})
+    framework["migration_status"] = "complete"
+
+    _write_yaml_mapping(sc_path, data)
+
+    return {
+        "status": "graduated",
+        "graduated_at": now,
+        "sweetclaude_yaml_path": str(sc_path),
+    }
+
+
+_BLOCKER_RESOLUTION_CAPABILITY = "doctor.fix_graduation_blockers"
+_RESOLVABLE_BLOCKER_CODES = {"duplicate-ids"}
+
+# Blockers doctor's prompted-fix flow can clear, even without a deterministic
+# one-shot command. Structural blockers (old taxonomy prefixes, non-standard
+# layout) are NOT here: fixing those means migration, which stays blocked by
+# policy — those projects remain honestly in compatibility mode.
+_FIXABLE_BLOCKER_CODES = _RESOLVABLE_BLOCKER_CODES | {
+    "legacy-type-aliases",
+    "missing-required-fields",
+    "frontmatter-parse-errors",
+}
+
+
+def _with_blocker_resolution(blocker: dict[str, Any]) -> dict[str, Any]:
+    code = str(blocker.get("code", ""))
+    resolution: dict[str, Any] = {
+        "capability_id": _BLOCKER_RESOLUTION_CAPABILITY,
+        "delegate_skill": "sweetclaude:doctor",
+    }
+    if code in _RESOLVABLE_BLOCKER_CODES:
+        script = Path(__file__).resolve()
+        resolution["command"] = (
+            f"python3 {script} resolve-graduation-blocker "
+            f"--code {code} --project-dir <project>"
+        )
+    return {**blocker, "resolution": resolution}
+
+
+def _frontmatter_id(path: Path) -> str | None:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return None
+    for line in parts[1].splitlines():
+        if line.startswith("id:"):
+            value = line.split(":", 1)[1].strip().strip("'\"")
+            return value or None
+    return None
+
+
+_WORK_ITEM_ID_RE = re.compile(r"^[A-Z]+(?:-[A-Z0-9]+)*-\d+$")
+
+
+def _collect_known_ids(product_base: Path) -> set[str]:
+    ids: set[str] = set()
+    for path in product_base.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            rel = path.relative_to(product_base).as_posix()
+        except ValueError:
+            continue
+        if is_derived_file(rel):
+            continue
+        value = _frontmatter_id(path)
+        if value:
+            ids.add(value)
+    return ids
+
+
+def _next_available_id(duplicate_id: str, known_ids: set[str]) -> str:
+    prefix, _, number = duplicate_id.rpartition("-")
+    width = len(number)
+    highest = 0
+    for known in known_ids:
+        k_prefix, _, k_number = known.rpartition("-")
+        if k_prefix == prefix and k_number.isdigit():
+            highest = max(highest, int(k_number))
+    return f"{prefix}-{highest + 1:0{width}d}"
+
+
+def _pick_renumber_targets(
+    files: list[Path], product_base: Path, choose: str | None,
+) -> list[Path]:
+    if choose:
+        chosen = Path(choose).expanduser().resolve()
+        matches = [f for f in files if f.resolve() == chosen]
+        if not matches:
+            raise ValueError(
+                f"--choose did not match a duplicate file: {choose}"
+            )
+        return matches
+    ordered = sorted(files)
+    in_backlog = [
+        f for f in ordered
+        if f.resolve().is_relative_to(product_base)
+        and f.resolve().relative_to(product_base).parts[:1] == ("backlog",)
+    ]
+    canonical = in_backlog[0] if in_backlog else ordered[0]
+    return [f for f in ordered if f != canonical]
+
+
+def resolve_graduation_blocker(
+    project_dir: Path | str, code: str, choose: str | None = None,
+) -> dict[str, Any]:
+    """Resolve a graduation blocker through doctor's executor (archived, reversible).
+
+    Only blocker codes with a deterministic resolution are supported here;
+    everything else routes to the doctor skill's prompted-fix flow.
+    """
+    project = Path(project_dir).expanduser().resolve()
+    if code not in _RESOLVABLE_BLOCKER_CODES:
+        return {
+            "status": "unsupported",
+            "code": code,
+            "detail": (
+                f"No deterministic resolution for blocker '{code}'. "
+                "Run /sweetclaude:doctor for the prompted-fix flow."
+            ),
+        }
+
+    characterization = characterize_project(project)
+    product_base = Path(
+        characterization.get("product_base")
+        or project / ".sweetclaude" / "product"
+    ).resolve()
+    duplicates = characterization.get("ids", {}).get("duplicates", [])
+    if not duplicates:
+        return {
+            "status": "nothing-to-resolve",
+            "code": code,
+            "detail": "No duplicate work-item IDs found.",
+        }
+
+    known_ids = _collect_known_ids(product_base)
+    doctor_script = SCRIPTS_DIR / "doctor.py"
+
+    archive_result = subprocess.run(
+        [sys.executable, str(doctor_script), "create-archive",
+         "--project-dir", str(project)],
+        capture_output=True, text=True, check=False,
+    )
+    if archive_result.returncode != 0:
+        return {
+            "status": "error",
+            "detail": f"create-archive failed: {archive_result.stderr}",
+        }
+    archive_dir = json.loads(archive_result.stdout)["archive_dir"]
+
+    findings: list[dict[str, Any]] = []
+    renumbered: list[dict[str, Any]] = []
+    renamed: list[dict[str, Any]] = []
+    for group in duplicates:
+        dup_id = str(group.get("id", ""))
+        files = [
+            (product_base / f) if not Path(f).is_absolute() else Path(f)
+            for f in group.get("files", [])
+        ]
+        # The duplicate groups key on FILENAME ids (characterize_project).
+        # A file whose frontmatter carries a different valid id is misnamed,
+        # not duplicated: rename it to match its frontmatter. Renumbering it
+        # would clobber a valid id other artifacts may reference.
+        colliding: list[Path] = []
+        for path in files:
+            fm_id = _frontmatter_id(path)
+            if fm_id and fm_id != dup_id and _WORK_ITEM_ID_RE.match(fm_id):
+                dest = path.parent / path.name.replace(dup_id, fm_id, 1)
+                findings.append({
+                    "id": f"graduation-blocker:misnamed-file:{path.name}",
+                    "category": "file_diagnostics",
+                    "summary": (
+                        f"Rename {path.name} to match its frontmatter id {fm_id}"
+                    ),
+                    "fix_type": "prompted",
+                    "fix_recipe": {
+                        "action": "file_move",
+                        "src": str(path),
+                        "dest": str(dest),
+                        "file": str(path),
+                    },
+                })
+                renamed.append({
+                    "id": fm_id,
+                    "from": str(path),
+                    "to": str(dest),
+                })
+            else:
+                colliding.append(path)
+
+        if len(colliding) < 2:
+            continue
+        targets = _pick_renumber_targets(colliding, product_base, choose)
+        for target in targets:
+            new_id = _next_available_id(dup_id, known_ids)
+            known_ids.add(new_id)
+            findings.append({
+                "id": f"graduation-blocker:duplicate-id:{dup_id}",
+                "category": "file_diagnostics",
+                "summary": f"Renumber duplicate {dup_id} -> {new_id}",
+                "fix_type": "prompted",
+                "fix_recipe": {
+                    "action": "renumber_duplicate",
+                    "file": str(target),
+                    "old_id": dup_id,
+                    "new_id": new_id,
+                },
+            })
+            renumbered.append({
+                "old_id": dup_id,
+                "new_id": new_id,
+                "file": str(target),
+            })
+
+    fix_result = subprocess.run(
+        [sys.executable, str(doctor_script), "auto-fix",
+         "--project-dir", str(project),
+         "--archive-dir", archive_dir,
+         "--include-prompted"],
+        input=json.dumps(findings),
+        capture_output=True, text=True, check=False,
+    )
+    if fix_result.returncode != 0:
+        return {
+            "status": "error",
+            "detail": f"auto-fix failed: {fix_result.stderr}",
+            "archive_dir": archive_dir,
+        }
+    fix_payload = json.loads(fix_result.stdout)
+    failed = [
+        a for a in fix_payload.get("actions", [])
+        if a.get("action") == "auto-fix-failed"
+    ]
+    if failed:
+        return {
+            "status": "error",
+            "detail": f"{len(failed)} renumber action(s) failed",
+            "failed_actions": failed,
+            "archive_dir": archive_dir,
+        }
+
+    return {
+        "status": "resolved",
+        "code": code,
+        "renumbered": renumbered,
+        "renamed": renamed,
+        "archive_dir": archive_dir,
+        "restore_hint": (
+            f"python3 {doctor_script} restore --project-dir {project} "
+            f"--archive-dir {archive_dir}"
+        ),
+    }
+
+
+def _get_real_duplicate_ids(project: Path, characterization: dict[str, Any]) -> list[str]:
+    """Return a list of duplicate work-item IDs from the characterization.
+
+    Only counts real (non-backup/non-derived) files. Uses is_derived_file
+    to exclude .bak and other derived files.
+    """
+    duplicates = characterization.get("ids", {}).get("duplicates", [])
+    if not duplicates:
+        return []
+    real_dup_ids: list[str] = []
+    for group in duplicates:
+        dup_id = str(group.get("id", ""))
+        files = group.get("files", [])
+        real_files = [
+            f for f in files
+            if not is_derived_file(str(f))
+        ]
+        if len(real_files) >= 2:
+            real_dup_ids.append(dup_id)
+    return real_dup_ids
+
+
 def guard_project(project_dir: Path | str) -> dict[str, Any]:
     """Return a concise read-only routing decision for migration guards."""
     project = Path(project_dir).expanduser().resolve()
@@ -1216,62 +2032,100 @@ def guard_project(project_dir: Path | str) -> dict[str, Any]:
     product_base_exists = bool(characterization.get("product_base_exists"))
     standard_product_dir_exists = (project / ".sweetclaude" / "product").is_dir()
     old_prefix_count = _old_prefix_count(characterization)
+    prefix_counts = characterization.get("counts", {}).get("prefixes", {})
+    flat_bl_count = int(prefix_counts.get("BL", 0) or 0) if isinstance(prefix_counts, dict) else 0
+    has_typed_backlog_dirs = bool(
+        characterization.get("layout", {}).get("has_typed_backlog_dirs")
+    )
     accepted_legacy_layout = _taxonomy_recovery_accepts_legacy_layout(state)
     route = diagnosis.get("recovery_route")
 
-    if route == "stabilize-without-migration":
-        status = "run-recover"
-        migrate_allowed = False
-        message = (
-            "This project is in a recoverable SweetClaude migration/update state. "
-            "Run /sweetclaude:recover before any taxonomy migration."
-        )
-    elif route == "manual-escalation":
-        status = "manual-review"
-        migrate_allowed = False
-        message = (
-            "This project needs manual SweetClaude recovery review before migration "
-            "or other maintenance commands."
-        )
-    elif accepted_legacy_layout:
-        status = "compatibility-mode"
-        migrate_allowed = False
-        message = (
-            "This project has an accepted legacy taxonomy layout. Do not run "
-            "/sweetclaude:migrate unless a future layout-specific migration plan "
-            "explicitly allows it."
-        )
-    elif old_prefix_count:
-        status = "migration-may-be-needed"
-        migrate_allowed = True
-        message = (
-            "Old-format work items were found and no recovery-only state was "
-            "detected. Review /sweetclaude:migrate before executing it."
-        )
-    elif not product_base_exists:
-        status = "missing-product-base"
-        migrate_allowed = False
-        message = (
-            "SweetClaude product artifacts were not found. Run /sweetclaude:doctor "
-            "or /sweetclaude:setup instead of migration."
-        )
-    else:
-        status = "ok"
-        migrate_allowed = False
-        message = "No SweetClaude migration or recovery guard is currently active."
+    graduation_blockers: list[dict[str, Any]] = []
 
-    return {
+    # S7: typed-legacy-migrate route is primary check for typed layout
+    if route == "typed-legacy-migrate":
+        project_shape = "typed_legacy_backlog"
+        duplicate_ids = _get_real_duplicate_ids(project, characterization)
+        if duplicate_ids:
+            # Surface duplicates as graduation_blockers so they appear in the payload
+            # and the user can see which ids need resolution before migration.
+            graduation_blockers = [{
+                "code": "duplicate-ids",
+                "detail": f"Duplicate work-item IDs must be resolved before migration: {', '.join(sorted(duplicate_ids))}",
+                "duplicate_ids": sorted(duplicate_ids),
+                "resolution": {
+                    "capability_id": "doctor.fix_graduation_blockers",
+                    "delegate_skill": "sweetclaude:doctor",
+                },
+            }]
+    elif route == "stabilize-without-migration":
+        project_shape = "recovery_required"
+    elif route == "manual-escalation":
+        project_shape = "manual_escalation"
+    elif accepted_legacy_layout and old_prefix_count == 0:
+        # No old prefixes remain — check graduation eligibility
+        grad_check = graduation_check(project)
+        if grad_check.get("graduation_allowed"):
+            project_shape = "graduation_candidate"
+        elif grad_check.get("reason") == "validation-failures" and all(
+            b.get("code") in _FIXABLE_BLOCKER_CODES
+            for b in grad_check.get("blockers", [])
+        ):
+            project_shape = "graduation_blocked"
+            graduation_blockers = [
+                _with_blocker_resolution(b)
+                for b in grad_check.get("blockers", [])
+            ]
+        else:
+            project_shape = "accepted_legacy_taxonomy"
+    elif accepted_legacy_layout and old_prefix_count:
+        # Stabilized but old prefixes still on disk — route to migration
+        project_shape = "typed_legacy_backlog"
+        duplicate_ids = _get_real_duplicate_ids(project, characterization)
+        if duplicate_ids:
+            graduation_blockers = [{
+                "code": "duplicate-ids",
+                "detail": f"Duplicate work-item IDs must be resolved before migration: {', '.join(sorted(duplicate_ids))}",
+                "duplicate_ids": sorted(duplicate_ids),
+                "resolution": {
+                    "capability_id": "doctor.fix_graduation_blockers",
+                    "delegate_skill": "sweetclaude:doctor",
+                },
+            }]
+    elif old_prefix_count and flat_bl_count and not has_typed_backlog_dirs:
+        project_shape = "flat_bl_backlog"
+    elif old_prefix_count:
+        project_shape = "manual_escalation"
+    elif not product_base_exists:
+        project_shape = "missing_product_base"
+    else:
+        project_shape = "current_layout"
+
+    shape_config = project_shape_config(project_shape)
+    status = str(shape_config.get("guard_status", "") or "")
+    migrate_allowed = bool(shape_config.get("migrate_allowed", False))
+    message = str(shape_config.get("message", "") or "")
+
+    # S7: collect real duplicate ids from graduation_blockers for payload inclusion
+    real_dup_ids_flat: list[str] = []
+    for b in graduation_blockers:
+        if b.get("code") == "duplicate-ids":
+            real_dup_ids_flat.extend(b.get("duplicate_ids", []))
+
+    payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "command": "guard",
         "project_dir": str(project),
         "status": status,
         "message": message,
+        "project_shape": project_shape,
         "recovery_route": route,
         "migrate_allowed": migrate_allowed,
         "standard_product_dir_exists": standard_product_dir_exists,
         "product_base": product_base,
         "product_base_exists": product_base_exists,
         "old_prefix_count": old_prefix_count,
+        "graduation_blockers": graduation_blockers,
         "failure_class_codes": diagnosis.get("failure_class_codes", []),
         "blocking_factor_codes": [
             factor.get("code") for factor in diagnosis.get("blocking_factors", [])
@@ -1279,6 +2133,9 @@ def guard_project(project_dir: Path | str) -> dict[str, Any]:
         "pending_doctor_prompts": diagnosis.get("pending_doctor_prompts", []),
         "taxonomy_recovery_status": state.get("taxonomy_recovery_status"),
     }
+    if real_dup_ids_flat:
+        payload["duplicate_ids"] = sorted(set(real_dup_ids_flat))
+    return payload
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1317,6 +2174,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Required confirmation for mutating recovery execution",
     )
     execute_parser.add_argument(
+        "--approval-receipt",
+        type=Path,
+        help="Approval receipt generated from the current recovery plan",
+    )
+    execute_parser.add_argument(
         "--fail-after-operations",
         type=int,
         default=None,
@@ -1338,6 +2200,32 @@ def main(argv: list[str] | None = None) -> int:
     resume_parser.add_argument("--run-dir", required=True, help="Recovery run directory")
     resume_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
 
+    grad_check_parser = subparsers.add_parser(
+        "graduation-check",
+        help="Read-only check: is this project ready to graduate from compatibility mode?",
+    )
+    grad_check_parser.add_argument("--project-dir", default=".", help="Project directory")
+    grad_check_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
+
+    grad_parser = subparsers.add_parser(
+        "graduate",
+        help="Graduate project from compatibility mode (state-only write)",
+    )
+    grad_parser.add_argument("--project-dir", default=".", help="Project directory")
+    grad_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
+
+    resolve_parser = subparsers.add_parser(
+        "resolve-graduation-blocker",
+        help="Resolve a graduation blocker through doctor's executor (archived, reversible)",
+    )
+    resolve_parser.add_argument("--project-dir", default=".", help="Project directory")
+    resolve_parser.add_argument("--code", required=True, help="Blocker code to resolve")
+    resolve_parser.add_argument(
+        "--choose", default=None,
+        help="Duplicate file to renumber (defaults to the non-canonical copy)",
+    )
+    resolve_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
+
     args = parser.parse_args(argv)
 
     try:
@@ -1353,12 +2241,21 @@ def main(argv: list[str] | None = None) -> int:
             result = execute_project(
                 Path(args.project_dir),
                 approve=args.approve,
+                approval_receipt=args.approval_receipt,
                 fail_after_operations=args.fail_after_operations,
             )
         elif args.command == "rollback":
             result = rollback_project(Path(args.run_dir))
         elif args.command == "resume":
             result = resume_project(Path(args.run_dir))
+        elif args.command == "graduation-check":
+            result = graduation_check(Path(args.project_dir))
+        elif args.command == "graduate":
+            result = graduate(Path(args.project_dir))
+        elif args.command == "resolve-graduation-blocker":
+            result = resolve_graduation_blocker(
+                Path(args.project_dir), args.code, choose=args.choose,
+            )
         else:
             parser.error(f"unsupported command: {args.command}")
     except Exception as exc:

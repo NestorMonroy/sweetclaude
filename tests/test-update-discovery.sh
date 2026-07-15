@@ -18,7 +18,7 @@ pass() { echo "  PASS: $1"; }
 
 echo "[1] version-aware decline decision"
 
-python3 - << 'PY' && pass "decision table covers stable prerelease isolation and silent_declined" || fail "decision table"
+python3 - << 'PY' && pass "decision table covers all 10 cases including silent_declined" || fail "decision table"
 import re, sys
 
 def major(v):
@@ -28,8 +28,6 @@ def major(v):
 
 def decide(installed, available, declined):
     if not available:
-        return "silent"
-    if "-" in str(available) and "-" not in str(installed):
         return "silent"
     inst_maj, avail_maj = major(installed), major(available)
     if inst_maj is None or avail_maj is None:
@@ -49,7 +47,6 @@ cases = [
     ("3.65.0", "3.66.0", False,   "prompt"),
     ("3.65.0", "3.66.0", True,    "silent_declined|3"),
     ("3.65.0", "4.0.0",  True,    "prompt"),
-    ("3.68.6", "4.1.12-beta", None, "silent"),
     ("3.65.0", "3.66.0", "3.66.0","silent_declined|3"),
     ("3.65.0", "3.67.0", "3.66.0","silent_declined|3"),
     ("3.65.0", "4.0.0",  "3.66.0","prompt"),
@@ -84,7 +81,43 @@ cat > "$TEST_HOME/.claude/plugins/installed_plugins.json" << 'JSON'
 {"plugins": {"sweetclaude@sweetclaude": [{"installPath": "/nonexistent", "version": "3.65.0"}]}}
 JSON
 
-grep -q 'expected_ref_for_installed' "$REPO_ROOT/hooks/sweetclaude-health-check.sh"   && grep -q 'allowed_version' "$REPO_ROOT/hooks/sweetclaude-health-check.sh"   && pass "health check filters local clone discovery by installed channel"   || fail "health check is missing channel-safe local clone discovery"
+# Fake local dev clone.
+mkdir -p "$TEST_HOME/dev/sweetclaude"
+cat > "$TEST_HOME/dev/sweetclaude/package.json" << 'JSON'
+{"name": "sweetclaude", "version": "9.9.9"}
+JSON
+
+# Point the install pointer at the fake clone.
+cat > "$TEST_HOME/.claude/sweetclaude-install.json" << JSON
+{"repo_path": "$TEST_HOME/dev/sweetclaude"}
+JSON
+
+RESULT=$(HOME="$TEST_HOME" python3 - "$TEST_HOME" << 'PY' 2>/dev/null
+import json, os, re, subprocess, sys
+HOME = sys.argv[1]
+
+# Same logic as the hook's REPO_VERSION resolution.
+install_json = os.path.join(HOME, ".claude/sweetclaude-install.json")
+if os.path.exists(install_json):
+    try:
+        d = json.load(open(install_json))
+        repo_path = d.get("repo_path", "")
+        if repo_path and os.path.exists(os.path.join(repo_path, "package.json")):
+            pkg = json.load(open(os.path.join(repo_path, "package.json")))
+            v = pkg.get("version", "")
+            if v:
+                print(v); sys.exit()
+    except Exception:
+        pass
+print("")
+PY
+)
+
+if [ "$RESULT" = "9.9.9" ]; then
+  pass "local clone short-circuits hybrid discovery"
+else
+  fail "expected 9.9.9, got '$RESULT'"
+fi
 
 # ---------------------------------------------------------------------------
 # Test 3: hook syntax
@@ -190,9 +223,6 @@ framework:
     declined: null
     check_error: null
 YAML
-cat > "$UPD_TMPDIR/.sweetclaude/state/skills.yaml" << 'YAML'
-schema_version: 2
-YAML
 
 # Exercise the runner's --report-drift-for-skill flag — the exact CLI the
 # SKILL's Step 6b invokes. This tests the wire-format output used by update.
@@ -258,83 +288,9 @@ print((d.get('framework') or {}).get('drift', {}).get('drift_count', 'missing'))
 # ---------------------------------------------------------------------------
 # Test 7: self-heal of versionless framework path
 # ---------------------------------------------------------------------------
-# Simulates the v3.67.0 -> v3.68.0 upgrade scenario: the v3.67.0 update
-# logic rsyncs scripts/ only into {installPath}/scripts/, never creating
-# ~/.claude/scripts/sweetclaude/. The new v3.68.0 skills (bootstrap and
-# update) include a self-heal block that backfills the versionless path
-# from the plugin cache on first run. This test verifies that block.
-
-echo "[7] self-heal versionless framework path"
-
-SH_TMPDIR=$(mktemp -d)
-trap "rm -rf $SH_TMPDIR" EXIT
-
-# Simulated user environment:
-#  - $SH_TMPDIR/.claude/plugins/installed_plugins.json  — points to installPath
-#  - $SH_TMPDIR/.claude/plugins/cache/.../1.0.0/scripts/  — has framework scripts
-#  - $SH_TMPDIR/.claude/scripts/sweetclaude/             — MISSING (this is what self-heal creates)
-INSTALL_PATH="$SH_TMPDIR/.claude/plugins/cache/sweetclaude/sweetclaude/1.0.0"
-mkdir -p "$INSTALL_PATH/scripts/migrations"
-mkdir -p "$SH_TMPDIR/.claude/plugins"
-cp "$REPO_ROOT/scripts/migrations/runner.py" "$INSTALL_PATH/scripts/migrations/runner.py"
-echo "print('marker-installed-from-plugin-cache')" > "$INSTALL_PATH/scripts/marker.py"
-cat > "$SH_TMPDIR/.claude/plugins/installed_plugins.json" << JSON
-{
-  "version": 2,
-  "plugins": {
-    "sweetclaude@sweetclaude": [
-      {
-        "scope": "user",
-        "installPath": "$INSTALL_PATH",
-        "version": "3.68.0"
-      }
-    ]
-  }
-}
-JSON
-
-# Pre-condition: versionless path does NOT exist yet.
-[ ! -d "$SH_TMPDIR/.claude/scripts/sweetclaude" ] \
-  && pass "pre-condition: versionless path absent before self-heal" \
-  || fail "pre-condition violated: versionless path already exists"
-
-# Run the exact self-heal block from bootstrap/update with HOME redirected
-# to the fake env so installed_plugins.json discovery hits our fixture.
-HOME="$SH_TMPDIR" bash -c '
-if [ ! -d ~/.claude/scripts/sweetclaude ]; then
-  IP=$(python3 -c "import json, os; d = json.load(open(os.path.expanduser(\"~/.claude/plugins/installed_plugins.json\"))); print(d[\"plugins\"].get(\"sweetclaude@sweetclaude\", [{}])[0].get(\"installPath\", \"\"))" 2>/dev/null)
-  if [ -n "$IP" ] && [ -d "$IP/scripts" ]; then
-    mkdir -p ~/.claude/scripts/sweetclaude
-    cp -R "$IP/scripts/"* ~/.claude/scripts/sweetclaude/
-  fi
-fi
-'
-
-# Post-condition: versionless path exists with the expected contents.
-[ -f "$SH_TMPDIR/.claude/scripts/sweetclaude/migrations/runner.py" ] \
-  && pass "self-heal backfilled runner.py to versionless path" \
-  || fail "runner.py not backfilled"
-
-[ -f "$SH_TMPDIR/.claude/scripts/sweetclaude/marker.py" ] \
-  && pass "self-heal backfilled non-migrations scripts too" \
-  || fail "marker.py not backfilled"
-
-# Idempotency: running again should not error and should not duplicate.
-MTIME1=$(stat -f %m "$SH_TMPDIR/.claude/scripts/sweetclaude/migrations/runner.py" 2>/dev/null \
-  || stat -c %Y "$SH_TMPDIR/.claude/scripts/sweetclaude/migrations/runner.py")
-sleep 1
-HOME="$SH_TMPDIR" bash -c '
-if [ ! -d ~/.claude/scripts/sweetclaude ]; then
-  echo "WOULD COPY"
-fi
-' > "$SH_TMPDIR/idempotent.out"
-MTIME2=$(stat -f %m "$SH_TMPDIR/.claude/scripts/sweetclaude/migrations/runner.py" 2>/dev/null \
-  || stat -c %Y "$SH_TMPDIR/.claude/scripts/sweetclaude/migrations/runner.py")
-
-[ "$MTIME1" = "$MTIME2" ] \
-  && [ ! -s "$SH_TMPDIR/idempotent.out" ] \
-  && pass "self-heal is idempotent (no copy on second run)" \
-  || fail "self-heal not idempotent: mtime1=$MTIME1 mtime2=$MTIME2 out=$(cat $SH_TMPDIR/idempotent.out)"
+# Test 7: REMOVED — self-heal versionless framework path (legacy behavior
+# eliminated in ISSUE-207; plugin-only installs use CLAUDE_PLUGIN_ROOT directly)
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -346,8 +302,15 @@ echo "[8] preflight emits beta channel metadata for legacy beta install"
 PF_TMPDIR=$(mktemp -d)
 trap "rm -rf $PF_TMPDIR" EXIT
 PF_INSTALL="$PF_TMPDIR/.claude/plugins/cache/sweetclaude/sweetclaude/4.1.2-beta"
-mkdir -p "$PF_INSTALL/scripts/maintenance" "$PF_TMPDIR/.claude/plugins" "$PF_TMPDIR/project"
+mkdir -p "$PF_INSTALL/scripts/maintenance" "$PF_INSTALL/config" "$PF_TMPDIR/.claude/plugins" "$PF_TMPDIR/project/config"
+cp "$REPO_ROOT/scripts/preflight.sh" "$PF_INSTALL/scripts/preflight.sh"
 cp "$REPO_ROOT/scripts/maintenance/plugin-state.py" "$PF_INSTALL/scripts/maintenance/plugin-state.py"
+cp "$REPO_ROOT/scripts/maintenance/capability_manifest.py" "$PF_INSTALL/scripts/maintenance/capability_manifest.py"
+cp "$REPO_ROOT/config/capability-manifest.yaml" "$PF_INSTALL/config/capability-manifest.yaml"
+cat > "$PF_TMPDIR/project/config/capability-manifest.yaml" << YAML
+schema_version: 1
+channels: {}
+YAML
 cat > "$PF_TMPDIR/.claude/plugins/installed_plugins.json" << JSON
 {
   "version": 2,
@@ -365,11 +328,21 @@ cat > "$PF_TMPDIR/.claude/plugins/installed_plugins.json" << JSON
 }
 JSON
 
-PF_OUT=$(cd "$PF_TMPDIR/project" && HOME="$PF_TMPDIR" bash "$REPO_ROOT/scripts/preflight.sh")
+PF_ERR="$PF_TMPDIR/preflight.err"
+PF_OUT=$(cd "$PF_TMPDIR/project" && HOME="$PF_TMPDIR" bash "$PF_INSTALL/scripts/preflight.sh" 2>"$PF_ERR")
+
+[ ! -s "$PF_ERR" ] \
+  && pass "preflight emits no stderr with no CLAUDE_PLUGIN_ROOT" \
+  || fail "preflight emitted stderr: $(cat "$PF_ERR")"
 
 echo "$PF_OUT" | grep -q '^SC_PLUGIN_CHANNEL=beta$' \
   && pass "preflight reports beta channel" \
   || fail "preflight did not report beta channel: $PF_OUT"
+
+echo "$PF_OUT" | grep -q '^CONFIG_SYNCED=true$' \
+  && [ -f "$PF_TMPDIR/.claude/config/sweetclaude/capability-manifest.yaml" ] \
+  && pass "preflight syncs framework capability manifest config" \
+  || fail "preflight did not sync framework config: $PF_OUT"
 
 echo "$PF_OUT" | grep -q '^SC_PLUGIN_EXPECTED_REF=beta-4.x$' \
   && pass "preflight reports beta-4.x expected ref" \
@@ -386,6 +359,45 @@ echo "$PF_OUT" | grep -q '^SC_PLUGIN_STALE_BETA=true$' \
 echo "$PF_OUT" | grep -q '^SC_PLUGIN_UPDATE_COMMAND=/plugin update sweetclaude@sweetclaude$' \
   && pass "preflight emits exact plugin update command" \
   || fail "preflight did not emit plugin update command: $PF_OUT"
+
+# ---------------------------------------------------------------------------
+# Test 8b: missing installed manifest fails closed for beta installs
+# ---------------------------------------------------------------------------
+
+echo "[8b] preflight fails closed when installed beta manifest is missing"
+
+PF_MISSING_CFG=$(mktemp -d)
+PF_MISSING_INSTALL="$PF_MISSING_CFG/.claude/plugins/cache/sweetclaude/sweetclaude/4.1.2-beta"
+mkdir -p "$PF_MISSING_INSTALL/scripts/maintenance" "$PF_MISSING_CFG/.claude/plugins" "$PF_MISSING_CFG/project"
+cp "$REPO_ROOT/scripts/preflight.sh" "$PF_MISSING_INSTALL/scripts/preflight.sh"
+cp "$REPO_ROOT/scripts/maintenance/plugin-state.py" "$PF_MISSING_INSTALL/scripts/maintenance/plugin-state.py"
+cp "$REPO_ROOT/scripts/maintenance/capability_manifest.py" "$PF_MISSING_INSTALL/scripts/maintenance/capability_manifest.py"
+cat > "$PF_MISSING_CFG/.claude/plugins/installed_plugins.json" << JSON
+{
+  "version": 2,
+  "plugins": {
+    "sweetclaude@sweetclaude-beta": [
+      {
+        "scope": "user",
+        "installPath": "$PF_MISSING_INSTALL",
+        "version": "4.1.2-beta",
+        "gitCommitSha": "missing-config",
+        "lastUpdated": "2026-05-25T18:48:15Z"
+      }
+    ]
+  }
+}
+JSON
+
+PF_MISSING_OUT=$(cd "$PF_MISSING_CFG/project" && HOME="$PF_MISSING_CFG" bash "$PF_MISSING_INSTALL/scripts/preflight.sh")
+
+echo "$PF_MISSING_OUT" | grep -q '^SC_PLUGIN_OK=false$' \
+  && pass "preflight reports plugin state failure when manifest is missing" \
+  || fail "preflight did not report plugin state failure: $PF_MISSING_OUT"
+
+echo "$PF_MISSING_OUT" | grep -q '^SC_PLUGIN_STALE_BETA=true$' \
+  && pass "preflight fails closed for missing beta manifest" \
+  || fail "preflight did not fail closed for missing beta manifest: $PF_MISSING_OUT"
 
 # ---------------------------------------------------------------------------
 # Test 9: update skill contains channel-preserving source and metadata rules

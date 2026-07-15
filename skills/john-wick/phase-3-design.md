@@ -16,6 +16,12 @@ Update `current_phase: DESIGN` in `john-wick.yaml`.
 
 Invoke `sweetclaude:design-architecture` with: PRD path, stories path, compliance context path. The compliance context informs data residency requirements, encryption at rest/in transit, and audit logging requirements — ensure the architecture document explicitly addresses each `derived_frameworks` entry from `compliance-context.yaml`.
 
+The architecture document must preserve the frozen
+`success_criteria_contract_hash` and map design decisions to relevant
+`criterion_ids`. If a design requirement cannot trace to a frozen criterion,
+route it to a `criteria-amendment-request.yaml`, backlog item, split-story
+proposal, or human escalation.
+
 Write architecture document to `docs/architecture-[feature-name]-v1-[YYYYMMDD].md`.
 Record in `created_artifacts`: `{step: DS1, type: architecture, path: ..., version: 1}`.
 Update `current_step: DS2`.
@@ -66,6 +72,13 @@ Update `current_step: DS4`.
 
 ## DS4 — Architecture and impact caucus (Autonomous)
 
+Before spawning the caucus, apply `../process-controls.md` using
+`john-wick.yaml process_control.steps.DS4`. If no budget remains or a stop
+disposition is active, set `status: waiting_for_user`,
+`interactive_gate_pending.step: DS4`, and ask whether to approve a fresh
+caucus budget, reopen the design contract, or pause. Do not spawn reviewers
+while stopped.
+
 Run a 3-turn architecture review caucus with these four personas (pass inline):
 
 **Personas for architecture-impact:**
@@ -76,8 +89,17 @@ Run a 3-turn architecture review caucus with these four personas (pass inline):
 
 Invoke caucus with: architecture doc, tech spec, contract analysis, compliance context, 3 turns, question: "Does this architecture correctly handle the service's compliance obligations, service contracts, and failure modes? What will break first in production?"
 
+The caucus may judge whether the design satisfies the frozen
+`criterion_ids`, but it may not add completion criteria. Findings outside the
+frozen success criteria are routed as amendment requests, backlog, split-story
+work, or human escalation.
+
 Write output to `.sweetclaude/caucus/architecture-review-[YYYYMMDD].md`.
 Record in `caucus_outputs`: `{step: DS4, path: ...}`.
+Update `process_control.steps.DS4` with one caucus round and four reviewer
+agents used. If the caucus returns blocking findings that require another
+caucus or expand the architecture contract, increment blocking failures and
+stop for user decision before any recaucus.
 Update `current_step: DS5`.
 
 ## DS5 — Classify design findings (Autonomous)
@@ -135,9 +157,9 @@ This check-in always runs. It is the last point at which design artifacts can be
 
 Invoke `sweetclaude:john-wick-checkin` with:
 - `phase=DESIGN`
-- `question=Does the approved design (architecture, tech spec, contract analysis) still match the PRD and stories? Has the cascade update introduced any inconsistencies? Are there open design questions that will surface as implementation surprises?`
+- `question=Does the approved design (architecture, tech spec, contract analysis) still match the PRD, stories, frozen success_criteria_contract_hash, and criterion_ids? Has the cascade update introduced any inconsistencies? Are there open design questions that will surface as implementation surprises?`
 - `discovery_artifacts={paths from discovery_artifacts in john-wick.yaml}`
-- `phase_artifacts={architecture path, tech spec path, contract analysis path, PRD path, stories path}`
+- `phase_artifacts={architecture path, tech spec path, contract analysis path, PRD path, stories path, success criteria contract path}`
 - `post_lock=false`
 
 Record output in `checkin_outputs`: `{step: CK3, path: ..., findings: ..., escalated: false}`.

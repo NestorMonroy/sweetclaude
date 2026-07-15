@@ -4,9 +4,8 @@ user-invocable: true
 description: "Define and maintain a shared domain glossary."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:product-terminology" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash
 PRODUCT_BASE=$(python3 -c "

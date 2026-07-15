@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+import recovery.recover_project as recover_project
 from recovery.recover_project import execute_project, resume_project, rollback_project
+from recovery.recover_project import plan_project
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "syncog-layout"
@@ -32,7 +34,10 @@ def _copy_syncog_fixture(tmp_path: Path) -> Path:
         "\n".join([
             "framework:",
             "  installed_version: 4.1.1-beta",
-            "  migration_status: complete",
+            # incomplete -> recovery_required (stabilize-without-migration), the
+            # flow these recovery-lifecycle tests exercise. Post-S7 a "complete"
+            # syncog routes to typed-legacy-migrate instead.
+            "  migration_status: incomplete",
             "paths:",
             "  product_base: docs/product",
             "",
@@ -59,11 +64,85 @@ def _state(project: Path) -> dict:
     )
 
 
+def _approval_receipt_from_plan(project: Path, plan: dict, **overrides) -> Path:
+    receipt = dict(plan["mutation_plan"]["approval_receipt_template"])
+    receipt["approved"] = True
+    for key, value in overrides.items():
+        if key == "context":
+            context = dict(receipt["context"])
+            context.update(value)
+            receipt["context"] = context
+        else:
+            receipt[key] = value
+    path = project / ".sweetclaude" / "state" / "recovery-approval-receipt.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8")
+    return path
+
+
 def test_execute_requires_explicit_approval(tmp_path):
     project = _copy_syncog_fixture(tmp_path)
 
     with pytest.raises(PermissionError, match="--approve"):
         execute_project(project)
+
+
+def test_recovery_plan_emits_mutation_lifecycle_plan(tmp_path):
+    project = _copy_syncog_fixture(tmp_path)
+
+    plan = plan_project(project)
+
+    mutation_plan = plan["mutation_plan"]
+    assert mutation_plan["status"] == "approval-required"
+    assert mutation_plan["approval_receipt_template"]["approved"] is False
+    assert mutation_plan["declared_write_set"]
+    assert ".sweetclaude/state/recovery-runs/" in mutation_plan["declared_write_set"]
+    assert ".sweetclaude/state" in mutation_plan["declared_blast_radius"]
+    assert "docs/product" in mutation_plan["declared_blast_radius"]
+    assert any(check["id"] == "verification" for check in mutation_plan["postconditions"])
+
+
+def test_execute_requires_approval_receipt_before_writes(tmp_path):
+    project = _copy_syncog_fixture(tmp_path)
+    before_product = _product_snapshot(project)
+
+    with pytest.raises(PermissionError, match="approval receipt"):
+        execute_project(project, approve=True)
+
+    assert _product_snapshot(project) == before_product
+    assert not (project / ".sweetclaude" / "state" / "recovery-runs").exists()
+
+
+def test_execute_rejects_stale_approval_receipt_before_writes(tmp_path):
+    project = _copy_syncog_fixture(tmp_path)
+    plan = plan_project(project)
+    receipt = _approval_receipt_from_plan(project, plan, write_set_hash="stale-write-set")
+
+    with pytest.raises(ValueError, match="write_set_hash mismatch"):
+        execute_project(project, approve=True, approval_receipt=receipt)
+
+    assert not (project / ".sweetclaude" / "state" / "recovery-runs").exists()
+
+
+def test_execute_rejects_approval_when_operation_value_changes_before_writes(tmp_path, monkeypatch):
+    project = _copy_syncog_fixture(tmp_path)
+    plan = plan_project(project)
+    receipt = _approval_receipt_from_plan(project, plan)
+    original_state_operations = recover_project._state_operations
+
+    def changed_state_operations(project_arg, diagnosis):
+        operations = original_state_operations(project_arg, diagnosis)
+        for operation in operations:
+            if operation["id"] == "record-taxonomy-recovery-state":
+                operation["planned_value"] = "changed-after-approval"
+        return operations
+
+    monkeypatch.setattr(recover_project, "_state_operations", changed_state_operations)
+
+    with pytest.raises(ValueError, match="plan_hash mismatch"):
+        execute_project(project, approve=True, approval_receipt=receipt)
+
+    assert not (project / ".sweetclaude" / "state" / "recovery-runs").exists()
 
 
 def test_execute_snapshots_applies_manifest_and_verifies_without_product_changes(tmp_path):
@@ -74,10 +153,17 @@ def test_execute_snapshots_applies_manifest_and_verifies_without_product_changes
         encoding="utf-8",
     )
     before_product = _product_snapshot(project)
+    receipt = _approval_receipt_from_plan(project, plan_project(project))
 
-    result = execute_project(project, approve=True)
+    result = execute_project(project, approve=True, approval_receipt=receipt)
 
     assert result["status"] == "succeeded", result["verification"]
+    lifecycle = result["mutation_lifecycle"]
+    assert lifecycle["status"] == "pass"
+    assert lifecycle["approval"]["status"] == "pass"
+    assert lifecycle["write_set_validation"]["status"] == "pass"
+    assert lifecycle["snapshot_scope_validation"]["status"] == "pass"
+    assert lifecycle["postcondition_validation"]["status"] == "pass"
     assert Path(result["run_dir"]).is_dir()
     assert Path(result["snapshot"]["path"]).is_file()
     assert Path(result["report_path"]).is_file()
@@ -101,6 +187,8 @@ def test_execute_snapshots_applies_manifest_and_verifies_without_product_changes
     assert not pending.exists()
 
     state = _state(project)
+    # Stabilizing normalizes an interrupted migration (incomplete -> deferred)
+    # so the recovered project can be migrated next (recover-then-migrate).
     assert state["framework"]["migration_status"] == "deferred"
     assert state["recovery"]["taxonomy"]["status"] == "stabilized-without-migration"
     assert state["recovery"]["taxonomy"]["blind_taxonomy_migration_allowed"] is False
@@ -115,10 +203,13 @@ def test_rollback_restores_snapshot_after_execute(tmp_path):
     )
     original_prompt = pending.read_text(encoding="utf-8")
 
-    result = execute_project(project, approve=True)
+    receipt = _approval_receipt_from_plan(project, plan_project(project))
+    result = execute_project(project, approve=True, approval_receipt=receipt)
     rollback = rollback_project(result["run_dir"])
 
     assert rollback["status"] == "rolled_back"
+    assert rollback["restore_proof"]["status"] == "pass"
+    assert rollback["restore_proof"]["method"] == "command"
     assert Path(rollback["report_path"]).is_file()
     assert "Rollback Status" in Path(rollback["report_path"]).read_text(
         encoding="utf-8"
@@ -138,7 +229,8 @@ def test_resume_continues_interrupted_run_from_manifest(tmp_path):
     )
 
     with pytest.raises(RuntimeError, match="injected failure"):
-        execute_project(project, approve=True, fail_after_operations=1)
+        receipt = _approval_receipt_from_plan(project, plan_project(project))
+        execute_project(project, approve=True, approval_receipt=receipt, fail_after_operations=1)
 
     run_dirs = sorted((project / ".sweetclaude" / "state" / "recovery-runs").iterdir())
     assert len(run_dirs) == 1
@@ -167,11 +259,32 @@ def test_resume_continues_interrupted_run_from_manifest(tmp_path):
     )
 
 
+def test_resume_stops_when_repair_loop_budget_exhausted(tmp_path):
+    project = _copy_syncog_fixture(tmp_path)
+    receipt = _approval_receipt_from_plan(project, plan_project(project))
+    with pytest.raises(RuntimeError, match="injected failure"):
+        execute_project(project, approve=True, approval_receipt=receipt, fail_after_operations=1)
+
+    run_dir = next((project / ".sweetclaude" / "state" / "recovery-runs").iterdir())
+    manifest_path = run_dir / "execution-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["resume_count"] = 3
+    manifest["max_resume_attempts"] = 3
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+    stopped = resume_project(run_dir)
+
+    assert stopped["status"] == "stopped"
+    assert stopped["repair_loop"]["stop"] is True
+    assert stopped["repair_loop"]["reason"] == "attempt-budget-exhausted"
+
+
 def test_resume_refuses_interrupted_run_when_snapshot_is_missing(tmp_path):
     project = _copy_syncog_fixture(tmp_path)
 
     with pytest.raises(RuntimeError, match="injected failure"):
-        execute_project(project, approve=True, fail_after_operations=1)
+        receipt = _approval_receipt_from_plan(project, plan_project(project))
+        execute_project(project, approve=True, approval_receipt=receipt, fail_after_operations=1)
 
     run_dir = next((project / ".sweetclaude" / "state" / "recovery-runs").iterdir())
     manifest = json.loads((run_dir / "execution-manifest.json").read_text(
@@ -205,6 +318,7 @@ def test_recover_project_cli_execute_requires_approval(tmp_path):
 
 def test_recover_project_cli_execute_and_rollback(tmp_path):
     project = _copy_syncog_fixture(tmp_path)
+    receipt = _approval_receipt_from_plan(project, plan_project(project))
     execute = subprocess.run(
         [
             sys.executable,
@@ -213,6 +327,8 @@ def test_recover_project_cli_execute_and_rollback(tmp_path):
             "--project-dir",
             str(project),
             "--approve",
+            "--approval-receipt",
+            str(receipt),
             "--pretty",
         ],
         check=False,
@@ -247,7 +363,8 @@ def test_recover_project_cli_execute_and_rollback(tmp_path):
 
 def test_recover_project_cli_resume_is_idempotent_after_success(tmp_path):
     project = _copy_syncog_fixture(tmp_path)
-    executed = execute_project(project, approve=True)
+    receipt = _approval_receipt_from_plan(project, plan_project(project))
+    executed = execute_project(project, approve=True, approval_receipt=receipt)
 
     completed = subprocess.run(
         [

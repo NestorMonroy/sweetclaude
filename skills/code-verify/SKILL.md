@@ -4,7 +4,7 @@ user-invocable: true
 description: "Run verification before claiming work is complete."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:code-verify" 2>/dev/null || true`
+
 
 # Code Verify
 
@@ -56,7 +56,7 @@ When every required check passes for a concrete work item, write a completion
 evidence receipt before making any completion, close, ship, or release claim:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/evidence.py write \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/evidence.py write \
   --project-dir . \
   --subject-id {WORK_ITEM_ID} \
   --receipt-type completion \

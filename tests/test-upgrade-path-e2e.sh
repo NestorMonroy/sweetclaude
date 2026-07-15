@@ -1,11 +1,11 @@
 #!/bin/bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# End-to-end upgrade simulation for plugin-native hook reconciliation.
-# Tests that ensure-global-hooks.py keeps ~/.claude/settings.json clean now
-# that SweetClaude preflight hooks are declared by the plugin manifest, covering:
-#   1. Cleanup of old literal ${CLAUDE_PLUGIN_ROOT} settings entries
-#   2. Idempotency after cleanup
+# End-to-end upgrade simulation for v3.67.0 → v3.68.0.
+# Tests that ensure-global-hooks.py correctly adds the new required global
+# hooks (drift-gate.sh, master-preflight.sh) after an upgrade, covering:
+#   1. Fresh add to a pre-v3.68.0 settings.json
+#   2. Idempotency (second run adds no duplicates)
 #   3. Multi-mirror installed_plugins.json: scope=user, newest-first sort
 #   4. Non-user scope entries are ignored
 
@@ -32,23 +32,21 @@ _assert_json() {
   if [ "${count:-0}" -eq 0 ]; then
     pass "$label"
   else
-    local errors
-    errors=$(printf '%s\n' "$result" | grep -v '^COUNT=' || true)
-    while IFS= read -r line; do
-      [ -n "$line" ] && fail "$label: $line"
-    done <<< "$errors"
+    printf '%s\n' "$result" | grep -v '^COUNT=' | while read -r line; do
+      fail "$label: $line"
+    done
   fi
 }
 
 # ---------------------------------------------------------------------------
-# Test 1: removes old settings.json entries for plugin-native hooks
+# Test 1: adds drift-gate.sh and master-preflight.sh to pre-v3.68.0 state
 # ---------------------------------------------------------------------------
-echo "[1] ensure-global-hooks: removes old plugin-native hooks from settings.json"
+echo "[1] ensure-global-hooks: adds new required hooks to pre-v3.68.0 settings.json"
 
 FX1_HOME="$TMPROOT/home1"
 mkdir -p "$FX1_HOME/.claude"
 
-# Simulate an older settings.json with literal plugin-root hook commands.
+# Simulate v3.67.0 settings.json: has session-preflight but not the new hooks.
 cat > "$FX1_HOME/.claude/settings.json" << 'JSONEOF'
 {
   "hooks": {
@@ -70,7 +68,7 @@ JSONEOF
 
 HOME="$FX1_HOME" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" python3 "$ENSURE_HOOKS" 2>/dev/null
 
-_assert_json "plugin-native settings entries removed" \
+_assert_json "drift-gate.sh and master-preflight.sh added; session-preflight.sh preserved" \
   "$FX1_HOME/.claude/settings.json" '
 import sys, json
 errors = []
@@ -81,22 +79,22 @@ all_cmds = [
     for entry in event
     for h in entry.get("hooks", [])
 ]
-for old in ["drift-gate.sh", "master-preflight.sh", "session-preflight.sh", "preflight-guard.sh", "${CLAUDE_PLUGIN_ROOT}"]:
-    if any(old in c for c in all_cmds):
-        errors.append(old + " still present in settings.json")
+for expected in ["drift-gate.sh", "master-preflight.sh", "session-preflight.sh", "preflight-guard.sh"]:
+    if not any(expected in c for c in all_cmds):
+        errors.append(expected + " missing from settings.json")
 print("COUNT=" + str(len(errors)))
 for e in errors:
     print(e)
 '
 
 # ---------------------------------------------------------------------------
-# Test 2: idempotent — second run keeps settings clean
+# Test 2: idempotent — second run adds no duplicates
 # ---------------------------------------------------------------------------
-echo "[2] ensure-global-hooks: idempotent (second run keeps settings clean)"
+echo "[2] ensure-global-hooks: idempotent (second run adds no duplicates)"
 
 HOME="$FX1_HOME" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" python3 "$ENSURE_HOOKS" 2>/dev/null
 
-_assert_json "settings remain free of plugin-native hook commands" \
+_assert_json "no duplicates after second run" \
   "$FX1_HOME/.claude/settings.json" '
 import sys, json
 errors = []
@@ -107,9 +105,10 @@ all_cmds = [
     for entry in event
     for h in entry.get("hooks", [])
 ]
-for hook in ["drift-gate.sh", "master-preflight.sh", "session-preflight.sh", "preflight-guard.sh"]:
-    if any(hook in c for c in all_cmds):
-        errors.append(hook + " still present after idempotent cleanup")
+for hook in ["drift-gate.sh", "master-preflight.sh"]:
+    count = sum(1 for c in all_cmds if hook in c)
+    if count > 1:
+        errors.append(hook + " appears " + str(count) + " times (want 1)")
 print("COUNT=" + str(len(errors)))
 for e in errors:
     print(e)
@@ -142,7 +141,7 @@ cat > "$STALE_INSTALL/hooks/hooks-manifest.json" << 'JSONEOF'
 }
 JSONEOF
 
-# Current install: new date, points at the real repo (plugin-native hooks only).
+# Current install: new date, points at the real repo (has drift-gate, master-preflight).
 cat > "$FX3_HOME/.claude/plugins/installed_plugins.json" << JSONEOF
 {
   "plugins": {
@@ -171,7 +170,7 @@ JSONEOF
 # Run WITHOUT CLAUDE_PLUGIN_ROOT so it falls back to installed_plugins.json.
 HOME="$FX3_HOME" python3 "$ENSURE_HOOKS" 2>/dev/null
 
-_assert_json "newest entry used (plugin-native hooks not duplicated, stale hook not added)" \
+_assert_json "newest entry used (drift-gate added, stale-hook not added)" \
   "$FX3_HOME/.claude/settings.json" '
 import sys, json
 errors = []
@@ -182,9 +181,10 @@ all_cmds = [
     for entry in event
     for h in entry.get("hooks", [])
 ]
-for hook in ["drift-gate.sh", "master-preflight.sh"]:
-    if any(hook in c for c in all_cmds):
-        errors.append(hook + " duplicated into settings.json")
+if not any("drift-gate.sh" in c for c in all_cmds):
+    errors.append("drift-gate.sh not added (newest entry not picked)")
+if not any("master-preflight.sh" in c for c in all_cmds):
+    errors.append("master-preflight.sh not added (newest entry not picked)")
 if any("stale-hook.sh" in c for c in all_cmds):
     errors.append("stale-hook.sh added (stale entry was used instead of newest)")
 print("COUNT=" + str(len(errors)))
@@ -234,7 +234,7 @@ all_cmds = [
     for h in entry.get("hooks", [])
 ]
 errors = []
-if any("drift-gate.sh" in c or "master-preflight.sh" in c or "stale-hook.sh" in c for c in all_cmds):
+if any("drift-gate.sh" in c or "master-preflight.sh" in c for c in all_cmds):
     errors.append("hooks added from non-user scope entry (should not happen)")
 print("COUNT=" + str(len(errors)))
 for e in errors:

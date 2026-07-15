@@ -10,7 +10,9 @@ Coverage:
 """
 import os
 import sys
+import json
 import pytest
+import yaml
 
 # scripts/ has no __init__.py — insert before the import so this works
 # regardless of pytest conftest loading order
@@ -21,6 +23,7 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from orchestrator_checks import CHECKS, register
+from success_criteria_contracts import compute_success_criteria_contract_hash
 
 
 # ---------------------------------------------------------------------------
@@ -35,6 +38,9 @@ class TestRegistry:
         assert "file_non_empty" in CHECKS
         assert "all_artifacts_exist" in CHECKS
         assert "all_artifacts_non_empty" in CHECKS
+        assert "success_criteria_contract_valid" in CHECKS
+        assert "success_criteria_ledger_valid" in CHECKS
+        assert "success_criteria_completion_valid" in CHECKS
 
     def test_register_decorator_adds_custom_check_to_checks_dict(self):
         @register("test_custom_check_xyz")
@@ -71,9 +77,78 @@ def _make_step(output_artifact=None, input_artifacts=None):
 
 def _make_state(artifacts=None):
     return {
-        "workflow_id": "ISSUE-TEST",
+        "workflow_id": "ISSUE-123",
         "artifacts": artifacts or {},
     }
+
+
+def _valid_contract():
+    contract = {
+        "story_id": "ISSUE-123",
+        "story_title": "Success criteria enforcement",
+        "story_objective": "Block invalid workflow transitions.",
+        "expected_outcomes": [
+            {"id": "OUTCOME-001", "statement": "The workflow gate is deterministic."}
+        ],
+        "non_goals": [
+            {"id": "NONGOAL-001", "statement": "Do not block ordinary workflows."}
+        ],
+        "success_criteria": [
+            {
+                "id": "SC-001",
+                "outcome_id": "OUTCOME-001",
+                "statement": "The ledger proves completion.",
+                "binary_predicate": "all_success_criteria_passed equals true",
+                "measurement_type": "schema_check",
+                "measurement_procedure": "Run validate-workflow --stage completion",
+                "evidence_artifact": ".sweetclaude/reports/success-criteria-ledger.json",
+                "evidence_owner": "controller",
+                "pass_condition": "all_success_criteria_passed equals true",
+                "fail_condition": "all_success_criteria_passed is missing or false",
+                "allowed_phase_to_measure": "implementation",
+                "amendment_policy": "human_approved_only",
+                "backlog_routing": "Create follow-up work.",
+            }
+        ],
+        "contract_freeze": {
+            "frozen_at": "2026-05-31T12:00:00Z",
+            "frozen_by": "test",
+            "contract_hash": "",
+        },
+    }
+    contract["contract_freeze"]["contract_hash"] = compute_success_criteria_contract_hash(contract)
+    return contract
+
+
+def _write_success_criteria_packet(project_dir):
+    contract = _valid_contract()
+    contract_path = project_dir / ".sweetclaude" / "contracts" / "success-criteria-contract.yaml"
+    ledger_path = project_dir / ".sweetclaude" / "reports" / "success-criteria-ledger.json"
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
+    contract_hash = compute_success_criteria_contract_hash(contract)
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "story_id": "ISSUE-123",
+                "success_criteria_contract_hash": contract_hash,
+                "all_success_criteria_passed": True,
+                "criteria": [
+                    {
+                        "id": "SC-001",
+                        "status": "pass",
+                        "success_criteria_contract_hash": contract_hash,
+                        "evidence_artifact": ".sweetclaude/reports/success-criteria-ledger.json",
+                        "evidence_owner": "controller",
+                        "evidence_fresh": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return contract_path, ledger_path
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +351,79 @@ class TestAllArtifactsNonEmptyCheck:
         assert passed is False
         assert isinstance(msg, str)
         assert len(msg) > 0
+
+
+class TestSuccessCriteriaChecks:
+    def test_contract_check_skips_unflagged_workflows(self, tmp_path):
+        passed, msg = CHECKS["success_criteria_contract_valid"](
+            _make_step(),
+            _make_state(),
+            str(tmp_path),
+        )
+
+        assert passed is True
+        assert msg == ""
+
+    def test_contract_check_blocks_flagged_workflow_without_contract(self, tmp_path):
+        state = _make_state()
+        state["requires_success_criteria_contract"] = True
+
+        passed, msg = CHECKS["success_criteria_contract_valid"](
+            _make_step(),
+            state,
+            str(tmp_path),
+        )
+
+        assert passed is False
+        assert "Do not leave Define" in msg
+
+    def test_contract_check_passes_with_valid_contract(self, tmp_path):
+        contract_path, _ledger_path = _write_success_criteria_packet(tmp_path)
+        state = _make_state()
+        state["requires_success_criteria_contract"] = True
+        state["success_criteria_contract"] = {"path": str(contract_path.relative_to(tmp_path))}
+
+        passed, msg = CHECKS["success_criteria_contract_valid"](
+            _make_step(),
+            state,
+            str(tmp_path),
+        )
+
+        assert passed is True
+        assert msg == ""
+
+    def test_completion_check_blocks_missing_ledger(self, tmp_path):
+        contract_path, ledger_path = _write_success_criteria_packet(tmp_path)
+        ledger_path.unlink()
+        state = _make_state()
+        state["requires_success_criteria_contract"] = True
+        state["success_criteria_contract"] = {"path": str(contract_path.relative_to(tmp_path))}
+        state["success_criteria_ledger"] = {"path": str(ledger_path.relative_to(tmp_path))}
+
+        passed, msg = CHECKS["success_criteria_completion_valid"](
+            _make_step(),
+            state,
+            str(tmp_path),
+        )
+
+        assert passed is False
+        assert "Do not claim completion" in msg
+
+    def test_completion_check_passes_with_valid_ledger(self, tmp_path):
+        contract_path, ledger_path = _write_success_criteria_packet(tmp_path)
+        state = _make_state()
+        state["requires_success_criteria_contract"] = True
+        state["success_criteria_contract"] = {"path": str(contract_path.relative_to(tmp_path))}
+        state["success_criteria_ledger"] = {"path": str(ledger_path.relative_to(tmp_path))}
+
+        passed, msg = CHECKS["success_criteria_completion_valid"](
+            _make_step(),
+            state,
+            str(tmp_path),
+        )
+
+        assert passed is True
+        assert msg == ""
 
 
 # ---------------------------------------------------------------------------

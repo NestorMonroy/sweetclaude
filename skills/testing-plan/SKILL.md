@@ -4,15 +4,14 @@ user-invocable: true
 description: "Define and maintain a test strategy for a feature or release."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:testing-plan" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 ```bash
 ls .sweetclaude/testing/plans/TP-*.md 2>/dev/null | wc -l | xargs -I{} echo "PLAN_COUNT={}"
 ls .sweetclaude/testing/plans/TP-*.md 2>/dev/null | head -10
 
-_sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 sc_artifact_query roadmap_item status=in_progress 2>/dev/null
 sc_artifact_list release 2>/dev/null
 ```

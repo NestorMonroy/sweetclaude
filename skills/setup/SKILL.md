@@ -4,7 +4,7 @@ user-invocable: false
 description: "Consolidated onboarding skill."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:setup" 2>/dev/null || true`
+
 
 # SweetClaude Setup
 
@@ -29,10 +29,6 @@ du -sh . 2>/dev/null | cut -f1
 
 Signs of Branch C: count of TODO/FIXME/HACK/XXX comments > 20, or no consistent file naming, or zero tests.
 
-## Recovery Run Artifacts
-
-Keep recovery snapshots and manifests out of source control. The recovery harness writes run state under `.sweetclaude/state/recovery-runs/`; those files are operational snapshots, not product artifacts.
-
 ## Branch A: New Project
 
 > "Hi — I'm SweetClaude. I'll help you build this project with a structured workflow. Let me ask a couple of quick questions."
@@ -56,7 +52,7 @@ try:
 except: print('unknown')
 " 2>/dev/null)
 
-SCRIPT=~/.claude/scripts/sweetclaude/sweetclaude-yaml-template.py
+SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/sweetclaude-yaml-template.py
 python3 "$SCRIPT" \
   --name "USER_PROVIDED_NAME" \
   --type "new" \
@@ -205,7 +201,7 @@ for subdir in ['backlog/done', 'roadmap/epics/done', 'roadmap/milestones', 'road
 
 # 3. Build initial cache (INDEX.md is no longer created — cache provides all views)
 import subprocess, os
-subprocess.run(['python3', os.path.expanduser('~/.claude/scripts/sweetclaude/cache.py'), '--project-dir', '.', '--rebuild'], capture_output=True)
+subprocess.run(['python3', os.path.expanduser('${CLAUDE_PLUGIN_ROOT}/scripts/cache.py'), '--project-dir', '.', '--rebuild'], capture_output=True)
 ```
 
 Whether these files end up tracked in the user's git tree depends on the user's `.gitignore`. In this dogfooding repo they are gitignored; the skill is verified against fixture projects for testing.

@@ -4,7 +4,7 @@ user-invocable: true
 description: "Recover or unblock SweetClaude projects left in bad update, migration, doctor, or repair states."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:recover" 2>/dev/null || true`
+
 
 # SweetClaude Recover
 
@@ -24,9 +24,9 @@ explicit script subcommands (`diagnose`, `plan`, `execute`, `resume`,
 ## Step 1: Locate The Recovery Script
 
 ```bash
-SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
 if [ ! -f "$SCRIPT" ]; then
-  SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+  SCRIPT=$(find "$(dirname "${CLAUDE_PLUGIN_ROOT}")" -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | sort -V | tail -1)
 fi
 if [ -z "$SCRIPT" ] || [ ! -f "$SCRIPT" ]; then
   echo "ERROR: recover_project.py not found. Run /sweetclaude:update first."
@@ -80,7 +80,8 @@ Stop. Do not mutate files.
 ## Step 4: Plan
 
 ```bash
-python3 "$SCRIPT" plan --project-dir . --pretty
+PLAN_OUT=$(python3 "$SCRIPT" plan --project-dir . --pretty)
+echo "$PLAN_OUT"
 ```
 
 Parse the JSON output and render:
@@ -112,7 +113,16 @@ If the user chooses `Stop`, stop. Do not mutate files.
 ## Step 6: Execute
 
 ```bash
-python3 "$SCRIPT" execute --project-dir . --approve --pretty
+APPROVAL_RECEIPT=".sweetclaude/state/recovery-approval-receipt.json"
+mkdir -p "$(dirname "$APPROVAL_RECEIPT")"
+echo "$PLAN_OUT" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+receipt = dict(d['mutation_plan']['approval_receipt_template'])
+receipt['approved'] = True
+json.dump(receipt, open('$APPROVAL_RECEIPT', 'w'), indent=2, sort_keys=True)
+"
+python3 "$SCRIPT" execute --project-dir . --approve --approval-receipt "$APPROVAL_RECEIPT" --pretty
 ```
 
 Parse the JSON output and render:

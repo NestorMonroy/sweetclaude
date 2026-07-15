@@ -5,9 +5,8 @@ description: "Manage deferred work."
 category: product
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:product-parking-lot" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
 STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Instead say: "This project is not configured for SweetClaude. Let me run the pre-flight check." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
@@ -28,7 +27,7 @@ Read `.sweetclaude/state/skills.yaml`.
 Drop `onboarded_at`/`offboarded_at`. Set `schema_version: 2`. Write atomically (see write protocol below).
 
 **Dependency check:**
-Read `~/.claude/config/sweetclaude/skills-registry.yaml`. Find `skills.product-parking-lot.dependencies`. This skill has no dependencies — skip.
+Read `${CLAUDE_PLUGIN_ROOT}/config/skills-registry.yaml`. Find `skills.product-parking-lot.dependencies`. This skill has no dependencies — skip.
 
 **If `skills.yaml` does not exist, OR exists but has no entry for `skills.product-parking-lot`:**
 - Check whether `{base_path}/backlog/INDEX.md` exists

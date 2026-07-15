@@ -4,7 +4,7 @@
 # Source this file in any skill to get sc_artifact_* functions.
 #
 # Usage in a skill:
-#   _sc_hooks="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/hooks}"; _sc_hooks="${_sc_hooks:-$HOME/.claude/hooks/sweetclaude}"; source "${_sc_hooks}/sc-artifact.sh"
+#   source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 #   result=$(sc_artifact_read I-025)
 #   sc_artifact_write I-025 '{"status":"in_progress"}'
 #

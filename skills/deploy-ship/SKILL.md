@@ -4,9 +4,8 @@ user-invocable: true
 description: "SHIP phase skill."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:deploy-ship" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude Deploy Ship
 
@@ -134,7 +133,7 @@ Then write a ship evidence receipt and keep the returned path for any closeout
 command:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/evidence.py write \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/evidence.py write \
   --project-dir . \
   --subject-id {work item id} \
   --receipt-type ship \
@@ -149,19 +148,7 @@ python3 ~/.claude/scripts/sweetclaude/evidence.py write \
 
 ## Step 7: Close out the work item
 
-Update `.sweetclaude/state/phase.yaml`:
-```yaml
-active_work_item:
-  id: ~
-  type: ~
-  workflow: []
-  phase: ~
-  title: ~
-  started: ~
-  entry_category: ~
-```
-
-And update `last_work_item_id` to the completed item's ID.
+Close-out state (the active pointer, the last-completed record, work history, and the item file status) is written deterministically by the controller's ship command. Do not hand-edit these fields — the controller owns them.
 
 Archive the active plan file if one exists:
 
@@ -251,7 +238,7 @@ tags: [post-mortem, hotfix, {work-item-id}]
 ```
 Body: "## Origin\n\nFollow-on from {work-item-id} hotfix. Document timeline, root cause (5 whys), contributing factors, and action items to prevent recurrence.\n\nIf the fix was a workaround rather than a real fix, also create a follow-on tech-debt item."
 
-Derive the next issue ID: `python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query next-id --prefix ISSUE`. Rebuild cache after creating the file: `python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild`. Report: `✓ {ISSUE-NNN} created — run /sweetclaude:go when ready for the post-mortem.`
+Derive the next issue ID: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query next-id --prefix ISSUE`. Rebuild cache after creating the file: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild`. Report: `✓ {ISSUE-NNN} created — run /sweetclaude:go when ready for the post-mortem.`
 
 If "Skip": log the skip: append `| {next #} | {today} | POST-MORTEM skipped for {work item id} | User opted to create manually | N/A |` to decision log.
 

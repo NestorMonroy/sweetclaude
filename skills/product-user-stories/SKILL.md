@@ -5,9 +5,8 @@ description: "Write user stories for a defined scope — Gherkin or generic form
 category: product
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:product-user-stories" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # Product User Stories
 
@@ -38,7 +37,7 @@ Read `.sweetclaude/state/skills.yaml`.
 Drop `onboarded_at`/`offboarded_at`. Set `schema_version: 2`. Write atomically (see write protocol below).
 
 **Dependency check (soft — warn, do not block):**
-Read `~/.claude/config/sweetclaude/skills-registry.yaml`. Find `skills.product-user-stories.dependencies`: `[user-personas]`.
+Read `${CLAUDE_PLUGIN_ROOT}/config/skills-registry.yaml`. Find `skills.product-user-stories.dependencies`: `[user-personas]`.
 Read `skills.user-personas.status` from `skills.yaml`. If it is not `active`:
 > "Note: personas aren't set up yet — stories will be written without persona context. Run `/sweetclaude:user-personas` first for better results. Continue anyway? [yes/no]"
 If no: stop. If yes: proceed.

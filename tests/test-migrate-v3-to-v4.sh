@@ -45,6 +45,28 @@ count_issue_files() {
     find "$project_dir/.sweetclaude/product/backlog" -maxdepth 1 -name 'ISSUE-*.md' 2>/dev/null | wc -l | tr -d ' '
 }
 
+write_approval_receipt_from_plan() {
+    local receipt_path="$1"
+    python3 -c "
+import json, sys
+path = '$receipt_path'
+plan = json.load(sys.stdin)
+receipt = dict(plan['mutation_plan']['approval_receipt_template'])
+receipt['approved'] = True
+with open(path, 'w') as f:
+    json.dump(receipt, f, indent=2, sort_keys=True)
+print(path)
+"
+}
+
+approval_receipt_for() {
+    local project_dir="$1"
+    local receipt_path="$project_dir/.sweetclaude/state/migrations/approval-receipt.json"
+    shift
+    mkdir -p "$(dirname "$receipt_path")"
+    python3 "$SCRIPT" plan --project-dir "$project_dir" "$@" | write_approval_receipt_from_plan "$receipt_path"
+}
+
 # ── test scenario ──────────────────────────────────────────────────────────
 
 run_scenario() {
@@ -94,8 +116,11 @@ run_scenario() {
     esac
 
     # 3. execute — actually run the migration
-    local exec_out
-    exec_out=$(python3 "$SCRIPT" execute --project-dir "$tmp" --include-done)
+    local exec_out approval_receipt
+    approval_receipt="$tmp/.sweetclaude/state/migrations/approval-receipt.json"
+    mkdir -p "$(dirname "$approval_receipt")"
+    echo "$plan_out" | write_approval_receipt_from_plan "$approval_receipt" > /dev/null
+    exec_out=$(python3 "$SCRIPT" execute --project-dir "$tmp" --include-done --approval-receipt "$approval_receipt")
     local created_count
     created_count=$(echo "$exec_out" | python3 -c "import sys, json; print(len(json.load(sys.stdin).get('created_paths', [])))")
     if [ "$created_count" = "$plan_count" ]; then
@@ -243,7 +268,9 @@ run_skip_done_scenario() {
 
     # Execute (without --include-done)
     local exec_out created done_files
-    exec_out=$(python3 "$SCRIPT" execute --project-dir "$tmp")
+    local approval_receipt
+    approval_receipt=$(approval_receipt_for "$tmp")
+    exec_out=$(python3 "$SCRIPT" execute --project-dir "$tmp" --approval-receipt "$approval_receipt")
     created=$(echo "$exec_out" | python3 -c "import sys, json; print(len(json.load(sys.stdin).get('created_paths', [])))")
     if [ "$created" = "3" ]; then
         pass "skip-done execute: 3 files written"
@@ -278,7 +305,9 @@ run_bug_005_reorder() {
     echo "=== Scenario: BUG-005 finalize() reorder — sweetclaude.yaml writes before privacy ==="
     local tmp
     tmp=$(prep_fixture "$REPO_ROOT/tests/fixtures/migrate-smoke" "bug-005-reorder")
-    python3 "$SCRIPT" execute --project-dir "$tmp" --include-done > /dev/null
+    local approval_receipt
+    approval_receipt=$(approval_receipt_for "$tmp" --include-done)
+    python3 "$SCRIPT" execute --project-dir "$tmp" --include-done --approval-receipt "$approval_receipt" > /dev/null
 
     # Read both files' mtimes after finalize. sweetclaude.yaml should be written first
     # (older mtime), artifact-privacy.yaml second (newer mtime). Use stat for precision.
@@ -348,7 +377,9 @@ run_bug_005_idempotency() {
     local tmp
     tmp=$(prep_fixture "$REPO_ROOT/tests/fixtures/migrate-smoke" "bug-005-idem")
     # First run — should succeed
-    python3 "$SCRIPT" execute --project-dir "$tmp" --include-done > /dev/null
+    local approval_receipt
+    approval_receipt=$(approval_receipt_for "$tmp" --include-done)
+    python3 "$SCRIPT" execute --project-dir "$tmp" --include-done --approval-receipt "$approval_receipt" > /dev/null
     python3 "$SCRIPT" finalize --project-dir "$tmp" > /dev/null
 
     # Second run should refuse — installed_version=4.0.0 AND INDEX has counters
@@ -584,7 +615,9 @@ MD
     (cd "$tmp" && git init -q && git add -A && git commit -q -m "fixture" --no-gpg-sign 2>/dev/null) || true
 
     local exec_out
-    exec_out=$(python3 "$SCRIPT" execute --project-dir "$tmp" 2>&1)
+    local approval_receipt
+    approval_receipt=$(approval_receipt_for "$tmp")
+    exec_out=$(python3 "$SCRIPT" execute --project-dir "$tmp" --approval-receipt "$approval_receipt" 2>&1)
     local exec_exit=$?
 
     if [ $exec_exit -ne 0 ]; then

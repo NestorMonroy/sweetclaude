@@ -107,6 +107,8 @@ if [[ "$FILE" == *.feature ]]; then
 fi
 
 if [ "$IS_TEST" = true ]; then
+  RECORD_SCRIPT="$(dirname "$0")/../scripts/record-event.sh"
+  [ -x "$RECORD_SCRIPT" ] && bash "$RECORD_SCRIPT" tdd_guardian_block "file=$FILE" "tool=$TOOL"
   echo '{"ok": false, "reason": "Test files are immutable during implementation. Fix your code, not the tests. If the test is genuinely wrong, ask the user for explicit approval to modify it."}'
   exit 0
 fi

@@ -4,9 +4,8 @@ user-invocable: false
 description: "Internal TDD process skill — invoked by code-feature, code-issue, and code-debt."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:code-tdd" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
 STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Tell the user: "This project is not set up for SweetClaude. Running the pre-flight check now." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
@@ -15,6 +14,40 @@ STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exi
 # SweetClaude TDD
 
 Tests specify behavior. Implementation satisfies tests. Hooks enforce this. No exceptions.
+
+## Process Control Gate
+
+Before any Level 2 or Level 3 subagent dispatch, and before any QA caucus, read
+`skills/process-controls.md` and create or update
+`.sweetclaude/state/process-control-ledger.yaml`.
+
+Do not spawn a test writer, implementer, reviewer, or caucus if the ledger is
+missing, over budget, stale, or in a stop disposition. Stop and ask the user
+for a bounded decision instead.
+
+Default budget for this skill without explicit user approval:
+
+- one test-writer dispatch;
+- one implementer dispatch;
+- one three-reviewer QA caucus;
+- no more than two caucus/correction rounds for the same story;
+- no more than one blocking caucus failure before user decision or contract
+  reopen.
+
+If repeated caucus findings, repeated failed RED/GREEN correction, WLF/process
+failure records, or pass-state bypasses indicate that the story/test contract is
+unstable, stop. Do not keep patching tests or spawning more agents under the
+same contract.
+
+For large/high-rigor stories, TDD entry requires a frozen
+`success_criteria_contract`, its `success_criteria_contract_hash`, and
+`criterion_ids`. Tests must trace to the frozen criterion ids, and any missing
+coverage becomes either a test gap before lock or a
+`criteria-amendment-request.yaml`; it may not silently expand completion scope.
+Completion of TDD/implementation requires `success-criteria-ledger.json` with
+every frozen criterion evaluated and `all_success_criteria_passed == true`. No
+review, caucus, verification, release, or completion step may add completion
+criteria.
 
 ## Branch Check
 
@@ -42,6 +75,8 @@ Use AskUserQuestion with these options:
 - "Level 1: Light" — simple change, single-context RED-GREEN-REFACTOR
 - "Level 2: Standard" — separate test writer and implementer, tests committed before implementation
 - "Level 3: Full" — from Gherkin specs with QA caucus review
+
+After the user selects a level, record the selection:
 
 ## Level 0: Hotfix
 
@@ -115,6 +150,12 @@ Use AskUserQuestion with these options:
 
    Each agent receives the test file paths and the `.feature` file for context. After all three return, consolidate gaps. Present to user for approval. Add approved gaps to test files.
 
+   Before spawn, the process-control ledger must show an available
+   three-reviewer caucus budget. After the caucus, update the ledger with
+   reviewer count, caucus round count, and blocking-finding count. If this is
+   the second blocking caucus failure for the story, stop for user decision or
+   contract reopen before any further test edits or caucus spawn.
+
 6. **Verify RED:** Run tests. All must fail.
 
 7. **User approval.** Present the test files. Wait for explicit approval.
@@ -122,6 +163,9 @@ Use AskUserQuestion with these options:
 8. **Commit tests.** Git checkpoint.
 
 9. **Spawn implementer subagent.** Same rules as Level 2. Tests are read-only. The implementer runs in the main project dir — it never sees the Gherkin spec or test-writer reasoning.
+
+   Before spawn, the process-control ledger must show implementer budget
+   available and no active stop disposition.
 
 10. **Verify GREEN.** All tests pass.
 

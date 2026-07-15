@@ -4,9 +4,8 @@ user-invocable: true
 description: "Orient to the current project."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:status" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
 STOP. Before executing this skill, check: if pre-loaded state above shows STATE_NOT_FOUND, or neither .sweetclaude/state/sweetclaude.yaml nor .sweetclaude/state/phase.yaml exists, do not proceed. Instead say: "This project is not configured for SweetClaude. Running pre-flight check." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
@@ -26,9 +25,9 @@ Use `phase_schema_version` from pre-loaded session state:
 ## Step 2: Recovery/migration guard
 
 ```bash
-SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
 if [ ! -f "$SCRIPT" ]; then
-  SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+  SCRIPT=$(find "$(dirname "${CLAUDE_PLUGIN_ROOT}")" -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | sort -V | tail -1)
 fi
 if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
   python3 "$SCRIPT" guard --project-dir . --pretty
@@ -43,35 +42,23 @@ Parse the JSON output.
   `Run /sweetclaude:recover to create a snapshot-backed recovery plan. Do not run /sweetclaude:migrate yet.` Stop.
 - If `status` is `manual-review`: output the guard `message`, summarize
   `blocking_factor_codes`, and stop. Do not recommend migration.
-- If `status` is `compatibility-mode`: render the compatibility status below
-  and stop. Do not recommend migration.
+- If `status` is `supported-migration-available`: output
+  `This project has a typed legacy backlog layout that can be migrated. Run /sweetclaude:migrate to convert to the unified ISSUE-NNN taxonomy.`
+  Stop.
+- If `status` is `compatibility-mode`: output
+  `This project is in compatibility mode. Run /sweetclaude:migrate to convert to v4 layout, or /sweetclaude:recover to check graduation eligibility.`
+  Stop.
 - If `status` is `missing-product-base` or `guard-unavailable`: output the
   guard `message` and stop. Do not recommend migration.
 - If `standard_product_dir_exists` is false and `product_base` is not
-  `.sweetclaude/product`, render the compatibility status below and stop.
+  `.sweetclaude/product`: output
+  `This project's product layout is at a non-standard path. Run /sweetclaude:migrate to convert to v4 layout, or /sweetclaude:recover to check graduation eligibility.`
+  Stop.
 - If `status` is `migration-may-be-needed`: output
   `Old-format work items were found. This appears to be a simple migration candidate, but review /sweetclaude:migrate before executing it; for any duplicate IDs, typed backlog folders, pending doctor prompt, or stale migration state, run /sweetclaude:recover instead.`
   Stop.
 - If `status` is `ok`: proceed.
 
-Compatibility status is intentionally limited to session state and git so that
-legacy or external product layouts are not forced through unsafe taxonomy
-migration:
-
-```bash
-git log --oneline -3 2>/dev/null || echo "NO_GIT"
-git status --short 2>/dev/null | wc -l | tr -d ' '
-git branch --show-current 2>/dev/null || echo ""
-tail -10 .sweetclaude/state/checkpoint.md 2>/dev/null || echo "NO_CHECKPOINT"
-```
-
-Output the normal 5-7 line session view from Step 4c using the pre-loaded
-session state and git output, then append:
-
-> Full roadmap/backlog drill-downs require a fully supported v4 product cache.
-> This project's current product layout is being treated as compatibility mode.
-> Do not run `/sweetclaude:migrate` unless `/sweetclaude:recover` or a future
-> layout-specific migration plan explicitly says it is safe.
 
 ## Step 3: Parse argument
 
@@ -87,7 +74,7 @@ If non-empty → **arg mode**: skip to Step 5.
 ### Step 4a: Rebuild cache
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild 2>/dev/null
 ```
 
 Save the JSON result (scanned/ingested/skipped) for use in views that check cache health. This is the single rebuild for the entire invocation — do not re-run.
@@ -165,7 +152,7 @@ Omit the notes line entirely when improvement register is empty AND last checkup
 
 If `active_work_item.id` is null, run:
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query summary 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query summary 2>/dev/null
 ```
 Then output:
 ```
@@ -179,7 +166,7 @@ Your project has {epics.total} epics and {total_items - epics.total - milestones
 ```bash
 python3 -c "
 import sys, os, glob, yaml, json, subprocess
-sys.path.insert(0, os.path.expanduser('~/.claude/scripts/sweetclaude'))
+sys.path.insert(0, os.path.join(os.environ.get('CLAUDE_PLUGIN_ROOT', ''), 'scripts'))
 from cache import get_conn
 
 conn = get_conn('.')
@@ -286,7 +273,7 @@ No session view, no menu in arg mode — go directly to the view.
 ```bash
 python3 -c "
 import sys, os, glob, re, yaml
-sys.path.insert(0, os.path.expanduser('~/.claude/scripts/sweetclaude'))
+sys.path.insert(0, os.path.join(os.environ.get('CLAUDE_PLUGIN_ROOT', ''), 'scripts'))
 from cache import get_conn, query_next_id
 warnings = []
 
@@ -329,9 +316,9 @@ Warnings:
 **Data:**
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query milestones-compact 2>/dev/null
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query summary 2>/dev/null
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query backlog --unlinked-only 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query milestones-compact 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query summary 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query backlog --unlinked-only 2>/dev/null
 ```
 
 **Render** (milestones ordered by ID, with `↓` separator between consecutive milestones):
@@ -352,6 +339,7 @@ Rules:
 - If stored status ≠ derived_status: append `⚠ children suggest [{derived_status}]` after `[{status}]`
 - Per epic: show up to 5 non-done issues, then `(+N done)` for collapsed done issues; `✓` marks done items
 - Use `├──` / `└──` connectors; `│   ` for continuation lines; `↓` between milestones
+- These connectors (`├── └── │ ↓ ✓`) are required structure, exempt from the session output-style "no box-drawing" rule — never substitute dashes or markdown lists
 - Epics with no children: show `(no issues)` inline
 
 After the tree, summary line from `summary` query data:
@@ -371,15 +359,15 @@ If rebuild from Step 4a/5 had `skipped` count > 0:
 
 **Determine which epic:**
 - If a specific EP-NNN was given (arg mode): use that ID.
-- If no ID (selected from menu): run `python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query epics 2>/dev/null`. If one non-done epic: use it. If multiple: present **AskUserQuestion** with epics as options (ID + title as label), plus "Something else".
+- If no ID (selected from menu): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query epics 2>/dev/null`. If one non-done epic: use it. If multiple: present **AskUserQuestion** with epics as options (ID + title as label), plus "Something else".
 
 **Data:**
 
 ```bash
 # Full epic with all child issues
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query epic-issues --epic {epic_id} --include-done 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query epic-issues --epic {epic_id} --include-done 2>/dev/null
 # Epics list to get the epic's own record (title, objective, criteria, stored status)
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query epics --include-done 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query epics --include-done 2>/dev/null
 ```
 
 **Consistency checks:**
@@ -387,7 +375,7 @@ python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query epics --i
 ```bash
 python3 -c "
 import sys, os, re
-sys.path.insert(0, os.path.expanduser('~/.claude/scripts/sweetclaude'))
+sys.path.insert(0, os.path.join(os.environ.get('CLAUDE_PLUGIN_ROOT', ''), 'scripts'))
 from cache import get_conn
 warnings = []
 conn = get_conn('.')
@@ -451,14 +439,14 @@ Caps:
 
 **Determine which milestone:**
 - Specific MS-NNN from arg: use that ID.
-- From menu: run `python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query milestones-compact 2>/dev/null`. If one milestone: use it. If multiple: **AskUserQuestion** with milestone ID + title options.
+- From menu: run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query milestones-compact 2>/dev/null`. If one milestone: use it. If multiple: **AskUserQuestion** with milestone ID + title options.
 
 **Consistency checks:**
 
 ```bash
 python3 -c "
 import sys, os, glob, yaml
-sys.path.insert(0, os.path.expanduser('~/.claude/scripts/sweetclaude'))
+sys.path.insert(0, os.path.join(os.environ.get('CLAUDE_PLUGIN_ROOT', ''), 'scripts'))
 from cache import get_conn
 warnings = []
 conn = get_conn('.')
@@ -566,7 +554,7 @@ If `NOT_FOUND`: output `{issue_id} not found. It may have been moved to done/ or
 ```bash
 python3 -c "
 import sys, os, glob, json
-sys.path.insert(0, os.path.expanduser('~/.claude/scripts/sweetclaude'))
+sys.path.insert(0, os.path.join(os.environ.get('CLAUDE_PLUGIN_ROOT', ''), 'scripts'))
 from schema import validate_frontmatter, normalize_status
 from status import CANONICAL_STATUSES
 import argparse
@@ -627,7 +615,7 @@ Omit `branch`/`phase` line if both unset. Omit `depends_on` line if empty/absent
 ```bash
 python3 -c "
 import sys, os, glob, re, yaml
-sys.path.insert(0, os.path.expanduser('~/.claude/scripts/sweetclaude'))
+sys.path.insert(0, os.path.join(os.environ.get('CLAUDE_PLUGIN_ROOT', ''), 'scripts'))
 from cache import get_conn, query_next_id
 warnings = []
 conn = get_conn('.')
@@ -679,12 +667,12 @@ for w in warnings[:5]:
 
 For no filter or priority filter:
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query backlog 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query backlog 2>/dev/null
 ```
 
 For epic filter:
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query backlog --epic {epic_id} 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query backlog --epic {epic_id} 2>/dev/null
 ```
 
 If priority filter is set (e.g., P0), filter the JSON results client-side: keep only items where `priority` matches the filter value (case-insensitive, treating both `P0` and `now` as P0, `P1`/`sooner` as P1, etc.).
@@ -722,7 +710,7 @@ If warnings, prepend the `Warnings:` section before the bucket output.
 ```bash
 python3 -c "
 import sys, os, re, json
-sys.path.insert(0, os.path.expanduser('~/.claude/scripts/sweetclaude'))
+sys.path.insert(0, os.path.join(os.environ.get('CLAUDE_PLUGIN_ROOT', ''), 'scripts'))
 from cache import get_conn
 conn = get_conn('.')
 
@@ -821,7 +809,7 @@ If `NO_SPRINT` or `NO_ACTIVE_SPRINT`: output `No active sprint.` Stop.
 ```bash
 python3 -c "
 import sys, os, json
-sys.path.insert(0, os.path.expanduser('~/.claude/scripts/sweetclaude'))
+sys.path.insert(0, os.path.join(os.environ.get('CLAUDE_PLUGIN_ROOT', ''), 'scripts'))
 from cache import get_conn
 
 sprint_json = open('/dev/stdin').read()  # from above

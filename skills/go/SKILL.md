@@ -4,13 +4,53 @@ user-invocable: true
 description: "Assess what to work on next and propose it."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:go" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # SweetClaude Go
 
 Assess. Propose. Wait. Do not act until the user says proceed.
+
+---
+
+## Step 0: Natural-language request path
+
+If the user passes a request after `/sweetclaude:go`, treat it as natural
+language. Do not require the user to know a skill name, work-type slug, or route
+command.
+
+For `/sweetclaude:go <request>`:
+
+1. Skip the backlog-first proposal flow below.
+2. Invoke `sweetclaude:find-skill` with the user's request as context.
+3. Let `find-skill` classify, confirm, write work state when appropriate, and
+   invoke the matched skill.
+
+If the request is classified as a large/high-rigor story, the matched
+large-story path runs DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, and
+SHIP/closeout with controller-enforced phase gates and hook-verified
+enforcement. It must route through
+`python3 scripts/large_story_controller.py route --route-surface /sweetclaude:go`.
+Completion language is controller-owned — never claim completion the
+controller has not authorized.
+
+If the request is classified as a small/bounded story, the matched
+small-story path runs DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, and
+SHIP/closeout with controller-enforced phase gates and hook-verified
+enforcement. It must route through
+`python3 scripts/small_story_controller.py route --route-surface /sweetclaude:go`.
+Completion language is controller-owned — never claim completion the
+controller has not authorized.
+
+Examples:
+
+- `/sweetclaude:go I need to fix the auth bug`
+- `/sweetclaude:go start a large story for the billing rewrite`
+- `/sweetclaude:go set up corpus search for these architecture notes`
+- `/sweetclaude:go review this PR for security issues`
+
+Use the state-driven proposal flow below only when `/sweetclaude:go` is invoked
+without a request.
 
 ---
 
@@ -30,9 +70,9 @@ ls scratch/ 2>/dev/null | grep -iE "checkpoint|continue|resume|handoff" | head -
 Then rebuild the cache and read backlog + roadmap state:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild 2>/dev/null
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query backlog 2>/dev/null
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query active-epic 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query backlog 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query active-epic 2>/dev/null
 ```
 
 If cache.py is not found or fails, scan `.sweetclaude/product/backlog/` directly for markdown files with YAML frontmatter.
@@ -58,9 +98,9 @@ If old-format files are found, output:
 Run the recovery guard before recommending any migration:
 
 ```bash
-SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
 if [ ! -f "$SCRIPT" ]; then
-  SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+  SCRIPT=$(find "$(dirname "${CLAUDE_PLUGIN_ROOT}")" -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | sort -V | tail -1)
 fi
 if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
   python3 "$SCRIPT" guard --project-dir . --pretty
@@ -76,6 +116,9 @@ Parse the guard JSON:
   Then stop.
 - `manual-review` or `missing-product-base`: output the guard `message` and
   stop. Do not recommend migration.
+- `supported-migration-available`: output
+  > Your project has a typed legacy backlog layout that can now be migrated. Run `/sweetclaude:migrate` to convert to the unified ISSUE-NNN taxonomy — it handles typed backlog folders and creates a rollback snapshot before writing.
+  Then stop.
 - `compatibility-mode`: do not stop. Continue to Step 2 and use session-state
   priority logic; old work items may be invisible to cache-backed backlog views,
   but active work and checkpoint state are still usable. Do not recommend
@@ -105,7 +148,7 @@ Any backlog filename containing `bug`, `hotfix`, `security`, `p0`, `p1`, `critic
 The `active-epic` cache query returned a non-null result. Query its stories in sequence order:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query epic-stories --epic {EP-NNN} 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query epic-stories --epic {EP-NNN} 2>/dev/null
 ```
 
 Propose the first open story (lowest `epic_sequence`). This is the next work item for the active capability area.
@@ -377,13 +420,13 @@ Use the receipt created by `/sweetclaude:code-verify`; do not self-generate a
 passing receipt from memory or old output. Validate it first:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/evidence.py validate --receipt "{receipt_path}" --subject-id "{STORY-ID}"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/evidence.py validate --receipt "{receipt_path}" --subject-id "{STORY-ID}"
 ```
 
 If no valid receipt exists, stop and run `/sweetclaude:code-verify` first.
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file "{issue_file_path}" --status done --actor go --project-dir . --evidence-receipt "{receipt_path}"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/status.py set-terminal --file "{issue_file_path}" --status done --actor go --project-dir . --evidence-receipt "{receipt_path}"
 ```
 Report: `✓ {STORY-ID} → done/{filename}`
 
@@ -416,7 +459,10 @@ Done. {STORY-ID} — {title} — closed.
 List the next 2–3 candidates from the priority tiers, in order. For each: name it, say which tier it came from, and say which skill would handle it. Then call AskUserQuestion again with one option per candidate plus a "None of these" escape.
 
 **Something else:**
-Follow the user's direction immediately per Adaptive Flow. Track the current proposal internally so you can offer to return to it when the detour completes.
+Ask the user for the natural-language direction if it is not already present,
+then invoke `sweetclaude:find-skill` with that request as context. Track the
+current proposal internally so you can offer to return to it when the detour
+completes.
 
 ---
 
@@ -471,4 +517,4 @@ Apply per mode:
 - **One paragraph, not a list.** The proposal explanation is prose, not bullet points.
 - **Use AskUserQuestion, not text-imitation menus.** Never write a text line like "Proceed · Review · Something else" — that looks like a menu but isn't interactive. Always present choices via AskUserQuestion.
 - **Wait after proposing.** Do not continue until the user selects an option.
-- **If the user passes arguments** (e.g., `/sweetclaude:go I need to fix the auth bug`): skip Steps 1–3. Use the user's direction as the proposal, confirm it in the PROPOSED NEXT WORK format, and present the same AskUserQuestion menu before acting.
+- **If the user passes arguments** (e.g., `/sweetclaude:go I need to fix the auth bug`): use Step 0. Natural-language requests delegate to `sweetclaude:find-skill`; users do not need to know skill names or route commands.

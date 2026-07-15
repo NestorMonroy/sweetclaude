@@ -1,0 +1,45 @@
+name: Tests on PR
+
+# Run the full pytest suite on every pull request into a release branch, so
+# regressions surface at PR time instead of at release preparation
+# (ISSUE-236; ISSUE-233 Cluster A went undetected for three weeks without
+# this gate).
+on:
+  pull_request:
+    branches:
+      - beta-4.x
+      - main
+
+# Least privilege: the suite only reads the checkout.
+permissions:
+  contents: read
+
+# Repeated pushes to the same PR cancel the previous run.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          # No cache: setup-python's pip cache requires a requirements file,
+          # which this repo does not have; the three installs are small.
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --quiet pytest pyyaml playwright
+          python3 -m playwright install --with-deps chromium
+
+      - name: Run test suite
+        run: python3 -m pytest tests/ -q

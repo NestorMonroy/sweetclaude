@@ -4,7 +4,7 @@ user-invocable: false
 description: "Natural language classifier — maps user text to the right internal skill."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:_route" 2>/dev/null || true`
+
 
 # Route
 
@@ -21,7 +21,8 @@ Known workflow names (case-insensitive):
 `design-user-flows`, `product-discovery`, `product-brief`, `product-prd`,
 `user-personas`, `product-user-stories`, `product-milestones`,
 `product-backlog`, `project-issues`, `project-sprints`, `testing-plan`,
-`testing-security`, `testing-accessibility`, `john-wick`, `adopt`
+`testing-security`, `testing-accessibility`, `large-story`, `small-story`,
+`john-wick`, `adopt`
 
 Example: `use code-feature` → invoke `sweetclaude:code-feature`
 
@@ -35,6 +36,8 @@ If no explicit override, classify by dominant signal in `$ARGUMENTS`:
 | Big picture / full status | "big picture", "whole project", "full status", "project overview", "where is everything", "show me everything", "full project status", "what's the full state" | `sweetclaude:big-picture` |
 | Status / review | "where are we", "what's done", "show me status", "what's next", "what have we done" | Surface status from `sweetclaude.yaml` inline — show project · version_stage · active work · last 3 history items |
 | Help / explain | "how do I", "explain", "what is", "help me understand", "show me how" | `sweetclaude:help` |
+| Large/high-rigor story | "large story", "large-story", "high rigor story", "multi-phase story" | `sweetclaude:large-story` through `python3 scripts/large_story_controller.py route --route-surface sweetclaude:_route`; DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP/closeout; controller-enforced phase gates, hook-verified enforcement |
+| Small/bounded story | "small story", "small-story", "bounded story", "quick story" | `sweetclaude:small-story` through `python3 scripts/small_story_controller.py route --route-surface sweetclaude:_route`; DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP/closeout; controller-enforced phase gates, hook-verified enforcement |
 | Build / feature | "build", "add", "implement", "create", "new feature", "I want to" | `sweetclaude:code-feature` |
 | Bug / fix | "bug", "fix", "broken", "wrong", "regression", "not working as expected" | `sweetclaude:code-issue` |
 | Refactor / debt | "refactor", "clean up", "restructure", "tech debt", "messy", "untangle" | `sweetclaude:code-debt` |

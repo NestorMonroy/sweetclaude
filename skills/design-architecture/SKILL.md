@@ -5,9 +5,8 @@ description: "Define system architecture — components, boundaries, communicati
 category: technical
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:design-architecture" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # Design Architecture
 
@@ -21,9 +20,11 @@ Before writing any artifact file:
 
 2. Read `categories.technical.base_path`. This is the base directory for all technical artifacts.
 
-3. Construct full paths as `{base_path}/{filename}`, e.g. `{base_path}/architecture.md`, `{base_path}/tech-spec-v1.md`.
+3. Check `.sweetclaude/state/session-state.yaml` → `active_work_item.work_dir`:
+   - If set: use `{work_dir}/design/` as the write path. Create the directory if needed (`mkdir -p`). After writing, create a relative symlink from `{base_path}/{filename}` → the work-dir file.
+   - If not set: use `{base_path}/{filename}` as before.
 
-4. Write artifacts to those paths.
+4. Write artifacts to the resolved path.
 
 Define the architecture for your system. This skill conducts a structured interview, produces Architectural Decision Records (ADRs) for each significant decision, and generates an architecture document ready for development.
 

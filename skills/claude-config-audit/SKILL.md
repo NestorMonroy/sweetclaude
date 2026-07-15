@@ -4,7 +4,7 @@ user-invocable: false
 description: "Redirects to sweetclaude:doctor. Config compatibility checks are now part of the doctor system."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:claude-config-audit" 2>/dev/null || true`
+
 
 # Claude Config Audit
 

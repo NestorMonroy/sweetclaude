@@ -9,7 +9,7 @@ state without the maintenance safety contract.
 
 Compare the installed hooks and config files (before sync) against the new version. Identify:
 
-1. **New hooks** — files in `$SOURCE_DIR/hooks/` that did not exist in the previously installed hooks directory (`${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/hooks/sweetclaude}/`)
+1. **New hooks** — files in `$SOURCE_DIR/hooks/` that did not exist in the previously installed hooks directory (`${CLAUDE_PLUGIN_ROOT}/hooks/`)
 2. **New skills** — skill directories in `$SOURCE_DIR/skills/` that did not exist in the previously installed `{installPath}/skills/`
 3. **New config templates** — files in `$SOURCE_DIR/config/templates/` that are new
 
@@ -41,7 +41,7 @@ Read `.sweetclaude/state/skills.yaml` if it exists.
 **Step 1 — schema migration:** If `skills.yaml` exists with `schema_version: 1`, invoke the registry-driven migration runner (ISSUE-066 refactor):
 
 ```bash
-RUNNER=~/.claude/scripts/sweetclaude/migrations/runner.py
+RUNNER=${CLAUDE_PLUGIN_ROOT}/scripts/migrations/runner.py
 if [ -f "$RUNNER" ]; then
   python3 "$RUNNER" --project-dir . --file skills.yaml
   echo "Migrated skills.yaml to schema v2."

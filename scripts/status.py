@@ -315,6 +315,24 @@ def write_status(filepath: str, new_status: str, actor: str, project_dir: str | 
     old_status = fm_check["status"]
 
     if old_status == new_status:
+        # Status is already correct. Still allow an explicit (non-sync) operator
+        # action to update provenance only — e.g. marking an already-correct
+        # status as `source: manual` to protect it from auto roll-up. Auto-sync
+        # (_from_sync) must never take this path, so it cannot downgrade a manual
+        # flag to auto when the status happens to match.
+        if (not _from_sync) and source is not None and fm.get("source") != source:
+            fm["source"] = source
+            fm["updated"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            _atomic_write_frontmatter(path, fm, body)
+
+            pd = _resolve_project_dir(filepath, project_dir)
+            entity = fm.get("id", path.stem)
+            try:
+                file_rel = str(path.relative_to(pd))
+            except ValueError:
+                file_rel = str(path)
+            _append_audit(pd, actor, entity, file_rel, old_status, new_status)
+            _trigger_cache_rebuild(pd)
         return
 
     validate_transition(old_status, new_status, "issue", reopen=reopen)
@@ -374,6 +392,66 @@ def _validate_completion_receipt(receipt_path: str | None, subject_id: str) -> N
     except ImportError as exc:
         raise ValueError("Evidence validator unavailable; cannot mark done safely") from exc
     validate_receipt(receipt_path, subject_id=subject_id)
+
+
+def _success_criteria_required(fm: dict) -> bool:
+    return bool(
+        fm.get("requires_success_criteria_contract")
+        or fm.get("success_criteria_contract")
+        or fm.get("success_criteria_contract_path")
+    )
+
+
+def _success_criteria_path(fm: dict, nested_key: str, direct_key: str) -> str | None:
+    nested = fm.get(nested_key)
+    if isinstance(nested, dict):
+        value = nested.get("path")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    if isinstance(nested, str) and nested.strip():
+        return nested.strip()
+    value = fm.get(direct_key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _validate_success_criteria_completion(
+    *,
+    fm: dict,
+    project_dir: Path,
+    subject_id: str,
+) -> None:
+    if not _success_criteria_required(fm):
+        return
+    try:
+        from success_criteria_contracts import validate_success_criteria_workflow
+    except ImportError as exc:
+        raise ValueError(
+            "Success criteria validator unavailable; cannot mark large/high-rigor work done safely"
+        ) from exc
+
+    result = validate_success_criteria_workflow(
+        project_dir=project_dir,
+        workflow_id=subject_id,
+        stage="completion",
+        contract_path=_success_criteria_path(
+            fm,
+            "success_criteria_contract",
+            "success_criteria_contract_path",
+        ),
+        ledger_path=_success_criteria_path(
+            fm,
+            "success_criteria_ledger",
+            "success_criteria_ledger_path",
+        ),
+    )
+    if not result.get("ok"):
+        raise ValueError(
+            "Cannot mark done: success criteria completion validation failed. "
+            f"{result.get('error') or result.get('blocking_failures')}. "
+            f"{result.get('recovery_hint')}"
+        )
 
 
 def _dest_dir_for_terminal(filepath: Path) -> Path:
@@ -468,8 +546,15 @@ def set_terminal(
     validate_transition(old_status, status, "issue")
 
     entity = fm.get("id", path.stem)
+    pd = _resolve_project_dir(filepath, project_dir)
     if require_evidence and status == "done" and source != "auto" and not _from_sync:
         _validate_completion_receipt(evidence_receipt, str(entity))
+    if status == "done" and source != "auto" and not _from_sync:
+        _validate_success_criteria_completion(
+            fm=fm,
+            project_dir=pd,
+            subject_id=str(entity),
+        )
 
     item_type = fm.get("type")
     if not _from_sync and item_type in ("epic", "milestone") and status == "done":
@@ -515,7 +600,6 @@ def set_terminal(
             pass
         raise RuntimeError(f"Move failed; rolled back: {e}") from e
 
-    pd = _resolve_project_dir(filepath, project_dir)
     try:
         file_rel = str(dest_path.relative_to(pd))
     except ValueError:
@@ -538,14 +622,14 @@ def main(argv: list[str] | None = None) -> int:
     p_set.add_argument("--actor", default=None)
     p_set.add_argument("--project-dir", default=None)
     p_set.add_argument("--reopen", action="store_true", default=False)
-    p_set.add_argument("--source", choices=["manual", "auto"], default=None)
+    p_set.add_argument("--source", choices=["manual", "auto"], default="manual")
 
     p_terminal = sub.add_parser("set-terminal")
     p_terminal.add_argument("--file", required=True)
     p_terminal.add_argument("--status", required=True)
     p_terminal.add_argument("--actor", default=None)
     p_terminal.add_argument("--project-dir", default=None)
-    p_terminal.add_argument("--source", choices=["manual", "auto"], default=None)
+    p_terminal.add_argument("--source", choices=["manual", "auto"], default="manual")
     p_terminal.add_argument("--evidence-receipt", default=None)
     p_terminal.add_argument(
         "--allow-missing-evidence",

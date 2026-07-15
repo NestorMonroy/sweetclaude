@@ -59,19 +59,20 @@ Feature: Doctor lifecycle tests
     When _scan runs against the project state
     Then the scan result does not include finding "file-diagnostics:unknown-status:ISSUE-001-test.md"
 
-  Scenario: Resolved finding has its suppression entry auto-removed
+  Scenario: Resolved finding is reported during scan but not pruned (read-only)
     Given the suppression file contains entry for "env-wiring:missing:plans-directory"
     And the project state does not produce finding "env-wiring:missing:plans-directory"
     When _scan runs against the project state
     Then "env-wiring:missing:plans-directory" appears in suppressions_resolved
-    And the suppression file no longer contains "env-wiring:missing:plans-directory"
+    And the suppression file still contains "env-wiring:missing:plans-directory"
 
-  Scenario: Auto-removed suppression ID appears in suppressions_resolved
+  Scenario: Resolved suppression is pruned during execute and backed up
     Given the suppression file contains entries for "finding-A" and "finding-B"
-    And the project state produces only "finding-B" (not "finding-A")
-    When auto_cleanup_suppressions runs with current finding IDs {"finding-B"}
+    And the scan findings include only "finding-B" (not "finding-A")
+    When prune_resolved_suppressions runs with current finding IDs {"finding-B"}
     Then the result contains "finding-A"
     And the suppression file retains only "finding-B"
+    And the pre-prune suppression file is backed up under the archive's before/
 
   Scenario: Re-emerged finding has previously_suppressed set to true
     Given the suppression file contains entry for "env-wiring:missing:plans-directory"

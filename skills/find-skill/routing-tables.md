@@ -37,13 +37,15 @@ Eight buckets. Each row maps a work type to the skill that handles it, plus the 
 | Meeting preparation | DEFINE | `sweetclaude:misc-meeting-prep` |
 | Market messaging | DEFINE | `sweetclaude:product-market-messaging` |
 | Security planning | DISCOVER, DEFINE, SHIP | `sweetclaude:security-planning` *(Plan 3)* |
-| Course correction | DISCOVER, DEFINE, TRIAGE, SHIP | `sweetclaude:course-correction` *(Plan 3)* |
+| Course correction | DISCOVER, DEFINE, TRIAGE, SHIP | `sweetclaude:course-correction` |
 
 ## product/ — what to build and why
 
 | Work Type | Template Phases | Skill to invoke |
 |---|---|---|
 | Net-new feature | DISCOVER, DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP | `sweetclaude:product-discovery` |
+| Large story / high-rigor story | DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP/closeout; controller-enforced phase gates, hook-verified enforcement | `sweetclaude:large-story` |
+| Small story / bounded story | DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP/closeout; controller-enforced phase gates, hook-verified enforcement | `sweetclaude:small-story` |
 | Enhancement / iteration | DEFINE, DESIGN, IMPLEMENT, VERIFY, SHIP | `sweetclaude:product-prd` |
 | Product brief | DEFINE | `sweetclaude:product-brief` |
 | Requirements / PRD | DEFINE | `sweetclaude:product-prd` |
@@ -78,8 +80,8 @@ Eight buckets. Each row maps a work type to the skill that handles it, plus the 
 | Bug fix | DIAGNOSE, IMPLEMENT, VERIFY, SHIP | `sweetclaude:code-issue` |
 | Enhancement | IMPLEMENT | `sweetclaude:code-issue` |
 | Tech debt / refactor | DEFINE, SCOPE, IMPLEMENT, VERIFY, SHIP | `sweetclaude:code-debt` |
-| Hotfix | DIAGNOSE, IMPLEMENT, SHIP, POST-MORTEM | `sweetclaude:hotfix` *(Plan 3)* |
-| Security patch | DIAGNOSE, IMPLEMENT, VERIFY, SHIP | `sweetclaude:security-patch` *(Plan 3)* |
+| Hotfix | DIAGNOSE, IMPLEMENT, SHIP, POST-MORTEM | `sweetclaude:hotfix` |
+| Security patch | DIAGNOSE, IMPLEMENT, VERIFY, SHIP | `sweetclaude:security-patch` |
 | Performance optimization | DIAGNOSE, DESIGN, IMPLEMENT, VERIFY, SHIP | `sweetclaude:code-issue` |
 | External integration | DISCOVER, DEFINE, DESIGN, PLAN, IMPLEMENT, VERIFY, SHIP | `sweetclaude:external-integration` *(Plan 3)* |
 | Technology migration | ASSESS, DESIGN, PLAN, IMPLEMENT, VERIFY, CUTOVER, CLEANUP | `sweetclaude:code-debt` |
@@ -87,7 +89,7 @@ Eight buckets. Each row maps a work type to the skill that handles it, plus the 
 | API deprecation | ASSESS, DEFINE, IMPLEMENT, VERIFY, SHIP, CLEANUP | `sweetclaude:code-feature` |
 | Dependency upgrade | ASSESS, IMPLEMENT, VERIFY, SHIP | `sweetclaude:code-debt` |
 | Infrastructure change | DEFINE, DESIGN, IMPLEMENT, VERIFY, SHIP | `sweetclaude:code-debt` |
-| Rollback / revert | DIAGNOSE, SHIP | `sweetclaude:code-issue` |
+| Rollback / revert | DIAGNOSE, SHIP | `sweetclaude:rollback-revert` |
 | Code review | VERIFY | `sweetclaude:code-review` |
 | Compliance requirement | ASSESS, DEFINE, DESIGN, IMPLEMENT, VERIFY, SHIP | `sweetclaude:code-feature` |
 
@@ -123,8 +125,8 @@ Eight buckets. Each row maps a work type to the skill that handles it, plus the 
 
 | Work Type | Template Phases | Skill to invoke |
 |---|---|---|
-| Something broke | DIAGNOSE, SHIP, POST-MORTEM | `sweetclaude:something-broke` *(Plan 3)* |
-| Postmortem | DIAGNOSE, SHIP | `sweetclaude:postmortem` *(Plan 3)* |
+| Something broke | DIAGNOSE, SHIP, POST-MORTEM | `sweetclaude:something-broke` |
+| Postmortem | POST-MORTEM | `sweetclaude:postmortem` |
 | Break-glass notes | DEFINE, SHIP | `sweetclaude:break-glass-notes` *(Plan 3)* |
 | Onboarding playbook | DEFINE, IMPLEMENT, SHIP | `sweetclaude:code-feature` |
 

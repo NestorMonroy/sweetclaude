@@ -4,7 +4,7 @@ description: "Interview user and recommend a SweetClaude project mode (Flow, Kan
 version: 1.0.0
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-assess-shape" 2>/dev/null || true`
+
 
 # project-assess-shape
 
@@ -66,7 +66,7 @@ Evaluate in order:
 
 **If yes:** write `mode: {mode_key}` to `.sweetclaude/state/sweetclaude.yaml`, then run:
 ```bash
-bash ~/.claude/scripts/sweetclaude/generate-effective-gates.sh
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/generate-effective-gates.sh
 ```
 Confirm: "Mode set to **{mode}**. Effective gates compiled."
 

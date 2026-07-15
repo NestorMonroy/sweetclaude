@@ -3,9 +3,8 @@ spdx-license: AGPL-3.0-or-later
 description: "Implement a GitHub issue end-to-end."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:code-issue" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
 STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Tell the user: "This project is not set up for SweetClaude. Running the pre-flight check now." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
@@ -14,6 +13,25 @@ STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exi
 # Implement Issue
 
 Implement GitHub issue $ARGUMENTS using the SweetClaude pipeline.
+
+## Process Control Gate
+
+Before invoking `sweetclaude:code-tdd` or any implementation subagent path,
+read `skills/process-controls.md` and create or update
+`.sweetclaude/state/process-control-ledger.yaml`. If the ledger is missing,
+over budget, stale, or in a stop disposition, pause and ask the user for a
+bounded decision before dispatching more agents or continuing a correction
+loop.
+
+For large/high-rigor issues, implementation may not begin until the issue or
+calling workflow supplies a frozen `success_criteria_contract`. Preserve
+`success_criteria_contract_hash` and `criterion_ids` through planning,
+implementation, verification, and PR preparation. Completion requires
+`success-criteria-ledger.json` with every frozen criterion evaluated and
+`all_success_criteria_passed == true`. No review, caucus, verification,
+release, or completion step may add completion criteria; concerns outside the
+contract become backlog, amendment requests, split stories, or human
+escalations.
 
 ## Process
 

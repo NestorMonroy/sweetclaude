@@ -4,7 +4,7 @@ user-invocable: false
 description: "Migration orchestrator. Wraps the runner with snapshot, recovery menus, and end-of-session report."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:_migrate" 2>/dev/null || true`
+
 
 # SweetClaude Migration
 
@@ -18,7 +18,7 @@ Internal skill. Called by `bootstrap` Step 5b when the registry-driven drift sca
 ## Step 0: Detect state and route
 
 ```bash
-RUNNER=~/.claude/scripts/sweetclaude/migrations/runner.py
+RUNNER=${CLAUDE_PLUGIN_ROOT}/scripts/migrations/runner.py
 if [ ! -f "$RUNNER" ]; then
   echo "ERROR: migration runner not found at $RUNNER. Run /sweetclaude:update to install the latest framework."
   exit 1
@@ -42,7 +42,7 @@ fi
 ## Step 1: Create pre-migration snapshot
 
 ```bash
-SNAPSHOT_OUT=$(python3 ~/.claude/scripts/sweetclaude/migrations/run_snapshot.py "$RUNNER" .)
+SNAPSHOT_OUT=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/migrations/run_snapshot.py "$RUNNER" .)
 ```
 
 - `SNAPSHOT_FAILED|<reason>` → abort. Report to user: `"Cannot create pre-migration safety snapshot: <reason>. Migration not started. Resolve the issue (commonly: free disk space, git repo state) and re-run."` Stop.
@@ -51,7 +51,7 @@ SNAPSHOT_OUT=$(python3 ~/.claude/scripts/sweetclaude/migrations/run_snapshot.py 
 ## Step 2: Run the migration
 
 ```bash
-MIGRATE_OUT=$(python3 ~/.claude/scripts/sweetclaude/migrations/run_migrate.py "$RUNNER" .)
+MIGRATE_OUT=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/migrations/run_migrate.py "$RUNNER" .)
 ```
 
 Parse the JSON results. For each result:
@@ -142,7 +142,7 @@ Prompt:
 Wait for the user to type exactly `rollback`. Then:
 
 ```bash
-ROLLBACK_OUT=$(python3 ~/.claude/scripts/sweetclaude/migrations/run_rollback.py "$RUNNER" "$SNAPSHOT_JSON" .)
+ROLLBACK_OUT=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/migrations/run_rollback.py "$RUNNER" "$SNAPSHOT_JSON" .)
 ```
 
 Report success or failure. Clear the pending-migration-decision marker, but PRESERVE `pending-drift-decision.yaml` — rollback restored the pre-migration state which still has drift, so drift-gate must re-surface it next session.
@@ -180,7 +180,7 @@ except Exception:
     print('unknown')
 " 2>/dev/null)
 
-SCRIPT=~/.claude/scripts/sweetclaude/migrate-to-sweetclaude-yaml.py
+SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/migrate-to-sweetclaude-yaml.py
 if [ ! -f "$SCRIPT" ]; then
   echo "Consolidation script not found at $SCRIPT. Run /sweetclaude:update."
   exit 1

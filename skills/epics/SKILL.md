@@ -5,9 +5,8 @@ description: "Manage epics and objectives — add, review, link, status, complet
 category: product
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:epics" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
 STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Tell the user: "This project is not set up for SweetClaude. Running the pre-flight check now." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
@@ -26,13 +25,13 @@ Epics live in `.sweetclaude/product/roadmap/epics/EP-NNN-slug.md`. The SQLite ca
 Before any operation, ensure the cache is current:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild 2>/dev/null
 ```
 
 After any mutation (add, link, complete), rebuild:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild 2>/dev/null
 ```
 
 ## Routing
@@ -64,14 +63,14 @@ Required:
 - **Completion criteria** — ordered checklist (minimum 2 items)
 
 Optional (with defaults):
-- **Milestone** — `MS-NNN` or null. List available milestones from cache: `python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query milestones-compact`
+- **Milestone** — `MS-NNN` or null. List available milestones from cache: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query milestones-compact`
 - **Depends on** — list of `EP-NNN` IDs. List existing epics for reference.
 - **Status** — defaults to `new`
 
 ### Step 2: Assign ID
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query next-id --prefix EP
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query next-id --prefix EP
 ```
 
 ### Step 3: Write epic file
@@ -91,9 +90,12 @@ status: {status}
 release: {REL-NNN or null}
 objective: "{objective}"
 completion_criteria:
-  - "{criterion 1}"
-  - "{criterion 2}"
-completion_criteria_done: []
+  - id: cc-1
+    description: "{criterion 1}"
+    done: false
+  - id: cc-2
+    description: "{criterion 2}"
+    done: false
 depends_on: [{dependencies}]
 created: {now_utc}
 updated: {now_utc}
@@ -107,8 +109,8 @@ updated: {now_utc}
 ### Step 4: Rebuild cache and confirm
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild 2>/dev/null
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query active-epic 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query active-epic 2>/dev/null
 ```
 
 Output: `Created EP-{NNN}: {title}` with a one-line summary.
@@ -122,7 +124,7 @@ List epics grouped by status.
 ### Step 1: Query
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query releases 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query releases 2>/dev/null
 ```
 
 ### Step 2: Render
@@ -147,8 +149,8 @@ EP-{NNN}  {title}  [{status}]
 Story counts come from the `epic-stories` query:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query epic-stories --epic EP-{NNN} 2>/dev/null
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query epic-stories --epic EP-{NNN} --include-done 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query epic-stories --epic EP-{NNN} 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query epic-stories --epic EP-{NNN} --include-done 2>/dev/null
 ```
 
 Open stories = total (with done) - total (without done).
@@ -166,7 +168,7 @@ Parse: `link {ITEM-ID} {EP-NNN}`
 Verify both exist:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query backlog --include-done 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query backlog --include-done 2>/dev/null
 ```
 
 Find the item by ID in the result. If not found, error: "Item {ITEM-ID} not found in backlog."
@@ -190,7 +192,7 @@ Read the item's markdown file. Update or add these frontmatter fields:
 To determine the next sequence number:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query epic-stories --epic EP-{NNN} --include-done 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query epic-stories --epic EP-{NNN} --include-done 2>/dev/null
 ```
 
 Count the results + 1.
@@ -200,7 +202,7 @@ Write the updated file.
 ### Step 4: Rebuild and confirm
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild 2>/dev/null
 ```
 
 Output: `Linked {ITEM-ID} → EP-{NNN} (sequence {N})`
@@ -214,18 +216,18 @@ Detailed view of a single epic.
 ### Step 1: Read epic data
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query releases 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query releases 2>/dev/null
 ```
 
 Find the epic in the releases hierarchy. Also query its stories:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --query epic-stories --epic EP-{NNN} --include-done 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --query epic-stories --epic EP-{NNN} --include-done 2>/dev/null
 ```
 
 ### Step 2: Read completion criteria from file
 
-Read the epic's markdown file directly to get `completion_criteria` and `completion_criteria_done` lists.
+Read the epic's markdown file directly to get the `completion_criteria` list (each entry has `id`, `description`, `done`).
 
 ### Step 3: Render
 
@@ -239,8 +241,8 @@ Objective: {objective}
 Depends on: {depends_on list or "none"}
 
 Completion Criteria ({done}/{total}):
-  ✓ {criterion — if in completion_criteria_done}
-  · {criterion — if not done}
+  ✓ {description — if done: true}
+  · {description — if done: false}
 
 Stories ({open}/{total}):
   {ITEM-ID}  {title}  [{status}]  (seq {N})
@@ -255,7 +257,7 @@ Mark an epic as done.
 
 ### Step 1: Check completion criteria
 
-Read the epic file. Compare `completion_criteria` against `completion_criteria_done`.
+Read the epic file. Check each entry in `completion_criteria` for `done: true`.
 
 If not all criteria are satisfied, present the gaps:
 
@@ -274,15 +276,15 @@ the receipt created by `sweetclaude:code-verify` or by the
 release/verification flow that proved the epic criteria. Validate it first:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/evidence.py validate --receipt "{receipt_path}" --subject-id "EP-{NNN}"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/evidence.py validate --receipt "{receipt_path}" --subject-id "EP-{NNN}"
 ```
 
 If no valid receipt exists, stop and run `/sweetclaude:code-verify` first.
 
-If proceeding, first update `completion_criteria_done` to match `completion_criteria` (all done) and write the file. Then close via the status CLI:
+If proceeding, set `done: true` on every entry in `completion_criteria` and write the file. Then close via the status CLI:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {epic_path} --status done --actor epics --project-dir . --evidence-receipt "{receipt_path}"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/status.py set-terminal --file {epic_path} --status done --actor epics --project-dir . --evidence-receipt "{receipt_path}"
 ```
 
 `set-terminal` handles: status change, `closed_date`, `updated`, file move to `done/`, completion criteria gate, audit log, cache rebuild.

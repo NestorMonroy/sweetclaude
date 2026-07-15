@@ -4,9 +4,8 @@ user-invocable: true
 description: "Define product users — who they are, what they need to do, and exactly what completing each task looks and feels like."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:user-personas" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 # User Personas
 
@@ -37,7 +36,7 @@ Read `.sweetclaude/state/skills.yaml`.
 Drop `onboarded_at`/`offboarded_at`. Set `schema_version: 2`. Write atomically (see write protocol below).
 
 **Dependency check:**
-Read `~/.claude/config/sweetclaude/skills-registry.yaml`. Find `skills.user-personas.dependencies`. This skill has no dependencies — skip.
+Read `${CLAUDE_PLUGIN_ROOT}/config/skills-registry.yaml`. Find `skills.user-personas.dependencies`. This skill has no dependencies — skip.
 
 **If `skills.yaml` does not exist, OR exists but has no entry for `skills.user-personas`:**
 - Check whether `.sweetclaude/state/personas.yaml` exists

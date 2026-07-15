@@ -4,7 +4,7 @@ user-invocable: true
 description: "View and manage the unscheduled issue backlog."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-backlog" 2>/dev/null || true`
+
 
 ## MIGRATION GUARD
 
@@ -24,9 +24,9 @@ print('.sweetclaude/product')
 " 2>/dev/null || echo '.sweetclaude/product')
 LEGACY_FILES=$(find "${PRODUCT_BASE}" -maxdepth 4 -type f \( -name 'BL-*.md' -o -name 'STORY-*.md' -o -name 'BUG-*.md' -o -name 'DEBT-*.md' -o -name 'CHORE-*.md' \) 2>/dev/null | wc -l | tr -d ' ')
 if [ "$LEGACY_FILES" -gt 0 ]; then
-  SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+  SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
   if [ ! -f "$SCRIPT" ]; then
-    SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+    SCRIPT=$(find "$(dirname "${CLAUDE_PLUGIN_ROOT}")" -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | sort -V | tail -1)
   fi
   if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
     python3 "$SCRIPT" guard --project-dir . --pretty
@@ -40,6 +40,10 @@ If the guard output has `status` `run-recover`, `manual-review`,
 `compatibility-mode`, `missing-product-base`, or `guard-unavailable`: print the
 guard `message`, tell the user to run `/sweetclaude:recover` when recovery is
 available, and stop. Do not recommend migration.
+
+If the guard output has `status` `supported-migration-available`: print
+"This project has a typed legacy backlog layout that can be migrated. Run
+`/sweetclaude:migrate` to convert to the unified ISSUE-NNN taxonomy." Then stop.
 
 If the guard output has `status` `migration-may-be-needed`: print the guard
 `message`, then stop and tell the user to review `/sweetclaude:migrate` before
@@ -83,7 +87,7 @@ def write_issue_file(path, fm, body):
 
 def rebuild_cache():
     import subprocess, os
-    subprocess.run(['python3', os.path.expanduser('~/.claude/scripts/sweetclaude/cache.py'), '--project-dir', '.', '--rebuild'], capture_output=True)
+    subprocess.run(['python3', os.path.expanduser('${CLAUDE_PLUGIN_ROOT}/scripts/cache.py'), '--project-dir', '.', '--rebuild'], capture_output=True)
 
 # Load active backlog items (exclude done/ subdirs and metadata files)
 active_files = [
@@ -165,7 +169,7 @@ write_issue_file(path, fm, body)
 ```
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set --file {path} --status ready --actor project-backlog --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/status.py set --file {path} --status ready --actor project-backlog --project-dir .
 ```
 
 Confirm: `Promoted {ID} → {SP-NNN}`
@@ -177,7 +181,7 @@ Confirm: `Promoted {ID} → {SP-NNN}`
 Set issue status to `deferred`. Hides it from the default backlog view without closing it.
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set --file {path} --status deferred --actor project-backlog --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/status.py set --file {path} --status deferred --actor project-backlog --project-dir .
 ```
 
 Confirm: `Deferred <ID> — removed from active backlog`

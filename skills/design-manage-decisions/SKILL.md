@@ -4,9 +4,8 @@ user-invocable: true
 description: "Record and track design and architecture decisions with context, options considered, decision made, and rationale."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:design-manage-decisions" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
 STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Tell the user: "This project is not set up for SweetClaude. Running the pre-flight check now." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
@@ -52,7 +51,9 @@ When $ARGUMENTS describes a decision to record:
 **Consequences:** {what follows}
 ```
 
-7. **Append** to `.sweetclaude/state/decision-log.md` in `.sweetclaude/`. Increment DEC number from last entry.
+7. **Append** to `.sweetclaude/state/decision-log.md`. Increment DEC number from last entry.
+
+8. **Per-item excerpt (if work-item artifacts are active):** Check `.sweetclaude/state/session-state.yaml` → `active_work_item.work_dir`. If set, also write a copy of the entry to `{work_dir}/decisions/DEC-{NNN}.md`. The global decision log remains authoritative — the per-item copy is for discoverability.
 
 ## Query decisions
 

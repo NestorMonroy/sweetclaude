@@ -1,22 +1,56 @@
 ---
 name: sweetclaude:migrate
-description: Migrate v3 BL-NNN items to ISSUE-NNN format in .sweetclaude/product/backlog/. Builds backup, validates, previews, executes, verifies, finalizes.
+description: Migrate legacy work items to unified ISSUE-NNN format. Supports flat BL-NNN layouts and typed legacy backlog layouts (stories/, bugs/, debt/).
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:migrate" 2>/dev/null || true`
+This skill is a thin orchestrator that dispatches to the correct migrator based
+on project shape. Two migrators exist:
 
-This skill is a thin orchestrator. The deterministic migration operations
-(validation, plan, execute, verify, finalize) are implemented in
-`scripts/migrate/migrate-v3-to-v4.py` and tested end-to-end by
-`tests/test-migrate-v3-to-v4.sh`. The skill owns: lock/backup, user prompts,
-preview rendering, failure handling.
+- **Flat BL migrator** (`scripts/migrate/migrate-v3-to-v4.py`): handles flat
+  `BL-NNN.md` backlogs. Subcommand-based (preflight, validate, plan, execute,
+  verify, finalize).
+- **Taxonomy migrator** (`scripts/migrate/migrate_taxonomy.py`): handles typed
+  legacy layouts (stories/, bugs/, debt/, chores/), accepted-legacy-taxonomy
+  projects, and any multi-prefix layout. Single-call with `--dry-run` for
+  preview.
 
-## Step 0: Read-only safety preflight
+## Step 0: Route to the correct migrator
 
 ```bash
-SCRIPT=~/.claude/scripts/sweetclaude/migrate/migrate-v3-to-v4.py
+GUARD_SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
+if [ ! -f "$GUARD_SCRIPT" ]; then
+  GUARD_SCRIPT=$(find "$(dirname "${CLAUDE_PLUGIN_ROOT}")" -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | sort -V | tail -1)
+fi
+if [ -n "$GUARD_SCRIPT" ] && [ -f "$GUARD_SCRIPT" ]; then
+  GUARD_OUT=$(python3 "$GUARD_SCRIPT" guard --project-dir . --pretty)
+  echo "$GUARD_OUT"
+  PROJECT_SHAPE=$(echo "$GUARD_OUT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('project_shape', ''))")
+  MIGRATE_ALLOWED=$(echo "$GUARD_OUT" | python3 -c "import sys, json; print('true' if json.load(sys.stdin).get('migrate_allowed') else 'false')")
+else
+  PROJECT_SHAPE=""
+  MIGRATE_ALLOWED="false"
+fi
+```
+
+If `MIGRATE_ALLOWED` is not `true`: output the guard message and stop. Do not
+proceed.
+
+Route based on `PROJECT_SHAPE`:
+- `typed_legacy_backlog` or `accepted_legacy_taxonomy` → **skip to Step T0
+  (taxonomy migrator flow)** below
+- `flat_bl_backlog` → continue to Step 0b (flat BL migrator flow)
+- Any other shape → output the guard message and stop
+
+---
+
+## Flat BL migrator flow
+
+### Step 0b: Flat BL preflight
+
+```bash
+SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/migrate/migrate-v3-to-v4.py
 if [ ! -f "$SCRIPT" ]; then
-  SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -name 'migrate-v3-to-v4.py' 2>/dev/null | head -1)
+  SCRIPT=$(find "$(dirname "${CLAUDE_PLUGIN_ROOT}")" -type f -name 'migrate-v3-to-v4.py' 2>/dev/null | sort -V | tail -1)
 fi
 if [ -z "$SCRIPT" ] || [ ! -f "$SCRIPT" ]; then
   echo "ERROR: migrate-v3-to-v4.py not found. Run /sweetclaude:update first."
@@ -40,15 +74,6 @@ preflight returns `migrate_allowed: true`.
 ```bash
 PRODUCT_BASE=$(python3 "$SCRIPT" resolve-base --project-dir . | python3 -c "import sys, json; print(json.load(sys.stdin)['product_base'])")
 V3_BACKLOG="${PRODUCT_BASE}/backlog"
-
-PREFLIGHT_OUT=$(python3 "$SCRIPT" preflight --project-dir .)
-MIGRATE_ALLOWED=$(echo "$PREFLIGHT_OUT" | python3 -c "import sys, json; print('true' if json.load(sys.stdin).get('migrate_allowed') else 'false')")
-if [ "$MIGRATE_ALLOWED" != "true" ]; then
-  echo "$PREFLIGHT_OUT"
-  echo "Do not create `migration.lock`, backups, copied files, or migration maps."
-  echo "Run /sweetclaude:recover if the guard says recovery is needed."
-  exit 1
-fi
 
 LOCK_FILE=".sweetclaude/state/migration.lock"
 if [ -f "$LOCK_FILE" ]; then
@@ -174,7 +199,16 @@ Then present **AskUserQuestion**:
 ## Step 5: Execute
 
 ```bash
-EXEC_OUT=$(python3 "$SCRIPT" execute --project-dir . $INCLUDE_DONE)
+APPROVAL_RECEIPT=".sweetclaude/state/migrations/v3-to-v4-approval-receipt.json"
+mkdir -p "$(dirname "$APPROVAL_RECEIPT")"
+echo "$PLAN_OUT" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+receipt = dict(d['mutation_plan']['approval_receipt_template'])
+receipt['approved'] = True
+json.dump(receipt, open('$APPROVAL_RECEIPT', 'w'), indent=2, sort_keys=True)
+"
+EXEC_OUT=$(python3 "$SCRIPT" execute --project-dir . $INCLUDE_DONE --approval-receipt "$APPROVAL_RECEIPT")
 echo "$EXEC_OUT" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
@@ -193,7 +227,7 @@ The `execute` subcommand performs the per-file transformation and writes `MIGRAT
 ## Step 6: Rebuild cache
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild 2>/dev/null
 ```
 
 ## Step 7: Verify
@@ -291,6 +325,105 @@ Invoked by Step 2 (validation failures) or Step 7 (verify failures).
 
 ## Rules
 
-- All deterministic work happens in `scripts/migrate/migrate-v3-to-v4.py`. The skill orchestrates only.
-- The script is idempotent on validate/plan (read-only). `execute` and `finalize` are write operations and assume the lock file is held by the skill.
-- If the script changes (new subcommand, schema bump), update `tests/test-migrate-v3-to-v4.sh` first, run it, and only then update this skill.
+- Flat BL work happens in `scripts/migrate/migrate-v3-to-v4.py`. Taxonomy work happens in `scripts/migrate/migrate_taxonomy.py`. The skill orchestrates only.
+- The flat BL script is idempotent on validate/plan (read-only). `execute` and `finalize` are write operations and assume the lock file is held by the skill.
+- The taxonomy script handles its own snapshot, rollback, and state update internally.
+
+---
+
+## Taxonomy migrator flow
+
+Entered from Step 0 when `PROJECT_SHAPE` is `typed_legacy_backlog` or
+`accepted_legacy_taxonomy`. This flow uses `scripts/migrate/migrate_taxonomy.py`
+which handles typed backlog layouts, accepted-legacy-taxonomy projects, and any
+multi-prefix layout.
+
+### Step T0: Locate taxonomy migrator
+
+```bash
+TAX_SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/migrate/migrate_taxonomy.py
+if [ ! -f "$TAX_SCRIPT" ]; then
+  TAX_SCRIPT=$(find "$(dirname "${CLAUDE_PLUGIN_ROOT}")" -type f -name 'migrate_taxonomy.py' 2>/dev/null | sort -V | tail -1)
+fi
+if [ -z "$TAX_SCRIPT" ] || [ ! -f "$TAX_SCRIPT" ]; then
+  echo "ERROR: migrate_taxonomy.py not found. Run /sweetclaude:update first."
+  exit 1
+fi
+```
+
+### Step T1: Dry-run preview
+
+```bash
+DRY_OUT=$(python3 "$TAX_SCRIPT" --project-dir . --dry-run --pretty)
+echo "$DRY_OUT"
+DRY_OK=$(echo "$DRY_OUT" | python3 -c "import sys, json; print('true' if json.load(sys.stdin).get('ok') else 'false')")
+```
+
+If `DRY_OK` is not `true`: output the errors from the dry-run result and stop.
+
+If the dry-run shows `moves` is empty and `ok` is true: output "Nothing to
+migrate — project files are already in v4 format. Run `/sweetclaude:recover` to
+check graduation eligibility." Stop.
+
+Otherwise, present the planned moves as a table:
+
+```
+Taxonomy migration preview — {N} items to migrate
+
+| Source | Destination | Action |
+|---|---|---|
+| {source_path} | {dest_path} | {action} |
+```
+
+Then present **AskUserQuestion**:
+- **Question:** `Proceed with taxonomy migration? A snapshot will be created before any writes.`
+- **Options:**
+  1. `Yes` → continue to Step T2
+  2. `Cancel` → stop. No writes made.
+
+### Step T2: Execute migration
+
+```bash
+EXEC_OUT=$(python3 "$TAX_SCRIPT" --project-dir . --pretty)
+echo "$EXEC_OUT"
+EXEC_OK=$(echo "$EXEC_OUT" | python3 -c "import sys, json; print('true' if json.load(sys.stdin).get('ok') else 'false')")
+MIGRATED=$(echo "$EXEC_OUT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('migrated', 0))")
+SNAPSHOT=$(echo "$EXEC_OUT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('snapshot', ''))")
+```
+
+If `EXEC_OK` is not `true`: output the errors. The script auto-rolls-back from
+its snapshot on failure. Present:
+
+```
+Migration failed — automatic rollback from snapshot completed.
+Errors: {errors from result}
+Snapshot: {snapshot path}
+```
+
+Present **AskUserQuestion**:
+- **Question:** `What would you like to do?`
+- **Options:**
+  1. `Run /sweetclaude:doctor` → invoke `sweetclaude:doctor`
+  2. `Wait` → stop
+
+If `EXEC_OK` is `true`: rebuild cache and present summary.
+
+### Step T3: Rebuild cache
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild 2>/dev/null
+```
+
+### Step T4: Summary
+
+```
+Taxonomy migration complete.
+
+  Migrated:  {migrated} files to ISSUE-NNN format
+  Snapshot:  {snapshot path}
+
+To roll back if needed, extract the snapshot:
+  tar -xzf {snapshot path} -C .
+
+Next session's bootstrap will check graduation eligibility.
+```

@@ -4,7 +4,7 @@ user-invocable: true
 description: "Import open GitHub Issues into the local issue store as v4 story files."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-gh-import-issues" 2>/dev/null || true`
+
 
 ## MIGRATION GUARD
 
@@ -24,9 +24,9 @@ print('.sweetclaude/product')
 " 2>/dev/null || echo '.sweetclaude/product')
 LEGACY_FILES=$(find "${PRODUCT_BASE}" -maxdepth 4 -type f \( -name 'BL-*.md' -o -name 'STORY-*.md' -o -name 'BUG-*.md' -o -name 'DEBT-*.md' -o -name 'CHORE-*.md' \) 2>/dev/null | wc -l | tr -d ' ')
 if [ "$LEGACY_FILES" -gt 0 ]; then
-  SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+  SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
   if [ ! -f "$SCRIPT" ]; then
-    SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+    SCRIPT=$(find "$(dirname "${CLAUDE_PLUGIN_ROOT}")" -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | sort -V | tail -1)
   fi
   if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
     python3 "$SCRIPT" guard --project-dir . --pretty
@@ -41,6 +41,10 @@ If the guard output has `status` `run-recover`, `manual-review`,
 guard `message`, tell the user to run `/sweetclaude:recover` when recovery is
 available, and stop. Do not recommend migration.
 
+If the guard output has `status` `supported-migration-available`: print
+"This project has a typed legacy backlog layout that can be migrated. Run
+`/sweetclaude:migrate` to convert to the unified ISSUE-NNN taxonomy." Then stop.
+
 If the guard output has `status` `migration-may-be-needed`: print the guard
 `message`, then stop and tell the user to review `/sweetclaude:migrate` before
 running it. Do not invoke migration from this skill.
@@ -53,7 +57,7 @@ BACKLOG_BASE = pathlib.Path('.sweetclaude/product/backlog')
 def assign_new_id():
     import subprocess, json
     import os
-    r = subprocess.run(['python3', os.path.expanduser('~/.claude/scripts/sweetclaude/cache.py'), '--project-dir', '.', '--query', 'next-id', '--prefix', 'ISSUE'],
+    r = subprocess.run(['python3', os.path.expanduser('${CLAUDE_PLUGIN_ROOT}/scripts/cache.py'), '--project-dir', '.', '--query', 'next-id', '--prefix', 'ISSUE'],
         capture_output=True, text=True)
     return json.loads(r.stdout)['next_id']
 

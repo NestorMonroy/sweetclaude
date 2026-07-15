@@ -4,7 +4,7 @@ user-invocable: true
 description: "Manage project issues — list, view, create, update, and close."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:project-issues" 2>/dev/null || true`
+
 
 ## MIGRATION GUARD
 
@@ -24,9 +24,9 @@ print('.sweetclaude/product')
 " 2>/dev/null || echo '.sweetclaude/product')
 LEGACY_FILES=$(find "${PRODUCT_BASE}" -maxdepth 4 -type f \( -name 'BL-*.md' -o -name 'STORY-*.md' -o -name 'BUG-*.md' -o -name 'DEBT-*.md' -o -name 'CHORE-*.md' \) 2>/dev/null | wc -l | tr -d ' ')
 if [ "$LEGACY_FILES" -gt 0 ]; then
-  SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+  SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
   if [ ! -f "$SCRIPT" ]; then
-    SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+    SCRIPT=$(find "$(dirname "${CLAUDE_PLUGIN_ROOT}")" -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | sort -V | tail -1)
   fi
   if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
     python3 "$SCRIPT" guard --project-dir . --pretty
@@ -40,6 +40,10 @@ If the guard output has `status` `run-recover`, `manual-review`,
 `compatibility-mode`, `missing-product-base`, or `guard-unavailable`: print the
 guard `message`, tell the user to run `/sweetclaude:recover` when recovery is
 available, and stop. Do not recommend migration.
+
+If the guard output has `status` `supported-migration-available`: print
+"This project has a typed legacy backlog layout that can be migrated. Run
+`/sweetclaude:migrate` to convert to the unified ISSUE-NNN taxonomy." Then stop.
 
 If the guard output has `status` `migration-may-be-needed`: print the guard
 `message`, then stop and tell the user to review `/sweetclaude:migrate` before
@@ -82,13 +86,13 @@ def make_slug(title):
 def assign_new_id():
     import subprocess, json
     import os
-    r = subprocess.run(['python3', os.path.expanduser('~/.claude/scripts/sweetclaude/cache.py'), '--project-dir', '.', '--query', 'next-id', '--prefix', 'ISSUE'],
+    r = subprocess.run(['python3', os.path.expanduser('${CLAUDE_PLUGIN_ROOT}/scripts/cache.py'), '--project-dir', '.', '--query', 'next-id', '--prefix', 'ISSUE'],
         capture_output=True, text=True)
     return json.loads(r.stdout)['next_id']
 
 def rebuild_cache():
     import subprocess, os
-    subprocess.run(['python3', os.path.expanduser('~/.claude/scripts/sweetclaude/cache.py'), '--project-dir', '.', '--rebuild'], capture_output=True)
+    subprocess.run(['python3', os.path.expanduser('${CLAUDE_PLUGIN_ROOT}/scripts/cache.py'), '--project-dir', '.', '--rebuild'], capture_output=True)
 
 def all_issue_files():
     files = []
@@ -306,7 +310,7 @@ write_issue_file(path, fm, body)
 If status is changing, update via the status CLI (do NOT set `fm['status']` directly):
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set --file {path} --status {new_status} --actor project-issues --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/status.py set --file {path} --status {new_status} --actor project-issues --project-dir .
 ```
 
 Confirm: `Updated {ID} — {list of changed fields}`
@@ -329,7 +333,7 @@ Use the receipt created by `sweetclaude:code-verify`; do not self-generate a
 passing receipt from memory or a stale prior run. Validate it before closing:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/evidence.py validate --receipt {receipt_path} --subject-id <ID>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/evidence.py validate --receipt {receipt_path} --subject-id <ID>
 ```
 
 If no valid receipt exists, stop and run `/sweetclaude:code-verify` first.
@@ -349,13 +353,13 @@ if terminal_status == 'superseded':
 For `done`:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {path} --status done --actor project-issues --project-dir . --evidence-receipt {receipt_path}
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/status.py set-terminal --file {path} --status done --actor project-issues --project-dir . --evidence-receipt {receipt_path}
 ```
 
 For `abandoned` or `superseded`:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {path} --status {terminal_status} --actor project-issues --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/status.py set-terminal --file {path} --status {terminal_status} --actor project-issues --project-dir .
 ```
 
 `set-terminal` handles: status change, `closed_date`, file move to `done/`, audit log, cache rebuild.
@@ -379,7 +383,7 @@ if ROADMAP_ISSUES in path.parents or path.parent == ROADMAP_ISSUES:
 ```
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set-terminal --file {path} --status declined --actor project-issues --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/status.py set-terminal --file {path} --status declined --actor project-issues --project-dir .
 ```
 
 `set-terminal` handles: status change, `closed_date`, file move to `archived/`, audit log, cache rebuild.
@@ -407,7 +411,7 @@ shutil.move(str(path), str(new_path))
 ```
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set --file {new_path} --status ready --actor project-issues --project-dir .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/status.py set --file {new_path} --status ready --actor project-issues --project-dir .
 ```
 
 Confirm: `Triaged {ID} — {title} → roadmap/issues/`
@@ -444,7 +448,7 @@ write_issue_file(path, fm, body)
 ```
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/status.py set --file {path} --status new --actor project-issues --project-dir . --reopen
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/status.py set --file {path} --status new --actor project-issues --project-dir . --reopen
 ```
 
 Confirm: `Reopened {ID} — returned to {destination}`

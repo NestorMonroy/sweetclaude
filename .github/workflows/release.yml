@@ -1,0 +1,130 @@
+name: Release on tag
+
+# Publish a GitHub release whenever a version tag is pushed, so the releases
+# page never drifts behind the tags again. Notes come from CHANGELOG.md (the
+# section for the tag's version), falling back to GitHub's auto-generated notes.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Least privilege: read by default, escalate only the release job to write.
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # required to create the release for the pushed tag
+    steps:
+      - name: Checkout (full history for CHANGELOG)
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Release readiness gate
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # Derive channel + channel-branch from the tag. Three channels:
+          #   prerelease 4.x      -> beta   / beta-4.x
+          #   non-prerelease 4.x  -> stable / main
+          #   non-prerelease 3.x  -> legacy / stable-3.x
+          major="${TAG#v}"; major="${major%%.*}"
+          case "$TAG" in
+            *-beta*|*-rc*|*-alpha*) channel=beta;   branch=beta-4.x ;;
+            *)
+              case "$major" in
+                3) channel=legacy; branch=stable-3.x ;;
+                *) channel=stable; branch=main ;;
+              esac
+              ;;
+          esac
+
+          # The gate requires a named branch (not the detached tag checkout)
+          # tracking origin/<branch>, with the tag at the branch HEAD. Releases
+          # must be cut from the channel-branch HEAD.
+          git checkout "$branch"
+          tag_commit="$(git rev-list -n1 "$TAG")"
+          head_commit="$(git rev-parse HEAD)"
+          if [ "$tag_commit" != "$head_commit" ]; then
+            echo "::error::Tag $TAG ($tag_commit) is not at $branch HEAD ($head_commit) — releases must be cut from the channel-branch HEAD."
+            exit 1
+          fi
+
+          python3 -m pip install --quiet pyyaml
+
+          # Build the release artifact the gate inventories. dist/ is gitignored
+          # so it is absent in a fresh checkout — create it before packing.
+          mkdir -p dist
+          npm pack --pack-destination dist
+
+          # The release-identity evidence asserts update-discovery for ALL
+          # channels, so each other channel's current artifact must also exist.
+          # Build them from their channel branches, then return to ours.
+          for other_branch in main beta-4.x stable-3.x; do
+            if [ "$other_branch" = "$branch" ]; then
+              continue
+            fi
+            if git rev-parse --verify "origin/$other_branch" >/dev/null 2>&1; then
+              git checkout "$other_branch"
+              npm pack --pack-destination dist
+              git checkout "$branch"
+            fi
+          done
+
+          # Generate evidence, then enforce. A non-zero exit here fails the job
+          # before the release is created (publish-time gate).
+          if ! python3 scripts/release_gate.py generate-evidence \
+              --project-dir . --tag "$TAG" --channel "$channel" --branch "$branch" \
+              > "$RUNNER_TEMP/release-evidence.json"; then
+            cat "$RUNNER_TEMP/release-evidence.json"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/release-evidence.json"
+          receipt="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_receipt"])' "$RUNNER_TEMP/release-evidence.json")"
+
+          python3 scripts/release_gate.py check \
+            --project-dir . --tag "$TAG" --channel "$channel" --branch "$branch" \
+            --receipt "$receipt"
+
+      - name: Create release from tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+
+          # Idempotent: never clobber an existing release.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release already exists for $TAG — nothing to do."
+            exit 0
+          fi
+
+          # Pull this version's CHANGELOG section: lines between its "## [x.y.z]"
+          # header and the next "## " header.
+          notes="$(awk -v v="[$version]" '
+            $0 ~ "^## " && index($0, v) { grab=1; next }
+            grab && /^## / { exit }
+            grab { print }
+          ' CHANGELOG.md)"
+
+          # Pre-release for any tag carrying a -beta / -rc / -alpha suffix.
+          prerelease=()
+          case "$TAG" in
+            *-beta*|*-rc*|*-alpha*) prerelease=(--prerelease) ;;
+          esac
+
+          if [ -n "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
+            printf '%s\n' "$notes" > "$RUNNER_TEMP/notes.md"
+            gh release create "$TAG" --title "$TAG" \
+              --notes-file "$RUNNER_TEMP/notes.md" --verify-tag "${prerelease[@]}"
+          else
+            # No CHANGELOG section — fall back to auto-generated notes.
+            gh release create "$TAG" --title "$TAG" \
+              --generate-notes --verify-tag "${prerelease[@]}"
+          fi

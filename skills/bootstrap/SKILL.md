@@ -4,46 +4,28 @@ user-invocable: false
 description: "Session startup skill — pre-flight checks, drift/update offers, and initial routing."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:bootstrap" 2>/dev/null || true`
-
-!`cat .sweetclaude/state/sweetclaude.yaml 2>/dev/null || echo "SC_YAML_NOT_FOUND"`
 
 # SweetClaude
 
-State pre-loaded above. One read. Make a decision. Delegate.
+Load state, then make a decision. Delegate.
+
+```bash
+cat .sweetclaude/state/sweetclaude.yaml 2>/dev/null || echo "SC_YAML_NOT_FOUND"
+```
+
+If the output is `SC_YAML_NOT_FOUND`, the state file does not exist. Otherwise parse the output as YAML.
 
 ---
 
 ## Step 0: Pre-flight
 
-Ensure the versionless framework path is populated, then run the pre-flight helper.
+Run the pre-flight helper to resolve runner path, plugin state, and version-dir repair.
 
 ```bash
-if [ ! -f ~/.claude/scripts/sweetclaude/preflight.sh ]; then
-  IP=$(python3 -c "
-import json, os
-try:
-    d = json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json')))
-    entries = [e for versions in d.get('plugins', {}).values()
-               for e in versions if e.get('scope') == 'user']
-    entries.sort(key=lambda e: e.get('lastUpdated', ''), reverse=True)
-    for e in entries:
-        ip = e.get('installPath', '')
-        if ip and os.path.isdir(os.path.join(ip, 'scripts')):
-            print(ip)
-            break
-except Exception:
-    pass
-" 2>/dev/null)
-  if [ -n "$IP" ] && [ -d "$IP/scripts" ]; then
-    mkdir -p ~/.claude/scripts/sweetclaude
-    rsync -a "$IP/scripts/" ~/.claude/scripts/sweetclaude/ 2>/dev/null || true
-  fi
-fi
-eval "$(bash ~/.claude/scripts/sweetclaude/preflight.sh 2>/dev/null)"
+eval "$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" 2>/dev/null)"
 ```
 
-`RUNNER` is now set (empty if not found). `SELF_HEAL=true` if the versionless path was just populated. `VERSION_DIR_HEALED=true` if the install directory was just repaired to a version-named path.
+`RUNNER` is now set (empty if not found). `VERSION_DIR_HEALED=true` if the install directory was just repaired to a version-named path.
 
 If `VERSION_DIR_HEALED=true`, print exactly this before continuing:
 
@@ -105,7 +87,7 @@ If `schema_version` is not in `{1, 2}`:
 - Invoke `sweetclaude:_migrate --schema-upgrade`
 - Stop (migration tells user to re-run)
 
-If `schema_version` is `1`, the registry-driven runner will pick up the v1→v2 migration during the Step 5b drift scan. Bootstrap continues — it does not need to short-circuit here.
+If `schema_version` is `1`, the registry-driven runner will pick up the v1→v2 migration during the Step 5c drift scan. Bootstrap continues — it does not need to short-circuit here.
 
 ## Step 3: Check migration status
 
@@ -145,13 +127,24 @@ Read `framework.setup_complete`.
 If `false`:
 - Invoke `sweetclaude:setup`. Stop.
 
-## Step 5b: v4 hard stop — v3 artifacts present
+## Step 5b: Maintenance guard — v3 artifacts and compatibility states
 
-After confirming setup is complete, check for v3 backlog files. The trigger is a v4 plugin running
-against a project that hasn't migrated yet — detected by comparing the plugin version (from
-`installed_plugins.json`) against the project's own `installed_version`. This is a one-time check
-that becomes inert after the project completes v3→v4 migration. Step 5c handles steady-state
-schema drift after that point.
+After confirming setup is complete, decide whether the recovery guard needs to
+run, in one of two modes:
+
+- **hard-stop** — a v4 plugin is running against a project that hasn't migrated
+  yet (project `installed_version` below 4.x, or v3 `BL-*.md` files present).
+  Unsafe to continue; the session stops after routing.
+- **advisory** — the project is v4 but sits in a compatibility/recovery state
+  (`recovery.taxonomy.status: stabilized-without-migration`), or its product
+  tree still holds old-taxonomy files (`STORY-`/`BUG-`/`DEBT-`/`CHORE-`)
+  despite the state claiming migration is complete. Graduation opportunities,
+  blockers, and recoverable states are only visible through the guard, so it
+  runs at session start, routes to an action, and the session continues.
+
+Every status the guard can emit has a route below. There are no unrouted
+statuses: bootstrap either offers the resolving action or explains honestly
+why none exists.
 
 ```bash
 # Resolve product_base from artifact-privacy.yaml; fall back to .sweetclaude/product
@@ -191,46 +184,129 @@ print(d.get('framework', {}).get('installed_version', ''))
 
 V3_FILES=$(find "${PRODUCT_BASE}/backlog" -maxdepth 1 -name 'BL-*.md' 2>/dev/null | wc -l | tr -d ' ')
 
-# Fire if: plugin is v4 AND (project is not yet v4 OR v3 BL files exist)
 PLUGIN_IS_V4=false
 case "$PLUGIN_V" in 4.*) PLUGIN_IS_V4=true ;; esac
 
 PROJECT_NOT_V4=false
 case "$PROJECT_V" in 4.*) ;; *) PROJECT_NOT_V4=true ;; esac
 
+COMPAT_STATE=$(python3 -c "
+import yaml
+d = yaml.safe_load(open('.sweetclaude/state/sweetclaude.yaml')) or {}
+taxonomy = (d.get('recovery') or {}).get('taxonomy') or {}
+print('yes' if taxonomy.get('status') == 'stabilized-without-migration' else 'no')
+" 2>/dev/null || echo no)
+
+LEGACY_FILES=$(find "${PRODUCT_BASE}" \( -name 'STORY-*.md' -o -name 'BUG-*.md' -o -name 'DEBT-*.md' -o -name 'CHORE-*.md' \) 2>/dev/null | wc -l | tr -d ' ')
+
+GUARD_MODE=none
 if $PLUGIN_IS_V4 && ( $PROJECT_NOT_V4 || [ "$V3_FILES" -gt 0 ] ); then
-  echo "SweetClaude v4 is installed but this project hasn't migrated yet."
-  echo ""
-  if [ "$V3_FILES" -gt 0 ]; then
-    echo "Found $V3_FILES v3 stories at ${PRODUCT_BASE}/backlog/."
-  fi
-  echo ""
-  SCRIPT=~/.claude/scripts/sweetclaude/recovery/recover_project.py
+  GUARD_MODE=hard-stop
+elif [ "$COMPAT_STATE" = "yes" ] || [ "$LEGACY_FILES" -gt 0 ]; then
+  GUARD_MODE=advisory
+fi
+
+GUARD_STATUS=""
+if [ "$GUARD_MODE" != "none" ]; then
+  SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/recovery/recover_project.py
   if [ ! -f "$SCRIPT" ]; then
-    SCRIPT=$(find ~/.claude/plugins/cache/sweetclaude -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | head -1)
+    SCRIPT=$(find "$(dirname "${CLAUDE_PLUGIN_ROOT}")" -type f -path '*/scripts/recovery/recover_project.py' 2>/dev/null | sort -V | tail -1)
   fi
   if [ -n "$SCRIPT" ] && [ -f "$SCRIPT" ]; then
-    python3 "$SCRIPT" guard --project-dir . --pretty
-  else
-    echo '{"status":"guard-unavailable","message":"Recovery guard unavailable. Run /sweetclaude:update before migration."}'
+    GUARD_JSON=$(python3 "$SCRIPT" guard --project-dir . 2>/dev/null)
+    GUARD_STATUS=$(printf '%s' "$GUARD_JSON" | python3 -c "
+import json, sys
+try:
+    print(json.load(sys.stdin).get('status', ''))
+except Exception:
+    pass
+" 2>/dev/null)
   fi
-  echo ""
-  echo "If the guard says recovery is needed, run: /sweetclaude:recover"
-  echo "Run /sweetclaude:migrate only when the guard says this is a simple migration candidate."
-  exit 1
+  [ -z "$GUARD_STATUS" ] && GUARD_STATUS=guard-unavailable
+  echo "GUARD_MODE=$GUARD_MODE"
+  echo "GUARD_STATUS=$GUARD_STATUS"
+  printf '%s\n' "$GUARD_JSON"
 fi
 ```
 
-If the v4 hard stop fires: print the message above and exit. If the guard
-returns `run-recover`, `manual-review`, `compatibility-mode`,
-`missing-product-base`, or `guard-unavailable`, do not recommend migration. No
-further skill execution.
+If `GUARD_MODE=none`: continue to Step 5c.
 
-If it does not fire (project is already at 4.x and has no v3 BL files): continue to Step 5c.
+Otherwise route on `GUARD_STATUS`. In **hard-stop** mode, stop after routing
+(the project must not run normal skills against unmigrated v3 artifacts). In
+**advisory** mode, continue to Step 5c after the route resolves or the user
+declines.
+
+**`graduation-available`** — the project is v4-compliant and one state-only
+write away from leaving compatibility mode. Present via **AskUserQuestion**:
+
+> This project is v4-compliant and can graduate from compatibility mode now.
+> Graduation is a state-only write — no work-item files change.
+
+Options:
+- **Graduate now (Recommended)** — invoke `sweetclaude:doctor`; its
+  maintenance route runs graduation-check and graduates with archive and
+  rollback support.
+- **Not now** — continue in compatibility mode.
+
+**`graduation-blocked`** — fixable validation blockers stand between this
+project and graduation. List each entry from the guard's
+`graduation_blockers` array as `- {code}: {detail}`, then present via
+**AskUserQuestion**:
+
+> This project could graduate from compatibility mode, but {N} blocker(s)
+> must be fixed first. Fixes run through Doctor's executor — archived and
+> reversible.
+
+Options:
+- **Fix blockers and graduate (Recommended)** — invoke `sweetclaude:doctor`;
+  its `graduation-blocked` route resolves each blocker, re-checks, and
+  graduates.
+- **Not now** — continue in compatibility mode.
+
+**`run-recover`** — a recoverable maintenance state. Present via
+**AskUserQuestion**: **Run recovery now (Recommended)** (invoke
+`sweetclaude:recover`) or **Not now**. In hard-stop mode, stop after the
+choice resolves; do not run normal skills until recovery completes.
+
+**`migration-may-be-needed`** — flat v3 `BL-*.md` items with no recovery
+state. Tell the user: "Old-format work items were found. Run
+`/sweetclaude:migrate` to review the migration — it runs its own preflight
+and safety steps." Stop (hard-stop mode only fires here).
+
+**`supported-migration-available`** — a typed legacy backlog layout that can
+now be migrated. Tell the user: "This project has a typed legacy backlog
+layout. Run `/sweetclaude:migrate` to migrate to the unified ISSUE-NNN
+taxonomy — it handles typed backlog folders (stories/, bugs/, debt/, chores/)
+and creates a rollback snapshot before writing anything." Stop in hard-stop
+mode; in advisory mode offer migration or continue.
+
+**`compatibility-mode`** — legacy taxonomy layout that can be migrated.
+Print one line: "This project is in compatibility mode. Run
+`/sweetclaude:migrate` to convert to v4 layout, or `/sweetclaude:recover`
+to check graduation eligibility." In advisory mode continue the session.
+
+**`manual-review`** — the guard cannot classify the project safely. Print the
+guard `message`, then: "Run `/sweetclaude:doctor` for a full diagnostic scan —
+it can characterize states the guard cannot." Stop in hard-stop mode.
+
+**`missing-product-base`** — `artifact-privacy.yaml` points at a product
+directory that does not exist. Print the configured path from the guard
+payload and: "Fix the `base_path` in `.sweetclaude/artifact-privacy.yaml` or
+restore the directory, then restart. `/sweetclaude:doctor` can diagnose
+this." Stop in hard-stop mode.
+
+**`guard-unavailable`** — the guard script is missing from the install. Print:
+"Recovery guard unavailable — the install is incomplete. Run
+`/sweetclaude:update` to repair it, then restart." Stop in hard-stop mode.
+
+**`ok`** — nothing to do; continue to Step 5c.
+
+Recommend `/sweetclaude:migrate` for statuses `migration-may-be-needed`,
+`supported-migration-available`, and `compatibility-mode`.
 
 ## Step 5c: Artifact-format drift check (hard demand)
 
-Runs only when the Step 5b v4 hard-stop did not fire. Catches steady-state schema drift on projects that are already at v4 but have schema versions behind the registry's current.
+Runs whenever Step 5b did not stop the session (guard mode `none`, or an advisory route that resolved or was declined). Catches steady-state schema drift on projects that are already at v4 but have schema versions behind the registry's current.
 
 The drift-gate.sh SessionStart hook has already scanned for drift and written the marker if any was found. Read the marker first; if it exists, use it as the source of truth (drift-gate's scan is authoritative for the session). If the marker is absent (drift-gate didn't run, e.g. versionless path was just self-healed in Step 0), run the runner inline and parse its stdout directly — do NOT rely on the runner writing the marker (it only writes to stdout via `--report-drift-for-skill`).
 
@@ -280,23 +356,29 @@ If `DRIFT_COUNT > 0`: the binary prompt depends on `CASE`.
 > "This project's SweetClaude state files are too old for automatic migration (out of framework support window). How would you like to proceed?"
 >
 > Options:
-> - **Re-onboard from scratch** — archive existing SweetClaude content and run `/sweetclaude:adopt` against a fresh state. Your old files stay as reference; adopt does not auto-import them.
+> - **Re-onboard from scratch** — archive existing SweetClaude content and run `/sweetclaude:init` against a fresh state. Your old files stay as reference; init does not auto-import them.
 > - **Remove SweetClaude from this project (re-onboarding required to reactivate)** — invoke `sweetclaude:purge`.
 
 ### Re-onboarding flow (Case B → Re-onboard from scratch)
 
+Archive `.sweetclaude/` aside through the re-adopt script (reversible, no inline
+`mv`), then mirror any relocated artifact bases into the same legacy tree:
+
 ```bash
-TS=$(date -u +%Y%m%d-%H%M%S)
-LEGACY=".sweetclaude.legacy/$TS"
-mkdir -p ".sweetclaude.legacy"
-if [ -d .sweetclaude ]; then
-  mv .sweetclaude "$LEGACY"
-fi
-python3 ~/.claude/scripts/sweetclaude/maintenance/archive-sweetclaude-dir.py "$LEGACY"
-echo "Moved existing SweetClaude content to $LEGACY/ — adopt will use it as reference, not auto-migrate."
+RA=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/recovery/re_adopt.py execute --project-dir .)
+LEGACY=$(python3 -c "import json,sys;print(json.loads(sys.stdin.read())['legacy_path'])" <<<"$RA")
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/maintenance/archive-sweetclaude-dir.py "$LEGACY"
+echo "Archived existing SweetClaude content to $LEGACY/ — init will use it as reference, not auto-migrate."
 ```
 
-Then invoke `sweetclaude:adopt`. Adopt runs against the now-empty project. The legacy tree at `.sweetclaude.legacy/<timestamp>/` is visible to the user during onboarding so they can manually port content as needed.
+`re_adopt.py execute` moves `.sweetclaude/` into `.sweetclaude.legacy/<timestamp>/`
+and reports `legacy_path`; the archive helper then relocates the artifact bases
+(e.g. `docs/product`) under that same path.
+
+Then invoke `sweetclaude:init`. Init runs against the now-empty project and
+re-onboards the existing source. The legacy tree at
+`.sweetclaude.legacy/<timestamp>/` is visible to the user during onboarding so
+they can manually port content as needed; init does not auto-import it.
 
 There is no "Not now" option in either case. No third path. Stop after the user picks.
 
@@ -377,7 +459,7 @@ PY
   - Not now → write `declined: <available>` (the specific version declined), continue:
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/maintenance/write-decline.py .
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/maintenance/write-decline.py .
 ```
 
 ## Step 6b: Doctor checkup prompt

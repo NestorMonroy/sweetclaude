@@ -64,28 +64,13 @@ recorded = (d.get('framework') or {}).get('installed_version')
 actual = None
 try:
     p = json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json')))
-    plugin_root = os.environ.get('CLAUDE_PLUGIN_ROOT', '')
-    rows = []
-    for k, versions in (p.get('plugins') or {}).items():
-        if 'sweetclaude' not in str(k).lower() or not isinstance(versions, list):
-            continue
-        for entry in versions:
-            if not isinstance(entry, dict):
-                continue
-            install_path = str(entry.get('installPath') or '')
-            version = str(entry.get('version') or '')
-            score = 0
-            if plugin_root and install_path and os.path.realpath(install_path) == os.path.realpath(plugin_root):
-                score += 1000
-            if recorded and version and version.lstrip('v').split('-', 1)[0].split('.', 1)[0] == str(recorded).lstrip('v').split('-', 1)[0].split('.', 1)[0]:
-                score += 200
-            if entry.get('scope') == 'user':
-                score += 100
-            if install_path and os.path.isdir(install_path):
-                score += 10
-            rows.append((score, str(entry.get('lastUpdated') or ''), entry))
-    rows.sort(key=lambda row: (row[0], row[1]), reverse=True)
-    actual = rows[0][2].get('version') if rows else None
+    candidates = []
+    for k, v in (p.get('plugins') or {}).items():
+        if 'sweetclaude' in k.lower() and v:
+            candidates.append(v[0])
+    if candidates:
+        candidates.sort(key=lambda e: e.get('lastUpdated', ''), reverse=True)
+        actual = candidates[0].get('version')
 except Exception:
     pass
 if actual and actual != recorded:
@@ -127,7 +112,7 @@ if [ "$(hours_since "$LAST_CONSISTENCY")" -ge 24 ]; then
     fi
 
     # Check sweetclaude rules files
-    RULES_DIR="$HOME/.claude/rules/sweetclaude"
+    RULES_DIR="${CLAUDE_PLUGIN_ROOT}/rules"
     for rules_file in interaction-model.md phase-gates.md tdd-levels.md; do
       if [ ! -f "$RULES_DIR/$rules_file" ]; then
         DRIFT="${DRIFT} rules:${rules_file}"
@@ -184,42 +169,14 @@ fi
 # --- Version check (every 24h) ---
 if [ "$(hours_since "$LAST_UPDATE")" -ge 24 ]; then
   (
-    INSTALLED=$(python3 - "$SC_YAML" << 'PY' 2>/dev/null
-import json, os, sys, yaml
-sc_path = sys.argv[1]
-preferred = ''
+    INSTALLED=$(python3 -c "
+import json
 try:
-    preferred = str((yaml.safe_load(open(sc_path)) or {}).get('framework', {}).get('installed_version') or '')
-except Exception:
-    pass
-try:
-    d = json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json')))
-    plugin_root = os.environ.get('CLAUDE_PLUGIN_ROOT', '')
-    rows = []
-    for k, versions in (d.get('plugins') or {}).items():
-        if 'sweetclaude' not in str(k).lower() or not isinstance(versions, list):
-            continue
-        for entry in versions:
-            if not isinstance(entry, dict):
-                continue
-            install_path = str(entry.get('installPath') or '')
-            version = str(entry.get('version') or '')
-            score = 0
-            if plugin_root and install_path and os.path.realpath(install_path) == os.path.realpath(plugin_root):
-                score += 1000
-            if preferred and version and version.lstrip('v').split('-', 1)[0].split('.', 1)[0] == preferred.lstrip('v').split('-', 1)[0].split('.', 1)[0]:
-                score += 200
-            if entry.get('scope') == 'user':
-                score += 100
-            if install_path and os.path.isdir(install_path):
-                score += 10
-            rows.append((score, str(entry.get('lastUpdated') or ''), entry))
-    rows.sort(key=lambda row: (row[0], row[1]), reverse=True)
-    print(rows[0][2].get('version', 'unknown') if rows else 'unknown')
-except Exception:
-    print('unknown')
-PY
-)
+    d = json.load(open('$HOME/.claude/plugins/installed_plugins.json'))
+    e = [v for k,v in d.get('plugins',{}).items() if 'sweetclaude' in k.lower()]
+    print(e[0][0].get('version','unknown') if e and e[0] else 'unknown')
+except: print('unknown')
+" 2>/dev/null)
 
     # Gap #1 — hybrid discovery:
     #   1. Local dev clone (per ~/.claude/sweetclaude-install.json repo_path)
@@ -228,10 +185,9 @@ PY
     # All network calls are wrapped in a 5-second timeout. Failures are
     # silent in user-facing surface; the result is recorded to
     # framework.update.check_error so fix-sweetclaude can surface it.
-    REPO_VERSION=$(python3 - "$HOME" "$INSTALLED" << 'PY' 2>/dev/null
+    REPO_VERSION=$(python3 - "$HOME" << 'PY' 2>/dev/null
 import json, os, re, subprocess, sys
 HOME = sys.argv[1]
-INSTALLED = sys.argv[2] if len(sys.argv) > 2 else ""
 
 def run(cmd, timeout=5):
     try:
@@ -241,31 +197,13 @@ def run(cmd, timeout=5):
         return 1, "", ""
 
 def repo_url_from_plugin():
-    """Read repository URL from the selected installed plugin manifest."""
+    """Read repository URL from installed plugin manifest. Returns owner/repo str or None."""
     try:
         d = json.load(open(os.path.join(HOME, ".claude/plugins/installed_plugins.json")))
-        plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
-        rows = []
-        for k, versions in (d.get("plugins") or {}).items():
-            if "sweetclaude" not in str(k).lower() or not isinstance(versions, list):
-                continue
-            for entry in versions:
-                if not isinstance(entry, dict):
-                    continue
-                install_path = str(entry.get("installPath") or "")
-                version = str(entry.get("version") or "")
-                score = 0
-                if plugin_root and install_path and os.path.realpath(install_path) == os.path.realpath(plugin_root):
-                    score += 1000
-                if version and major(version) == major(INSTALLED):
-                    score += 200
-                if entry.get("scope") == "user":
-                    score += 100
-                if install_path and os.path.isdir(install_path):
-                    score += 10
-                rows.append((score, str(entry.get("lastUpdated") or ""), install_path))
-        rows.sort(key=lambda row: (row[0], row[1]), reverse=True)
-        install_path = rows[0][2] if rows else ""
+        entries = [v for k, v in (d.get("plugins") or {}).items() if "sweetclaude" in k.lower()]
+        if not entries or not entries[0]:
+            return None, None
+        install_path = entries[0][0].get("installPath", "")
     except Exception:
         return None, None
     if not install_path:
@@ -291,45 +229,17 @@ def semver_key(v):
     parts = re.match(r"^(\d+)\.(\d+)\.(\d+)", v)
     return tuple(int(p) for p in parts.groups()) if parts else (0, 0, 0)
 
-def major(v):
-    m = re.match(r"^v?(\d+)", str(v or ""))
-    return int(m.group(1)) if m else None
-
-def expected_ref_for_installed(v):
-    m = major(v)
-    if m == 3:
-        return "stable-3.x"
-    if m == 4:
-        return "beta-4.x"
-    return ""
-
-def allowed_version(v):
-    installed_major = major(INSTALLED)
-    candidate_major = major(v)
-    if installed_major is None or candidate_major != installed_major:
-        return False
-    # Stable installs do not auto-discover prereleases. Beta requires explicit
-    # beta-channel installation/update.
-    if "-" not in str(INSTALLED) and "-" in str(v):
-        return False
-    return True
-
-# Path 1: local dev clone. Only trust it when it is on this install's channel
-# branch; otherwise a stable install can accidentally discover beta from a
-# maintainer checkout.
+# Path 1: local dev clone.
 install_json = os.path.join(HOME, ".claude/sweetclaude-install.json")
 if os.path.exists(install_json):
     try:
         d = json.load(open(install_json))
         repo_path = d.get("repo_path", "")
         if repo_path and os.path.exists(os.path.join(repo_path, "package.json")):
-            expected_ref = expected_ref_for_installed(INSTALLED)
-            rc, branch, _ = run(["git", "-C", repo_path, "branch", "--show-current"])
-            if expected_ref and branch.strip() == expected_ref:
-                pkg = json.load(open(os.path.join(repo_path, "package.json")))
-                v = pkg.get("version", "")
-                if v and allowed_version(v):
-                    print(v); sys.exit()
+            pkg = json.load(open(os.path.join(repo_path, "package.json")))
+            v = pkg.get("version", "")
+            if v:
+                print(v); sys.exit()
     except Exception:
         pass
 
@@ -341,7 +251,7 @@ if owner_repo:
     rc, out, _ = run(["gh", "api", f"repos/{owner_repo}/releases/latest", "-q", ".tag_name"])
     if rc == 0:
         v = normalize_semver(out)
-        if v and allowed_version(v):
+        if v:
             print(v); sys.exit()
 
 # Path 3: git ls-remote --tags.
@@ -355,7 +265,7 @@ if url:
                 continue
             tag = line.split("\trefs/tags/", 1)[1].split("^{}")[0]
             v = normalize_semver(tag)
-            if v and allowed_version(v):
+            if v:
                 versions.append(v)
         if versions:
             best = max(versions, key=semver_key)

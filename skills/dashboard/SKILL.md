@@ -4,7 +4,7 @@ user-invocable: true
 description: "Launch a local web dashboard showing roadmap, releases, epics, backlog, dependencies, git history, and skill activity."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:dashboard" 2>/dev/null || true`
+
 
 # Dashboard
 
@@ -22,14 +22,14 @@ Tabs align with the status view scopes spec (v3.1):
 ## Step 1: Ensure cache is current
 
 ```bash
-python3 ~/.claude/scripts/sweetclaude/cache.py --project-dir . --rebuild 2>/dev/null
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/cache.py --project-dir . --rebuild 2>/dev/null
 ```
 
 ## Step 2: Launch server
 
 ```bash
 PORT=${1:-8411}
-python3 ~/.claude/scripts/sweetclaude/dashboard.py --project-dir . --port "$PORT" &
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dashboard.py --project-dir . --port "$PORT" &
 DASH_PID=$!
 sleep 1
 if kill -0 "$DASH_PID" 2>/dev/null; then

@@ -204,12 +204,8 @@ echo "Syncing skills, scripts, config..."
 rsync -a "$REPO_ROOT/skills/" "$INSTALL_PATH/skills/" || echo "WARNING: skills sync failed (non-fatal)" >&2
 rsync -a --exclude='__pycache__' --exclude='*.pyc' "$REPO_ROOT/scripts/" "$INSTALL_PATH/scripts/" || echo "WARNING: scripts sync failed (non-fatal)" >&2
 
-mkdir -p ~/.claude/scripts/sweetclaude 2>/dev/null || echo "WARNING: could not create ~/.claude/scripts/sweetclaude/ (non-fatal)" >&2
-rsync -a --exclude='__pycache__' --exclude='*.pyc' "$REPO_ROOT/scripts/" ~/.claude/scripts/sweetclaude/ || echo "WARNING: scripts mirror sync failed (non-fatal)" >&2
-
 if [ -d "$REPO_ROOT/config" ]; then
-  mkdir -p ~/.claude/config/sweetclaude
-  rsync -a "$REPO_ROOT/config/" ~/.claude/config/sweetclaude/ || echo "WARNING: config sync failed (non-fatal)" >&2
+  rsync -a "$REPO_ROOT/config/" "$INSTALL_PATH/config/" || echo "WARNING: config sync failed (non-fatal)" >&2
 fi
 
 MANIFEST_VER=$(REPO="$REPO_ROOT" python3 - <<'PYEOF' 2>/dev/null || true

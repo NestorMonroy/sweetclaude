@@ -4,9 +4,8 @@ user-invocable: true
 description: "Fully autonomous, resumable, multi-session SDLC pipeline."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:john-wick" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
+!`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
 STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Tell the user: "This project is not set up for SweetClaude. Running the pre-flight check now." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
@@ -29,8 +28,17 @@ Fully autonomous, resumable SDLC pipeline. Runs from discovery artifacts to merg
 - [state-schema.md](state-schema.md) — `john-wick.yaml` schema
 - [report-format.md](report-format.md) — Test report template
 - [severity-classifier.md](severity-classifier.md) — Significant vs not-significant decision rules
+- [../process-controls.md](../process-controls.md) — caucus, subagent, WLF, and correction-loop stop rules
 
 ---
+
+## Artifact Path Resolution
+
+Before referencing contract, report, or plan paths, check `.sweetclaude/state/session-state.yaml` → `active_work_item.work_dir`:
+- If set: substitute `{work_dir}/contracts/` for `.sweetclaude/contracts/`, `{work_dir}/reports/` for `.sweetclaude/reports/`, and `{work_dir}/plans/` for `.sweetclaude/plans/` throughout all phase documents. Pass resolved paths via `--contract` and `--ledger` CLI args to scripts.
+- If not set: use the default paths as written in the phase documents.
+
+This applies to all phase files loaded by this skill.
 
 ## Entry and Resume
 
@@ -167,6 +175,25 @@ If any step produces an unrecoverable error — including but not limited to: sk
 **Skill invocations are transparent.** When invoking an existing skill (product-prd, design-architecture, etc.), John Wick uses the `Skill` tool exactly as a user would. It does not bypass preflight guards, skip sections, or pass undocumented flags (except `--autonomous` which is an explicit extension added in Plan 1).
 
 **State before steps.** `john-wick.yaml current_step` is updated to the next step before that step begins. A resume after any interruption will re-enter the correct step without duplication.
+
+**Process controls before autonomous dispatch.** Before any step spawns
+subagents, runs a caucus, invokes an implementer, or enters a correction loop,
+read `process_control` in `john-wick.yaml` and apply
+`../process-controls.md`. If `process_control` is missing, initialize it before
+dispatch. If it is over budget or has an active stop disposition, set
+`status: waiting_for_user`, populate `interactive_gate_pending`, and stop. Do
+not spawn another agent or caucus while the stop is active.
+
+**Success criteria contract authority.** John Wick must create and freeze a
+`success_criteria_contract` during Define before Plan, Design, Implement Prep,
+Implement, Verify, review, release, or caucus completion evaluation can proceed.
+Persist the contract path, `success_criteria_contract_hash`, and
+`criterion_ids` in `john-wick.yaml`. Later phases may create
+`criteria-amendment-request.yaml`, backlog items, split-story proposals, or
+human escalations, but they may not silently change the frozen criteria.
+Completion is valid only when `success-criteria-ledger.json` evaluates every
+frozen criterion and reports `all_success_criteria_passed == true`. No review,
+caucus, verification, release, or completion step may add completion criteria.
 
 **Multi-service warning.** John Wick is designed for one service at a time. If the service contract analysis (DS3) identifies that a dependency's spec is absent or marked in-progress (another John Wick run), flag explicitly:
 > "⚠ Dependency in-flight: [{service}] appears to be under active development. Contract analysis for this dependency may be stale by the time implementation begins. Consider sequencing: finish the upstream service's John Wick pipeline through DS7 before continuing."

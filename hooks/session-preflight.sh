@@ -64,7 +64,7 @@ emit_block() {
 # ── Step 2: Project gate ──────────────────────────────────────────────────────
 
 if [ ! -d "$PROJECT_DIR/.sweetclaude" ]; then
-  emit_ctx "SweetClaude not used for this project." "SweetClaude is not configured for this project."
+  emit_ctx "SweetClaude is not set up for this project. Run /sweetclaude:init to start a new or existing project, or just /sweetclaude:go and describe what you want to do." "SweetClaude is not configured for this project. To onboard it, run /sweetclaude:init (routes new vs. existing projects) or /sweetclaude:go with a plain-language request."
   exit 0
 fi
 
@@ -228,6 +228,29 @@ else
   exit 0
 fi
 
+# ── Step 12b: Record session_start event ─────────────────────────────────────
+
+RECORD_SCRIPT="$(dirname "$HOOK_DIR")/scripts/record-event.sh"
+if [ -x "$RECORD_SCRIPT" ]; then
+  _SC_PHASE=$(python3 -c "
+import yaml
+try:
+    d = yaml.safe_load(open('$PROJECT_DIR/.sweetclaude/state/sweetclaude.yaml')) or {}
+    print(d.get('work', {}).get('active', {}).get('phase') or 'none')
+except Exception:
+    print('none')
+" 2>/dev/null || echo "none")
+  _SC_DEF=$(python3 -c "
+import yaml
+try:
+    d = yaml.safe_load(open('$PROJECT_DIR/.sweetclaude/state/sweetclaude.yaml')) or {}
+    print(d.get('deference') or 'not_set')
+except Exception:
+    print('not_set')
+" 2>/dev/null || echo "not_set")
+  bash "$RECORD_SCRIPT" session_start "phase=$_SC_PHASE" "deference=$_SC_DEF"
+fi
+
 # ── Step 13: Determine state file ────────────────────────────────────────────
 
 if [ "$EXPECTED_SC_VERSION" = "v2" ]; then
@@ -260,6 +283,6 @@ _BB=$'\033[1;34m'
 _RST=$'\033[0m'
 _ACTIVE_MSG="${_BR}SweetClaude is active. Type ${_BB}/sweetclaude:go${_BR} to begin.${_RST}"
 
-STYLE_CTX="SweetClaude output style: use markdown headers (## / ###) and bold labels (**text**) for structure; dash lists (-) for bullets; no ASCII box-drawing (════ ────) or ANSI color codes. Apply this to all skill output."
+STYLE_CTX="SweetClaude output style: use markdown headers (## / ###) and bold labels (**text**) for structure; dash lists (-) for bullets; no decorative ASCII boxes or horizontal rules (e.g. ════ ──── ┌──┐) and no ANSI color codes. EXCEPTION: the roadmap/big-picture/status tree connectors (├── └── │ ↓ ✓) are required structure — never replace them with dashes or markdown. Apply this to all skill output."
 
 emit_ctx "$_ACTIVE_MSG" "${CTX}"$'\n\n'"${STYLE_CTX}"$'\n\n'"Invoke sweetclaude:bootstrap now before responding to the user."

@@ -4,9 +4,7 @@ user-invocable: true
 description: "Bootstrap the SweetClaude infrastructure for any project — new or existing."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:init" 2>/dev/null || true`
 
-!`cat .sweetclaude/state/session-state.yaml 2>/dev/null || echo "STATE_NOT_FOUND"`
 
 # SweetClaude Init
 
@@ -220,7 +218,7 @@ CLAUDE.md template:
 ## SweetClaude
 
 - Read `.sweetclaude/state/phase.yaml` and `.sweetclaude/state/improvement-register.md` at session start if they exist. If `.sweetclaude/state/phase.yaml` exists and `.sweetclaude/disabled` does not exist, invoke `sweetclaude:status` automatically at session start.
-- Follow the interaction model in `~/.claude/rules/sweetclaude/interaction-model.md`.
+- Follow the interaction model in `${CLAUDE_PLUGIN_ROOT}/rules/interaction-model.md`.
 - Respect the current deference level. Ask if not set.
 - Never push for phase advancement. The user decides when to move on.
 ```
@@ -264,8 +262,7 @@ If no conflicts are found, proceed immediately. If FATAL conflicts are found, re
 ## Step 8: Run generate-session-state
 
 ```bash
-bash ~/.claude/hooks/sweetclaude/generate-session-state.sh 2>/dev/null || \
-bash "$(git rev-parse --show-toplevel 2>/dev/null)/hooks/generate-session-state.sh" 2>/dev/null || \
+bash "${CLAUDE_PLUGIN_ROOT}/hooks/generate-session-state.sh" 2>/dev/null || \
 echo "SESSION_STATE_SKIPPED"
 ```
 
@@ -290,14 +287,14 @@ SweetClaude Initialized
 > {- CLAUDE.md (if created)}
 > {- `pre-sweetclaude` git branch (if existing project)}
 >
-> Next: Run `/sweetclaude:setup` to start a product discovery session, or jump straight to `/sweetclaude:go` if you already know what you're building."
+> Next: run `/sweetclaude:go` and describe what you want to do — it routes new products into product discovery and existing work to the right skill."
 
 ---
 
 ## Rules
 
 - Never overwrite files that already exist — skip and report.
-- Never run product discovery — that is `sweetclaude:setup`'s job.
+- Never run product discovery — that belongs to `sweetclaude:product-discovery`, reached through `/sweetclaude:go`.
 - Ask project type once; do not re-ask.
 - For CLAUDE.md: present before writing (unless autonomous deference).
 - If `.sweetclaude/disabled` exists: warn "SweetClaude is disabled for this project (`.sweetclaude/disabled` exists). Remove it to proceed." Stop.

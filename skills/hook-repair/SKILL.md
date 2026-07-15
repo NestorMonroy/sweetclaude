@@ -4,7 +4,7 @@ user-invocable: true
 description: "Redirects to sweetclaude:doctor. Hook diagnostics are now part of the doctor system."
 ---
 
-!`bash ~/.claude/hooks/sweetclaude/record-event.sh skill_invoked "sweetclaude:hook-repair" 2>/dev/null || true`
+
 
 # Hook Repair
 
