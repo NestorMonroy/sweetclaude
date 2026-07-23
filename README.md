@@ -13,15 +13,6 @@ Start Claude Code and run:
 /sweetclaude:help
 ```
 
-**Beta safety note:** 4.x beta releases before `v4.1.9-beta` had known update/recovery risks. Do not install old beta tags on active projects. Use the current `beta-4.x` channel, and see [4.x Beta Rescue](docs/user-guide/beta-rescue.md) if an existing beta install reports `4.1.8-beta` or older.
-
-To intentionally install the 4.x beta channel, add and install the beta plugin channel explicitly. Do not use `/sweetclaude:update` to move a stable 3.x install onto beta.
-
-```
-/plugin marketplace add carson-sweet/sweetclaude@beta-4.x
-/plugin install sweetclaude@sweetclaude-beta
-```
-
 ## What It Is
 
 A software development partner for the full project lifecycle — from the first idea through design, implementation, testing, and ship. SweetClaude teaches itself about your project and preferences through conversation, then applies those learnings to deal with the less-fun parts of the project.
@@ -53,45 +44,6 @@ Start Claude Code in your project folder as you normally would, then inside Clau
 ```
 /plugin marketplace add carson-sweet/sweetclaude@main
 /plugin install sweetclaude@sweetclaude-stable
-```
-
-For the 4.x beta channel, add and install the beta plugin channel explicitly. Do not use `/sweetclaude:update` to move a stable 3.x install onto beta.
-
-```
-/plugin marketplace add carson-sweet/sweetclaude@beta-4.x
-/plugin install sweetclaude@sweetclaude-beta
-```
-
-**Moving from the beta channel to stable (recommended):** the beta channel is being retired. Switch in this order so you are never double-installed (both channels' skills and hooks would load at once):
-
-```
-/plugin marketplace add carson-sweet/sweetclaude@main
-/plugin install sweetclaude@sweetclaude-stable
-/plugin marketplace remove sweetclaude-beta
-```
-
-Removing the beta marketplace uninstalls its plugin, so add and install stable first. Then run `/sweetclaude:update` on the stable channel.
-
-**Upgrading from 3.x:** The stable channel now tracks the 4.x line on `main`, and the 3.x channel has been renamed to `sweetclaude-legacy`. To move a 3.x install onto 4.x:
-
-```
-/plugin marketplace add carson-sweet/sweetclaude@main
-/plugin install sweetclaude@sweetclaude-stable
-/plugin marketplace remove sweetclaude-stable
-/sweetclaude:update
-```
-
-To stay on 3.x, re-add the renamed legacy marketplace (a one-time step — the marketplace name changed):
-
-```
-/plugin marketplace remove sweetclaude-stable
-/plugin marketplace add carson-sweet/sweetclaude@stable-3.x
-/plugin install sweetclaude@sweetclaude-legacy
-```
-
-Once install is complete, run:
-
-```
 /sweetclaude:help
 ```
 
@@ -113,15 +65,9 @@ A few other key commands to know about are:
 
 We've tried to design SweetClaude to be intuitive, but additional documentation is available if needed or desired:
 
-→ [Stable 3.x install, update, and uninstall](https://github.com/carson-sweet/sweetclaude/blob/stable-3.x/docs/user-guide/install.md)
+→ [User guide, update, and migration](docs/user-guide/index.md)
 
-→ [4.x guide, update, migration, and rescue](docs/user-guide/index.md)
-
-→ [Choose the right user-guide track](docs/user-guide/index.md)
-
-→ [First stable session walkthrough](https://github.com/carson-sweet/sweetclaude/blob/stable-3.x/docs/user-guide/quickstart.md)
-
-→ [Full skills reference by track](docs/user-guide/index.md)
+→ [Full skills reference](docs/user-guide/index.md)
 
 
 
@@ -227,6 +173,41 @@ For dependency risk, failure modes, and contingency plans → [Platform Dependen
 [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-or-later) — free to use, modify, and distribute. No restrictions for personal or commercial tools you build — you just can't monetize SweetClaude directly, via distribution or SaaS. Full terms in [LICENSE](LICENSE).
 
 **Enterprises**: use the [contact form on the project owner's website](https://www.carsonsweet.com) to inquire about licensing or customizations for your organization's needs.
+
+
+
+## Migrating from Older Channels
+
+**From the 4.x beta channel:** The beta channel is being retired. Switch in this order so you are never double-installed (both channels' skills and hooks would load at once):
+
+```
+/plugin marketplace add carson-sweet/sweetclaude@main
+/plugin install sweetclaude@sweetclaude-stable
+/plugin marketplace remove sweetclaude-beta
+```
+
+Removing the beta marketplace uninstalls its plugin, so add and install stable first. Then run `/sweetclaude:update` on the stable channel.
+
+Beta releases before `v4.1.9-beta` had known update/recovery risks. See [4.x Beta Rescue](docs/user-guide/beta-rescue.md) if an existing beta install reports `4.1.8-beta` or older.
+
+**From 3.x:** The 3.x channel has been renamed to `sweetclaude-legacy`. To move a 3.x install onto 4.x:
+
+```
+/plugin marketplace add carson-sweet/sweetclaude@main
+/plugin install sweetclaude@sweetclaude-stable
+/plugin marketplace remove sweetclaude-stable
+/sweetclaude:update
+```
+
+To stay on 3.x, re-add the renamed legacy marketplace (a one-time step — the marketplace name changed):
+
+```
+/plugin marketplace remove sweetclaude-stable
+/plugin marketplace add carson-sweet/sweetclaude@stable-3.x
+/plugin install sweetclaude@sweetclaude-legacy
+```
+
+→ [Legacy 3.x documentation](https://github.com/carson-sweet/sweetclaude/blob/stable-3.x/docs/user-guide/install.md)
 
 
 
