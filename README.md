@@ -29,7 +29,7 @@ Install SweetClaude (below) then run `/sweetclaude:help` to get a guided walk-th
 
 ## Key Design Principles
 
-There are too many Claude Code plugins to count, so it's important to know if one's design principals align with what you want. To help you decide if SweetClaude might be helpful, here are several of the top principles used when designing SweetClaude:
+There's a massive number of Claude Code plugins out there. To help you decide if SweetClaude might be one that's helpful, here are the top principles used when designing SweetClaude:
 
 * **Successful projects take more than code.** If you're here you probably already know this, but really thinking through what you're building, for who, why, and how they'll use it results in a good product that delivers value to users. Unfortunately, that part is a lot less fun than vibe-coding — it's real work. SweetClaude is primarily about taking care of that work — and a bunch of other lessfun work — in a structured, reliable way.
 * **Hide the complexity**. SweetClaude has over 100 skills built natively on Claude Code's Skills framework and Anthropic's multi-agent architecture. These skills compose into dynamic, situation-driven workflows across four operating modes. *Few people want to learn all that.*  To hide the complexity, SweetClaude uses a conversational interface with just a few commands as entry points, and an orchestrator skill does the rest (you can also manually invoke most skills if you want).
