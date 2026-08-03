@@ -1,6 +1,30 @@
 # Changelog
 
-All notable changes to SweetClaude are documented here. SweetClaude has separate stable 3.x and 4.x beta channels, so this changelog calls out channel-specific changes explicitly.
+All notable changes to SweetClaude are documented here. SweetClaude ships on the stable channel (4.x, tracked on `main`) with a legacy 3.x maintenance channel; this changelog calls out channel-specific changes explicitly.
+
+---
+
+## [4.5.2] — 2026-08-03
+
+### Fixed — update offers respect your channel
+
+The session-start update check could offer a beta version to a stable
+install (for example, suggesting an "upgrade" from 4.5.1 to 4.5.1-beta).
+Version discovery is now channel-aware: stable installs are only ever
+offered stable releases, only versions newer than the installed one are
+offered, and a stale beta suggestion left in project state is cleared
+automatically.
+
+### Changed — beta channel retired
+
+The 4.x beta channel has served its purpose and is retired now that 4.x is
+the stable line. The beta branch is archived and the beta marketplace no
+longer serves installs or updates. If you still have
+`sweetclaude@sweetclaude-beta` installed, SweetClaude shows a one-time
+switch to the stable channel at session start — three commands, and your
+project data migrates normally. Release tooling now enforces the two-channel
+model (stable 4.x on `main`, legacy 3.x on `stable-3.x`), and the
+documentation reflects it.
 
 ---
 
