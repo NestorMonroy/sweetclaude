@@ -178,6 +178,29 @@ try:
 except: print('unknown')
 " 2>/dev/null)
 
+    # ISSUE-248: resolve the installed channel so prerelease versions are
+    # never offered to stable installs. Marketplace name wins; a prerelease
+    # installed version implies beta; default is stable (the safe side —
+    # unknown installs are never offered prereleases).
+    CHANNEL=$(python3 -c "
+import json, re
+try:
+    d = json.load(open('$HOME/.claude/plugins/installed_plugins.json'))
+    for k, v in d.get('plugins', {}).items():
+        if 'sweetclaude' in k.lower() and v:
+            market = k.split('@', 1)[1].lower() if '@' in k else k.lower()
+            version = str(v[0].get('version') or '')
+            if 'beta' in market: print('beta')
+            elif 'stable' in market: print('stable')
+            elif re.search(r'-(?:beta|rc|alpha)', version, re.IGNORECASE): print('beta')
+            else: print('stable')
+            break
+    else:
+        print('stable')
+except Exception:
+    print('stable')
+" 2>/dev/null)
+
     # Gap #1 — hybrid discovery:
     #   1. Local dev clone (per ~/.claude/sweetclaude-install.json repo_path)
     #   2. gh api releases/latest (if gh installed and authenticated)
@@ -185,9 +208,29 @@ except: print('unknown')
     # All network calls are wrapped in a 5-second timeout. Failures are
     # silent in user-facing surface; the result is recorded to
     # framework.update.check_error so fix-sweetclaude can surface it.
-    REPO_VERSION=$(python3 - "$HOME" << 'PY' 2>/dev/null
+    REPO_VERSION=$(python3 - "$HOME" "$INSTALLED" "$CHANNEL" << 'PY' 2>/dev/null
 import json, os, re, subprocess, sys
 HOME = sys.argv[1]
+INSTALLED = sys.argv[2] if len(sys.argv) > 2 else "unknown"
+CHANNEL = sys.argv[3] if len(sys.argv) > 3 else "stable"
+
+PRERELEASE_RE = re.compile(r"-(?:beta|rc|alpha)", re.IGNORECASE)
+
+def is_prerelease(v):
+    return bool(PRERELEASE_RE.search(v or ""))
+
+def allowed(v):
+    """Channel gate: prereleases are only offerable on the beta channel."""
+    return CHANNEL == "beta" or not is_prerelease(v)
+
+def finish(v):
+    """Offer v only if strictly newer than INSTALLED (prerelease < release
+    at the same triple). Otherwise print nothing — no offer."""
+    if INSTALLED in ("", "unknown") or semver_key(v) > semver_key(INSTALLED):
+        print(v)
+    else:
+        print("")
+    sys.exit()
 
 def run(cmd, timeout=5):
     try:
@@ -225,11 +268,15 @@ def normalize_semver(tag):
     return t if re.match(r"^\d+\.\d+\.\d+", t) else None
 
 def semver_key(v):
-    """Tuple for max() comparison."""
+    """Tuple for ordering. A prerelease sorts below its release: the final
+    element is 0 for prereleases, 1 for releases (semver 4.5.1-beta < 4.5.1)."""
     parts = re.match(r"^(\d+)\.(\d+)\.(\d+)", v)
-    return tuple(int(p) for p in parts.groups()) if parts else (0, 0, 0)
+    nums = tuple(int(p) for p in parts.groups()) if parts else (0, 0, 0)
+    return nums + (0 if is_prerelease(v) else 1,)
 
-# Path 1: local dev clone.
+# Path 1: local dev clone. A version the channel disallows (e.g. a clone
+# sitting on a beta branch while the installed plugin is stable) does not
+# terminate resolution — fall through so stable updates are still found.
 install_json = os.path.join(HOME, ".claude/sweetclaude-install.json")
 if os.path.exists(install_json):
     try:
@@ -238,21 +285,23 @@ if os.path.exists(install_json):
         if repo_path and os.path.exists(os.path.join(repo_path, "package.json")):
             pkg = json.load(open(os.path.join(repo_path, "package.json")))
             v = pkg.get("version", "")
-            if v:
-                print(v); sys.exit()
+            if v and allowed(v):
+                finish(v)
     except Exception:
         pass
 
 # Path 2/3: GitHub. Need the URL.
 url, owner_repo = repo_url_from_plugin()
 
-# Path 2: gh api (if available and auth'd).
+# Path 2: gh api (if available and auth'd). releases/latest excludes
+# prereleases, but gate anyway in case a prerelease was published as a
+# full release.
 if owner_repo:
     rc, out, _ = run(["gh", "api", f"repos/{owner_repo}/releases/latest", "-q", ".tag_name"])
     if rc == 0:
         v = normalize_semver(out)
-        if v:
-            print(v); sys.exit()
+        if v and allowed(v):
+            finish(v)
 
 # Path 3: git ls-remote --tags.
 if url:
@@ -265,11 +314,11 @@ if url:
                 continue
             tag = line.split("\trefs/tags/", 1)[1].split("^{}")[0]
             v = normalize_semver(tag)
-            if v:
+            if v and allowed(v):
                 versions.append(v)
         if versions:
             best = max(versions, key=semver_key)
-            print(best); sys.exit()
+            finish(best)
 
 # All paths failed.
 print("")

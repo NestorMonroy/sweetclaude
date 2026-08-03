@@ -404,6 +404,7 @@ print(', '.join(drift) if drift else 'configuration drift detected')
 Read `framework.update.available`, `framework.update.declined`, and `framework.installed_version` from pre-loaded state. Apply the version-aware decline rule (Gap #1 #8, locked in `scratch/v3-upgrade-assessment-2026-05-11/DECISIONS.md`):
 
 - `available` is null → no offer.
+- `available` is a prerelease (`-beta`/`-rc`/`-alpha`) while the installed version is not → no offer, ever (ISSUE-248: stable installs are never prompted with prerelease versions, regardless of what an older hook wrote to state).
 - `available` is non-null:
   - Compute `is_major_bump = major(available) > major(installed_version)`.
   - If `is_major_bump` is true → **always prompt**, regardless of `declined`.
@@ -428,7 +429,14 @@ def major(v):
     m = re.match(r"^(\d+)\.", v.lstrip("v"))
     return int(m.group(1)) if m else None
 
+def is_prerelease(v):
+    return bool(re.search(r"-(?:beta|rc|alpha)", str(v or ""), re.IGNORECASE))
+
 if not available:
+    print("DECISION=silent"); sys.exit()
+# ISSUE-248: never prompt a stable install with a prerelease version, no
+# matter what an older health-check hook left in framework.update.available.
+if is_prerelease(available) and not is_prerelease(installed):
     print("DECISION=silent"); sys.exit()
 inst_maj, avail_maj = major(installed), major(available)
 if inst_maj is None or avail_maj is None:
