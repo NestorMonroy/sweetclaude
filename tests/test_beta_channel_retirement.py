@@ -190,8 +190,11 @@ class TestCiRetargeted:
         assert "branch=beta-4.x" not in text
 
     def test_bump_version_guidance_names_live_channels_only(self):
-        text = (REPO_ROOT / "scripts" / "bump-version.sh").read_text(encoding="utf-8")
-        assert "beta-4.x" not in text
+        # bump-version.sh is a local-only helper (gitignored, absent on CI).
+        script = REPO_ROOT / "scripts" / "bump-version.sh"
+        if not script.exists():
+            pytest.skip("bump-version.sh is a local-only helper, not distributed")
+        assert "beta-4.x" not in script.read_text(encoding="utf-8")
 
 
 class TestFrontDoorStops:
