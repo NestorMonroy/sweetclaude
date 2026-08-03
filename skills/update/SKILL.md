@@ -24,7 +24,7 @@ below is attempted, stop immediately and tell the user:
 Update script not found. This can happen after a partial update.
 
 To recover, run this Claude Code command:
-/plugin update sweetclaude@sweetclaude-beta
+/plugin update sweetclaude@sweetclaude-stable
 
 Then restart Claude Code and run /sweetclaude:update again.
 ```
