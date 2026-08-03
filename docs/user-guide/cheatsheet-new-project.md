@@ -6,8 +6,8 @@ You have an idea. Maybe it is well-formed, maybe it is a napkin sketch. SweetCla
 
 1. Install SweetClaude (if you have not already) — inside Claude Code run:
    ```
-   /plugin marketplace add carson-sweet/sweetclaude@beta-4.x
-   /plugin install sweetclaude@sweetclaude-beta
+   /plugin marketplace add carson-sweet/sweetclaude@main
+   /plugin install sweetclaude@sweetclaude-stable
    ```
 2. Create an empty folder for your project and open Claude Code in it
 3. Run:

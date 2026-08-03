@@ -1,6 +1,6 @@
 # SweetClaude 4.x Migration and Recovery
 
-This page replaces the older "run migrate first" guidance. In 4.x beta, project
+This page replaces the older "run migrate first" guidance. In 4.x, project
 maintenance is routed through doctor and recovery before any taxonomy migration
 runs.
 
