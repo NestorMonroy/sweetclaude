@@ -96,13 +96,13 @@ The work type determines the shape. You do not pick. When you describe the work 
 
 ## 4.x Beta Operating Model
 
-4.x beta separates framework update, project repair, recovery, and taxonomy
-migration. `/sweetclaude:update` syncs framework files inside the installed beta
+4.x separates framework update, project repair, recovery, and taxonomy
+migration. `/sweetclaude:update` syncs framework files inside the installed plugin
 channel and reports drift. It does not run project-state or taxonomy migrations
 inline. After plugin update and restart, project maintenance starts with
 `/sweetclaude:doctor`.
 
-Doctor is the beta maintenance front door. It runs deterministic checks over
+Doctor is the maintenance front door. It runs deterministic checks over
 state, hooks, storage, migration readiness, config, files, onboarding, and
 environment, then chooses a route:
 

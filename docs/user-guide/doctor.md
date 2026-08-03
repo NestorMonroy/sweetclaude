@@ -41,7 +41,7 @@ categories cover:
 
 ## How a run works
 
-1. **Plugin guard.** Doctor refuses to run on a stale beta plugin and tells you
+1. **Plugin guard.** Doctor refuses to run on a retired-channel or stale beta plugin and tells you
    how to update first.
 2. **Route preflight + scan (read-only).** Doctor decides whether recovery,
    migration, or compatibility mode applies, then runs the full scan.

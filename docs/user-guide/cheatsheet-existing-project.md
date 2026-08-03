@@ -8,8 +8,8 @@ SweetClaude is not just a coding tool. Even on an existing project, the strategi
 
 1. Install SweetClaude (if you have not already) — inside Claude Code run:
    ```
-   /plugin marketplace add carson-sweet/sweetclaude@beta-4.x
-   /plugin install sweetclaude@sweetclaude-beta
+   /plugin marketplace add carson-sweet/sweetclaude@main
+   /plugin install sweetclaude@sweetclaude-stable
    ```
 2. Open Claude Code in your project folder
 3. Run:
@@ -90,7 +90,7 @@ If SweetClaude detected mismatches between its configuration and your actual pro
 /sweetclaude:doctor
 ```
 
-Doctor scans state, hooks, storage, migration, config, files, onboarding, and environment. It proposes fixes, routes unsafe beta migration states to `/sweetclaude:recover`, and does not mutate files until the relevant safety flow confirms the action.
+Doctor scans state, hooks, storage, migration, config, files, onboarding, and environment. It proposes fixes, routes unsafe legacy migration states to `/sweetclaude:recover`, and does not mutate files until the relevant safety flow confirms the action.
 
 ### Add Strategic Foundation (Even Mid-Project)
 

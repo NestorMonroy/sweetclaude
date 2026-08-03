@@ -29,7 +29,7 @@ This page is reference. For why state is structured the way it is, read [How It 
 ├── contracts/                  ← Frozen success-criteria contracts for story workflows
 ├── reports/                    ← Success-criteria ledger + per-workflow implementation evidence
 ├── work/                       ← (opt-in) Per-work-item artifact directories: .sweetclaude/work/<ITEM-ID>/
-├── product/                    ← 4.x beta product artifacts: backlog, roadmap, issues
+├── product/                    ← 4.x product artifacts: backlog, roadmap, issues
 ├── plans/                      ← Claude Code plan files (.sweetclaude/plans is set as plansDirectory)
 │   └── archive/                ← Plans archived at ship time, organized by milestone/sprint
 ├── traceability/               ← Story → requirement → test → code traceability maps
@@ -44,8 +44,8 @@ are written by the controller-gated story workflows — see
 [Evidence and Success-Criteria Contracts](evidence-and-contracts.md). The opt-in
 `work/` tree is covered in [Work-Item Artifacts](work-item-artifacts.md).
 
-Version note: stable 3.x and 4.x beta share the same state principle but differ
-in operational details. In 4.x beta, project maintenance data may include
+Version note: legacy 3.x and 4.x share the same state principle but differ
+in operational details. In 4.x, project maintenance data may include
 `.sweetclaude/state/doctor-runs/`, `.sweetclaude/state/recovery-runs/`, and
 `.sweetclaude/product/`. Recovery run directories can contain snapshots of state
 and product artifacts and should stay out of source control.
@@ -120,7 +120,7 @@ framework:
 | `framework.consistency` | Last drift-check result. Updated by the health hook. |
 | `framework.update` | Whether a newer version is available. Updated by the health hook. |
 
-**Migration from older state:** If your project has old SweetClaude state files, run `/sweetclaude:doctor` or `/sweetclaude:go` and follow the routed maintenance flow. In 4.x beta, `/sweetclaude:update` reports drift but does not run project-state or taxonomy migrations inline.
+**Migration from older state:** If your project has old SweetClaude state files, run `/sweetclaude:doctor` or `/sweetclaude:go` and follow the routed maintenance flow. In 4.x, `/sweetclaude:update` reports drift but does not run project-state or taxonomy migrations inline.
 
 ---
 

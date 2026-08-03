@@ -1,6 +1,6 @@
 # Quick Start
 
-You have SweetClaude 4.x beta installed. Here is how to use it. If you have not installed
+You have SweetClaude 4.x installed. Here is how to use it. If you have not installed
 yet, start with [Install](install.md).
 
 ---
