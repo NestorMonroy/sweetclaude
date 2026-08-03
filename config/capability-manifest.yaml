@@ -10,6 +10,9 @@ channels:
     expected_marketplace: sweetclaude-stable
     prerelease_required: false
     prerelease_allowed: false
+    # ISSUE-241: control-lint moved here from the retired beta channel —
+    # stable is now the active development channel and keeps the gate.
+    control_lint_required: true
 
   beta:
     branch: beta-4.x
@@ -18,6 +21,12 @@ channels:
     prerelease_required: true
     prerelease_allowed: true
     minimum_safe_version: 4.1.9-beta
+    # Decision log #35/#36 (ISSUE-241): the beta channel is retired. The
+    # entry stays so retired installs remain classifiable and route to the
+    # one-time switch instead of crashing on an unknown channel.
+    retired: true
+    retirement_target_channel: stable
+    control_lint_required: true
 
   legacy:
     branch: stable-3.x

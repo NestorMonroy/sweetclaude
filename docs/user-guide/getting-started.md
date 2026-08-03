@@ -24,16 +24,15 @@ If `gh` is not authenticated yet, run `gh auth login` once.
 
 ## Install
 
-Inside Claude Code, install the 4.x beta channel:
+Inside Claude Code, install the stable channel:
 
 ```text
-/plugin marketplace add carson-sweet/sweetclaude@beta-4.x
-/plugin install sweetclaude@sweetclaude-beta
+/plugin marketplace add carson-sweet/sweetclaude@main
+/plugin install sweetclaude@sweetclaude-stable
 ```
 
-Restart Claude Code after install. Do not use `/sweetclaude:update` to move
-between stable and beta. See [Installing SweetClaude](install.md) for beta update
-instructions. After install, every Claude Code session in any project folder has
+Restart Claude Code after install. See [Installing SweetClaude](install.md) for
+update instructions. After install, every Claude Code session in any project folder has
 SweetClaude skills available as `/sweetclaude:something` commands.
 
 ---
@@ -185,7 +184,7 @@ These cost nothing and surface capabilities that are not obvious from the comman
 
 **Status fired automatically and you did not want it.** Touch `.sweetclaude/disabled` in the project root. The session-start check will not fire until you run `/sweetclaude` again.
 
-**Want to keep SweetClaude updated.** Update the Claude Code plugin package first (`/plugin update sweetclaude@sweetclaude-beta`), restart Claude Code, then run `/sweetclaude:update` to sync framework files. In 4.x beta, project repair and migration route through `/sweetclaude:doctor`.
+**Want to keep SweetClaude updated.** Update the Claude Code plugin package first (`/plugin update sweetclaude@sweetclaude-stable`), restart Claude Code, then run `/sweetclaude:update` to sync framework files. Project repair and migration route through `/sweetclaude:doctor`.
 
 ---
 

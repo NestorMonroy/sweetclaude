@@ -1446,6 +1446,13 @@ def validate_release_identity_receipt(
     if not isinstance(update_discovery, dict):
         raise ValueError("Release identity receipt update_discovery must be an object")
     manifest_channels = load_manifest().get("channels") or {}
+    # Retired channels no longer publish artifacts (ISSUE-241) — identity
+    # evidence covers live channels only, matching the generate side.
+    manifest_channels = {
+        channel: facts
+        for channel, facts in manifest_channels.items()
+        if not (isinstance(facts, dict) and facts.get("retired"))
+    }
     for channel, channel_facts in manifest_channels.items():
         entry = _require_discovery_entry(update_discovery, channel)
         validate_update_discovery_execution_receipt(

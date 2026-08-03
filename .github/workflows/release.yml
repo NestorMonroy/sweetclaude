@@ -29,13 +29,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Derive channel + channel-branch from the tag. Three channels:
-          #   prerelease 4.x      -> beta   / beta-4.x
+          # Derive channel + channel-branch from the tag. Two live channels
+          # (decision log #35, ISSUE-241 — the beta channel is retired and
+          # prerelease tags are refused):
           #   non-prerelease 4.x  -> stable / main
           #   non-prerelease 3.x  -> legacy / stable-3.x
           major="${TAG#v}"; major="${major%%.*}"
           case "$TAG" in
-            *-beta*|*-rc*|*-alpha*) channel=beta;   branch=beta-4.x ;;
+            *-beta*|*-rc*|*-alpha*)
+              echo "::error::Prerelease tag $TAG refused — the beta channel is retired (ISSUE-241)."
+              exit 1
+              ;;
             *)
               case "$major" in
                 3) channel=legacy; branch=stable-3.x ;;
@@ -65,7 +69,7 @@ jobs:
           # The release-identity evidence asserts update-discovery for ALL
           # channels, so each other channel's current artifact must also exist.
           # Build them from their channel branches, then return to ours.
-          for other_branch in main beta-4.x stable-3.x; do
+          for other_branch in main stable-3.x; do
             if [ "$other_branch" = "$branch" ]; then
               continue
             fi

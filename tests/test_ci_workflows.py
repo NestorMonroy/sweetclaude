@@ -24,8 +24,8 @@ def test_workflow_triggers_on_prs_to_release_branches():
     pr = on.get("pull_request")
     assert pr is not None, "workflow must trigger on pull_request"
     branches = pr.get("branches", [])
-    assert "beta-4.x" in branches
     assert "main" in branches
+    assert "beta-4.x" not in branches, "beta channel is retired (ISSUE-241)"
 
 
 def test_workflow_runs_pytest_over_tests_dir():

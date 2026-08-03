@@ -39,7 +39,37 @@ be available in the next session.
 
 Then stop. Do not continue past Step 0 in this session — the restart is required for the repair to take effect.
 
-If `SC_PLUGIN_STALE_BETA=true`, print this message with the variables substituted, then stop before any project
+If `SC_PLUGIN_CHANNEL_RETIRED=true`, the installed plugin is on a retired
+channel (ISSUE-241: the beta channel is retired; its branch is archived and
+its marketplace no longer serves updates). Print this message with the
+variables substituted, then stop before any project maintenance, migration,
+doctor, setup, or recovery routing:
+
+```
+SweetClaude channel retired.
+────────────────────────────
+Installed plugin: {SC_PLUGIN_KEY}
+Installed version: {SC_PLUGIN_VERSION}
+Channel: {SC_PLUGIN_CHANNEL} (retired — no further updates)
+
+One-time switch to the {SC_PLUGIN_RETIREMENT_TARGET_CHANNEL} channel — run
+these in order so you are never double-installed (both channels' skills and
+hooks load at once):
+
+/plugin marketplace add carson-sweet/sweetclaude@main
+/plugin install sweetclaude@sweetclaude-stable
+/plugin marketplace remove sweetclaude-beta
+
+(Removing the retired marketplace uninstalls its plugin, so add and install
+the new channel first.) Then restart Claude Code and run /sweetclaude:update;
+your project data migrates normally. No project files were changed.
+```
+
+Then stop. Do not invoke any project-mutating skill from this retired-channel
+stop path.
+
+If `SC_PLUGIN_STALE_BETA=true` (and the retired-channel stop above did not
+fire), print this message with the variables substituted, then stop before any project
 maintenance, migration, doctor, setup, or recovery routing:
 
 ```

@@ -143,6 +143,18 @@ def validate_manifest(data: dict[str, Any]) -> None:
             raise ValueError(f"Capability manifest {context}.major_version must be an integer")
         _require_bool(config, "prerelease_required", context)
         _require_bool(config, "prerelease_allowed", context)
+        if config.get("retired") is not None and not isinstance(config["retired"], bool):
+            raise ValueError(f"Capability manifest {context}.retired must be a boolean")
+        target = config.get("retirement_target_channel")
+        if config.get("retired") is True:
+            if not isinstance(target, str) or target not in channels:
+                raise ValueError(
+                    f"Capability manifest {context}.retirement_target_channel must name a defined channel"
+                )
+            if channels[target].get("retired") is True:
+                raise ValueError(
+                    f"Capability manifest {context}.retirement_target_channel must not be a retired channel"
+                )
 
     release = data.get("release")
     if not isinstance(release, dict):
@@ -262,6 +274,18 @@ def expected_marketplace(channel: str, manifest: dict[str, Any] | None = None) -
 
 def minimum_safe_version(channel: str, manifest: dict[str, Any] | None = None) -> str:
     return str(channel_config(channel, manifest).get("minimum_safe_version", "") or "")
+
+
+def channel_retired(channel: str, manifest: dict[str, Any] | None = None) -> bool:
+    return bool(channel_config(channel, manifest).get("retired", False))
+
+
+def control_lint_required(channel: str, manifest: dict[str, Any] | None = None) -> bool:
+    return bool(channel_config(channel, manifest).get("control_lint_required", False))
+
+
+def retirement_target_channel(channel: str, manifest: dict[str, Any] | None = None) -> str:
+    return str(channel_config(channel, manifest).get("retirement_target_channel", "") or "")
 
 
 def required_release_checks(manifest: dict[str, Any] | None = None) -> set[str]:

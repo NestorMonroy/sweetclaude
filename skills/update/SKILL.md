@@ -66,7 +66,32 @@ Read the JSON output. Required fields for subsequent steps:
 
 If `ok` is not `true`, stop: "SweetClaude cannot find a repairable plugin entry."
 
-If `stale_beta_install` is `true`, print:
+If `channel_retired` is `true`, the installed plugin is on a retired channel
+(ISSUE-241). Print the following, substituting `retirement_switch_commands`
+from the preflight JSON verbatim, then stop:
+
+```
+SweetClaude channel retired.
+────────────────────────────
+Installed plugin: {plugin_key}
+Installed version: {version}
+Channel: {channel} (retired — no further updates)
+
+One-time switch to the {retirement_target_channel} channel — run these in
+order so you are never double-installed:
+
+/plugin marketplace add carson-sweet/sweetclaude@main
+/plugin install sweetclaude@sweetclaude-stable
+/plugin marketplace remove sweetclaude-beta
+
+Then restart Claude Code and run /sweetclaude:update; your project data
+migrates normally. No project files were changed.
+```
+
+Stop. Do not invoke any other skill.
+
+If `stale_beta_install` is `true` (and the retired-channel stop above did not
+fire), print:
 
 ```
 SweetClaude beta plugin update required.

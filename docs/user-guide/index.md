@@ -1,30 +1,32 @@
-# SweetClaude 4.x Beta User Guide
+# SweetClaude 4.x User Guide
 
-**Version:** 1.2
-**Date:** 2026-06-10
+**Version:** 1.3
+**Date:** 2026-08-03
 
-Use this complete guide only if you intentionally installed the 4.x beta
-marketplace or `/plugin list` shows `sweetclaude@sweetclaude-beta`.
+SweetClaude 4.x is the stable channel, tracked on `main`. Plugin update,
+framework sync, project recovery, and taxonomy migration are separate
+safety-gated flows.
 
-4.x beta changes project maintenance behavior. Plugin update, framework sync,
-project recovery, and taxonomy migration are separate safety-gated flows.
+**The beta channel is retired.** If `/plugin list` shows
+`sweetclaude@sweetclaude-beta`, see [Installing SweetClaude](install.md) for
+the one-time switch to stable.
 
 ## Install And Update
 
 ```text
-/plugin marketplace add carson-sweet/sweetclaude@beta-4.x
-/plugin install sweetclaude@sweetclaude-beta
+/plugin marketplace add carson-sweet/sweetclaude@main
+/plugin install sweetclaude@sweetclaude-stable
 ```
 
 After plugin install or update, restart Claude Code before running SweetClaude
-commands. To update beta:
+commands. To update:
 
 ```text
-/plugin update sweetclaude@sweetclaude-beta
+/plugin update sweetclaude@sweetclaude-stable
 /sweetclaude:update
 ```
 
-If `/plugin list` shows the legacy beta key `sweetclaude@sweetclaude`, update
+If `/plugin list` shows the legacy key `sweetclaude@sweetclaude`, update
 that exact key first.
 
 ## Maintenance Front Door
@@ -49,9 +51,9 @@ Do not start by running `/sweetclaude:migrate` on an unknown old project layout.
 
 ## Where To Begin
 
-If you are new and want a working beta install, read [Getting Started](getting-started.md).
+If you are new, read [Getting Started](getting-started.md).
 
-If you have an existing beta install that is stuck, noisy, or reporting confusing
+If you have a former beta install that is stuck, noisy, or reporting confusing
 migration advice, read [Beta Rescue](beta-rescue.md).
 
 If you need to understand project-state and taxonomy migration behavior, read
@@ -65,29 +67,29 @@ If you have it installed and want to understand the design decisions, read
 | Page | What it is |
 |---|---|
 | [Install](install.md) | Beta install, update, optional integrations, and suspension. |
-| [Quick Start](quickstart.md) | First commands after beta is installed. |
-| [Getting Started](getting-started.md) | Install through first feature, beta channel included. |
+| [Quick Start](quickstart.md) | First commands after SweetClaude is installed. |
+| [Getting Started](getting-started.md) | Install through first feature. |
 | [New Project Cheatsheet](cheatsheet-new-project.md) | Fast path for starting from an empty folder. |
 | [Existing Project Cheatsheet](cheatsheet-existing-project.md) | Fast path for adopting an existing codebase. |
-| [Migration and Recovery](migration-and-recovery.md) | Doctor-first beta maintenance, supported migration, recovery, and compatibility mode. |
+| [Migration and Recovery](migration-and-recovery.md) | Doctor-first maintenance, supported migration, recovery, and compatibility mode. |
 | [Doctor](doctor.md) | The maintenance front door: read-only scan, safe and reversible fixes, rollback, and routing. |
-| [Beta Rescue](beta-rescue.md) | Recovery path for stuck or confusing beta installs. |
+| [Beta Rescue](beta-rescue.md) | Recovery path for stuck installs from the retired beta channel. |
 | [4.x Migration Guide](v4-migration.md) | Short migration route summary and doctor outcomes. |
 | [How It Works](how-it-works.md) | Mental model and architecture. |
 | [Walkthroughs](walkthroughs.md) | Seven concrete scenarios end-to-end. |
 | [Phases and Workflows](phases-and-workflows.md) | Reference for phases, work types, gates, and workflow shapes. |
 | [Large-Story and Small-Story Workflows](large-story-workflow.md) | Controller-gated, evidence-based workflows for large and bounded work items. |
 | [Planning Concepts](planning-concepts.md) | Backlogs, stories/issues, milestones, epics, sprints, and priorities. |
-| [Skills Reference](skills-reference.md) | 4.x beta skill surface, including doctor, recover, migrate, and hook repair. |
+| [Skills Reference](skills-reference.md) | 4.x skill surface, including doctor, recover, migrate, and hook repair. |
 | [TDD Levels](tdd.md) | The four enforcement levels and hook-based discipline. |
-| [State and Memory](state-and-memory.md) | 4.x beta state layout, product artifacts, doctor runs, and recovery runs. |
+| [State and Memory](state-and-memory.md) | 4.x state layout, product artifacts, doctor runs, and recovery runs. |
 | [Work-Item Artifacts](work-item-artifacts.md) | Opt-in per-work-item artifact directories, and how to enable and backfill them. |
 | [Hook Development](hook-development.md) | Hook repair and emergency recovery. |
 | [Corpus and RAG](corpus-system.md) | Document pipeline and local semantic search. |
 | [Platform Dependencies](platform-dependencies.md) | Claude Code dependency risks and contingency posture. |
 | [Behavioral Contracts](behavioral-contracts.md) | Model behavior contracts and current status. |
 | [Evidence and Success-Criteria Contracts](evidence-and-contracts.md) | Frozen success-criteria contracts, implementation evidence, and the fail-closed verify gate. |
-| [FAQ](faq.md) | Honest answers and beta-specific troubleshooting. |
+| [FAQ](faq.md) | Honest answers and troubleshooting. |
 | [Glossary](glossary.md) | SweetClaude terminology. |
 
 ## Quick Reference
@@ -97,6 +99,6 @@ If you have it installed and want to understand the design decisions, read
 /sweetclaude:status   Project status
 /sweetclaude:help     Conversational help
 /sweetclaude:doctor   Maintenance front door
-/sweetclaude:recover  Recovery for stuck beta states
+/sweetclaude:recover  Recovery for stuck project states
 /sweetclaude:migrate  Supported taxonomy migration only after preflight
 ```

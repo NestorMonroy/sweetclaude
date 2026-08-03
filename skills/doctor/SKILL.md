@@ -30,7 +30,34 @@ if [ -f ${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh ]; then
 fi
 ```
 
-If `SC_PLUGIN_STALE_BETA=true`, print this message with the variables substituted, then stop before any project
+If `SC_PLUGIN_CHANNEL_RETIRED=true`, the installed plugin is on a retired
+channel (ISSUE-241). Print this message with the variables substituted, then
+stop before any project maintenance, migration, doctor, setup, or recovery
+routing:
+
+```
+SweetClaude channel retired.
+────────────────────────────
+Installed plugin: {SC_PLUGIN_KEY}
+Installed version: {SC_PLUGIN_VERSION}
+Channel: {SC_PLUGIN_CHANNEL} (retired — no further updates)
+
+One-time switch to the {SC_PLUGIN_RETIREMENT_TARGET_CHANNEL} channel — run
+these in order so you are never double-installed:
+
+/plugin marketplace add carson-sweet/sweetclaude@main
+/plugin install sweetclaude@sweetclaude-stable
+/plugin marketplace remove sweetclaude-beta
+
+Then restart Claude Code and run /sweetclaude:update; your project data
+migrates normally. No project files were changed.
+```
+
+Then stop. Do not invoke any project-mutating skill from this retired-channel
+stop path.
+
+If `SC_PLUGIN_STALE_BETA=true` (and the retired-channel stop above did not
+fire), print this message with the variables substituted, then stop before any project
 maintenance, migration, doctor, setup, or recovery routing:
 
 ```

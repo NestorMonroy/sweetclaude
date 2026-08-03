@@ -94,4 +94,4 @@ The recommended SweetClaude plugin channel for normal active project work. Insta
 
 ## 4.x Beta Channel
 
-The explicit opt-in beta channel for newer project maintenance and taxonomy behavior. Installed with `carson-sweet/sweetclaude@beta-4.x` and `sweetclaude@sweetclaude-beta`.
+The former opt-in beta channel for 4.x pre-release testing. Retired after the 4.x line was promoted to stable — it no longer receives updates and cannot be installed. Existing beta installs make a one-time switch to stable (see [Installing SweetClaude](install.md)).
