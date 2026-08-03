@@ -7,7 +7,6 @@ name: Tests on PR
 on:
   pull_request:
     branches:
-      - beta-4.x
       - main
 
 # Least privilege: the suite only reads the checkout.

@@ -27,6 +27,8 @@ from control_receipts import (
 from evidence import validate_receipt
 from maintenance.capability_manifest import (
     channel_config,
+    channel_retired,
+    control_lint_required,
     expected_ref,
     load_manifest,
     required_release_checks,
@@ -68,6 +70,10 @@ def _has_prerelease(version: str) -> bool:
 
 def _validate_channel(version: str, channel: str, branch: str | None) -> None:
     config = channel_config(channel)
+    if config.get("retired"):
+        raise ValueError(
+            f"{channel} channel is retired and cannot release (decision log #35, ISSUE-241)"
+        )
     expected_major = int(config["major_version"])
     channel_ref = expected_ref(channel)
     prerelease_required = bool(config.get("prerelease_required"))
@@ -367,7 +373,7 @@ def _validate_control_lint_receipt(
     control_lint_receipt_path: str | Path | None,
     expected_commit: str,
 ) -> dict:
-    if channel != "beta":
+    if not control_lint_required(channel):
         return {"checked": False, "reason": "not-required-for-channel"}
 
     receipt_path = (
@@ -607,6 +613,10 @@ def _write_release_identity_receipt(
     )
     update_discovery: dict[str, dict] = {}
     for discovery_channel in load_manifest().get("channels") or {}:
+        # Retired channels no longer publish artifacts (ISSUE-241) — the
+        # identity evidence covers live channels only.
+        if channel_retired(discovery_channel):
+            continue
         discovery_tag, discovery_artifact = _channel_artifact(
             project_dir,
             channel=discovery_channel,
@@ -886,7 +896,7 @@ def _write_public_distribution_receipts(
             "provider_bound_data": ["Claude Code prompt and local project context"],
             "auth_assumptions": ["Claude Code local user approval gates mutating commands"],
             "secrets_handling": "does not require or persist provider secrets",
-            "channel_visibility": "stable and beta channels are separately visible",
+            "channel_visibility": "stable and legacy channels are separately visible",
             "marketplace_or_distribution_visibility": "public plugin distribution",
             "evidence_source": "release evidence runner inventory",
             "approved_trust_model": (
@@ -953,10 +963,11 @@ def generate_release_evidence(
         installed_path=resolved_installed_path,
     )
 
-    # Beta releases require a control-lint receipt at the gate's default path.
-    # Emit it here from the canonical controls map so a single generate-evidence
-    # run produces the full bundle `check` needs — nothing else generated it.
-    if channel == "beta":
+    # Channels with the control-lint gate require a receipt at the gate's
+    # default path. Emit it here from the canonical controls map so a single
+    # generate-evidence run produces the full bundle `check` needs — nothing
+    # else generated it.
+    if control_lint_required(channel):
         controls_map = project_dir / "config" / "controls-map.md"
         if not controls_map.exists():
             raise ValueError(f"Canonical controls map not found: {controls_map}")
@@ -1211,7 +1222,7 @@ def main(argv: list[str] | None = None) -> int:
     p_check = sub.add_parser("check")
     p_check.add_argument("--project-dir", required=True, type=Path)
     p_check.add_argument("--tag", required=True)
-    p_check.add_argument("--channel", required=True, choices=["stable", "beta"])
+    p_check.add_argument("--channel", required=True, choices=["stable", "legacy"])
     p_check.add_argument("--receipt", required=True)
     p_check.add_argument("--control-lint-receipt", default=None)
     p_check.add_argument("--branch", required=True)
@@ -1219,7 +1230,7 @@ def main(argv: list[str] | None = None) -> int:
     p_generate = sub.add_parser("generate-evidence")
     p_generate.add_argument("--project-dir", required=True, type=Path)
     p_generate.add_argument("--tag", required=True)
-    p_generate.add_argument("--channel", required=True, choices=["stable", "beta"])
+    p_generate.add_argument("--channel", required=True, choices=["stable", "legacy"])
     p_generate.add_argument("--branch", required=True)
     p_generate.add_argument("--installed-path", type=Path, default=None)
     p_generate.add_argument("--installed-entrypoint", default="/sweetclaude:recover")

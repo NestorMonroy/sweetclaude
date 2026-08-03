@@ -1,26 +1,14 @@
-# Installing SweetClaude 4.x Beta
+# Installing SweetClaude
 
-Use this page only if you intentionally want the 4.x beta channel. For normal
-active project work, install the stable channel, which now tracks the 4.x line
-on `main`:
-
-```text
-/plugin marketplace add carson-sweet/sweetclaude@main
-/plugin install sweetclaude@sweetclaude-stable
-```
-
-**Upgrading from 3.x:** The stable channel moved from `stable-3.x` to the 4.x
-line on `main`. To switch a 3.x install, re-add the stable marketplace and
-reinstall as above, then run `/sweetclaude:update` inside each project to
-migrate your data.
+SweetClaude 4.x is the stable channel, tracked on `main`.
 
 ## Marketplace Install
 
 Inside Claude Code:
 
 ```text
-/plugin marketplace add carson-sweet/sweetclaude@beta-4.x
-/plugin install sweetclaude@sweetclaude-beta
+/plugin marketplace add carson-sweet/sweetclaude@main
+/plugin install sweetclaude@sweetclaude-stable
 ```
 
 Restart Claude Code after install. Then run:
@@ -29,18 +17,36 @@ Restart Claude Code after install. Then run:
 /sweetclaude:help
 ```
 
-Use the current `beta-4.x` channel for beta testing. Do not install old 4.x beta
-tags on active projects.
+**Upgrading from 3.x:** The stable channel moved from `stable-3.x` to the 4.x
+line on `main`. To switch a 3.x install, re-add the stable marketplace and
+reinstall as above, then run `/sweetclaude:update` inside each project to
+migrate your data.
 
-## Updating 4.x Beta
+**The beta channel is retired.** It no longer receives updates and cannot be
+installed. If `/plugin list` shows `sweetclaude@sweetclaude-beta`, make the
+one-time switch to stable — run these in order so you are never
+double-installed:
+
+```text
+/plugin marketplace add carson-sweet/sweetclaude@main
+/plugin install sweetclaude@sweetclaude-stable
+/plugin marketplace remove sweetclaude-beta
+```
+
+Then restart Claude Code and run `/sweetclaude:update`; your project data
+migrates normally. If a former beta project is stuck from a prior update,
+doctor, migrate, or repair flow, follow
+[SweetClaude 4.x Beta Rescue](beta-rescue.md).
+
+## Updating
 
 Update the Claude Code plugin package first:
 
 ```text
-/plugin update sweetclaude@sweetclaude-beta
+/plugin update sweetclaude@sweetclaude-stable
 ```
 
-If `/plugin list` shows the legacy beta key `sweetclaude@sweetclaude`, update
+If `/plugin list` shows the legacy key `sweetclaude@sweetclaude`, update
 that exact key instead:
 
 ```text
@@ -54,16 +60,13 @@ project:
 /sweetclaude:update
 ```
 
-In 4.x beta, `/sweetclaude:update` syncs framework files and reports project
-drift. It does not run project-state migrations or taxonomy migrations inline.
-For project repair or migration prompts, run:
+`/sweetclaude:update` syncs framework files and reports project drift. It does
+not run project-state migrations or taxonomy migrations inline. For project
+repair or migration prompts, run:
 
 ```text
 /sweetclaude:doctor
 ```
-
-If a 4.x beta project is already stuck from a prior update, doctor, migrate, or
-repair flow, follow [SweetClaude 4.x Beta Rescue](beta-rescue.md).
 
 ## Optional Integrations
 

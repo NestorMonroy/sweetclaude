@@ -18,9 +18,11 @@ if str(MAINTENANCE_DIR) not in sys.path:
     sys.path.insert(0, str(MAINTENANCE_DIR))
 
 from capability_manifest import (
+    channel_retired,
     expected_marketplace,
     expected_ref,
     minimum_safe_version,
+    retirement_target_channel,
 )
 
 PRERELEASE_RE = re.compile(r"-([A-Za-z]+)")
@@ -90,24 +92,42 @@ def _is_stale_beta(channel: str, version: str) -> bool:
     return bool(minimum) and _version_lt(version, minimum)
 
 
+def _switch_commands(retired_channel: str, target_channel: str) -> list[str]:
+    """One-time switch off a retired channel, ordered so the user is never
+    double-installed (matches beta_stable_migration_notice in update.py)."""
+    target_marketplace = expected_marketplace(target_channel)
+    target_ref = expected_ref(target_channel)
+    retired_marketplace = expected_marketplace(retired_channel)
+    return [
+        f"/plugin marketplace add carson-sweet/sweetclaude@{target_ref}",
+        f"/plugin install sweetclaude@{target_marketplace}",
+        f"/plugin marketplace remove {retired_marketplace}",
+    ]
+
+
 def _marketplace(plugin_key: str) -> str:
     return plugin_key.split("@", 1)[1] if "@" in plugin_key else plugin_key
 
 
 def _channel(plugin_key: str, entry: dict[str, Any]) -> str:
+    """Post-promotion model (decision log #35, ISSUE-241): marketplace name
+    is authoritative; for the bare legacy marketplace, a prerelease version
+    means beta, 4.x means stable, and 3.x means legacy."""
     market = _marketplace(plugin_key).lower()
     version = str(entry.get("version") or "")
     major = _major(version)
     if "beta" in market:
         return "beta"
+    if "legacy" in market:
+        return "legacy"
     if "stable" in market:
         return "stable"
     if PRERELEASE_RE.search(version):
         return "beta"
     if major == 4:
-        return "beta"
-    if major == 3:
         return "stable"
+    if major == 3:
+        return "legacy"
     return "unknown"
 
 
@@ -190,6 +210,9 @@ def inspect_state(home: Path, project_dir: Path | None, current_root: Path | Non
     channel_marketplace = expected_marketplace(channel) if channel != "unknown" else ""
     version = str(selected.get("version", "") or "")
     stale_beta = _is_stale_beta(channel, version)
+    retired = channel_retired(channel) if channel != "unknown" else False
+    target = retirement_target_channel(channel) if retired else ""
+    switch_commands = _switch_commands(channel, target) if retired else []
     plugin_key = selected["plugin_key"]
     return {
         "ok": True,
@@ -207,6 +230,9 @@ def inspect_state(home: Path, project_dir: Path | None, current_root: Path | Non
         "install_exists": bool(selected["install_exists"]),
         "project_path": selected.get("projectPath", ""),
         "stale_beta_install": stale_beta,
+        "channel_retired": retired,
+        "retirement_target_channel": target,
+        "retirement_switch_commands": switch_commands,
         "minimum_safe_beta_version": minimum_safe_version("beta"),
         "plugin_update_command": f"/plugin update {plugin_key}" if plugin_key else "",
         "restart_required_after_plugin_update": stale_beta,
@@ -285,6 +311,8 @@ def _emit_shell(result: dict[str, Any]) -> None:
         "SC_PLUGIN_SCOPE": "scope",
         "SC_PLUGIN_INSTALL_EXISTS": "install_exists",
         "SC_PLUGIN_STALE_BETA": "stale_beta_install",
+        "SC_PLUGIN_CHANNEL_RETIRED": "channel_retired",
+        "SC_PLUGIN_RETIREMENT_TARGET_CHANNEL": "retirement_target_channel",
         "SC_PLUGIN_MIN_SAFE_BETA_VERSION": "minimum_safe_beta_version",
         "SC_PLUGIN_UPDATE_COMMAND": "plugin_update_command",
         "SC_PLUGIN_RESTART_REQUIRED_AFTER_UPDATE": "restart_required_after_plugin_update",
@@ -309,7 +337,8 @@ def _fail_closed_shell_state(
     selected = rows[0] if rows else {}
     channel = selected.get("channel", "")
     plugin_key = selected.get("plugin_key", "")
-    # If the manifest cannot be loaded, any beta install is treated as unsafe.
+    # If the manifest cannot be loaded, any beta install is treated as unsafe
+    # and retired (fail closed on both guards).
     stale_beta = channel == "beta"
     return {
         "ok": False,
@@ -328,6 +357,9 @@ def _fail_closed_shell_state(
         "install_exists": bool(selected.get("install_exists", False)),
         "project_path": selected.get("projectPath", ""),
         "stale_beta_install": stale_beta,
+        "channel_retired": channel == "beta",
+        "retirement_target_channel": "",
+        "retirement_switch_commands": [],
         "minimum_safe_beta_version": "",
         "plugin_update_command": f"/plugin update {plugin_key}" if plugin_key else "",
         "restart_required_after_plugin_update": stale_beta,
