@@ -1,300 +1,151 @@
 ---
 spdx-license: AGPL-3.0-or-later
 user-invocable: true
-description: "Bootstrap the SweetClaude infrastructure for any project — new or existing."
+description: "Entry point for onboarding a project to SweetClaude — reads current state and hands off to the skill that owns the work."
 ---
 
 
 
 # SweetClaude Init
 
-Infrastructure bootstrap. One job: create the `.sweetclaude/` state directory, strategy structure, and CLAUDE.md. Nothing more.
+Dispatcher. Init creates no files and writes no state. It reads the project's
+current state and hands off to the skill that owns onboarding, migration, or
+repair.
+
+Onboarding itself belongs to `sweetclaude:setup`, which detects project shape,
+writes `.sweetclaude/state/sweetclaude.yaml`, and runs v4 storage setup.
 
 ---
 
-## Step 1: Already configured?
+## Step 0: Disabled check
 
-Check whether `.sweetclaude/state/phase.yaml` exists.
-
-**If it exists:**
 ```bash
-cat .sweetclaude/state/phase.yaml | grep -E "schema_version|version_stage|phase:" | head -5
+ls .sweetclaude/disabled 2>/dev/null && echo "DISABLED" || echo "ENABLED"
 ```
-Report:
-> "This project is already configured for SweetClaude (phase.yaml exists). Nothing to do.
-> Run `/sweetclaude:status` to see where things stand, or `/sweetclaude:setup` to re-run the full setup."
+
+If `DISABLED`, say:
+
+> "SweetClaude is disabled for this project (`.sweetclaude/disabled` exists). Remove it to proceed."
 
 Stop.
 
-**If it does not exist:** proceed to Step 2.
-
 ---
 
-## Step 2: Interrupted init?
-
-Check for a partial init:
-```bash
-ls .sweetclaude/state/ 2>/dev/null | head -10
-```
-
-If `.sweetclaude/state/` exists but `phase.yaml` is missing, say:
-> "Found a partial `.sweetclaude/state/` directory — looks like a previous init was interrupted. Resuming from where it left off."
-
-Note which files already exist (skip creating them in Step 4).
-
----
-
-## Step 3: Project type
-
-Ask exactly one question:
-
-> "New project or existing project?
-> - **New:** Starting from scratch — I'll create state files, strategy structure, and a CLAUDE.md.
-> - **Existing:** Code already exists — I'll also scan for your toolchain and add it to CLAUDE.md."
-
-Wait for answer. Accept: "new", "existing", "n", "e", or any clear variant.
-
----
-
-## Step 4: Create infrastructure
-
-Run in one bash block:
+## Step 1: Framework-functional gate
 
 ```bash
-# State directory
-mkdir -p .sweetclaude/state
-mkdir -p .sweetclaude/traceability
-
-# Strategy structure
-mkdir -p strategy/{competitive-analysis,market-messaging,meeting-prep,narrative-arc,academic-research}
+eval "$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" 2>/dev/null)"
+echo "SC_PLUGIN_OK=${SC_PLUGIN_OK:-false}"
+echo "SC_PLUGIN_REASON=${SC_PLUGIN_REASON}"
 ```
 
-Create these files if they do not already exist (skip any that were found in Step 2):
+If `SC_PLUGIN_OK` is not `true`, the install itself is not healthy and no
+onboarding decision can be trusted. Print `SC_PLUGIN_REASON` if set, then:
 
-**`.sweetclaude/state/phase.yaml`:**
-```yaml
-# .sweetclaude/state/phase.yaml
-# SweetClaude phase state — schema version 2
-schema_version: 2
+> "The SweetClaude install isn't healthy, so I can't safely onboard this project yet. Run `/sweetclaude:doctor` — it scans the install and repairs what it can."
 
-version_stage: PRE-ALPHA
-deference_level: collaborative
-project_type: ~
-safety_snapshot: ~
-last_work_item_id: ~
-
-active_work_item:
-  id: ~
-  type: ~
-  workflow: []
-  phase: ~
-  title: ~
-  started: ~
-  entry_category: ~
-```
-
-**`.sweetclaude/state/skills.yaml`:**
-```yaml
-# .sweetclaude/state/skills.yaml
-# SweetClaude skills state — schema version 2
-schema_version: 2
-```
-
-**`.sweetclaude/state/decision-log.md`:**
-```markdown
-# Decision Log
-
-| # | Date | Decision | Rationale | Alternatives considered |
-|---|---|---|---|---|
-```
-
-**`.sweetclaude/state/assumption-register.md`:**
-```markdown
-# Assumption Register
-
-| # | Date | Assumption | Risk if wrong | Validation plan |
-|---|---|---|---|---|
-```
-
-**`.sweetclaude/state/improvement-register.md`:**
-```markdown
-# Improvement Register
-
-| # | Date | Type | Learning |
-|---|---|---|---|
-```
-
-**`.sweetclaude/state/scope-changes.md`:**
-```markdown
-# Scope Changes
-
-| # | Date | Change | Reason | Impact |
-|---|---|---|---|---|
-```
-
-**`.sweetclaude/traceability/requirements-map.md`:**
-```markdown
-# Requirements Traceability Map
-
-| Requirement | User Story | Test | Status |
-|---|---|---|---|
-```
-
-**`.sweetclaude/traceability/ripple-map.md`:**
-```markdown
-# Ripple Map
-
-| Change | Affected areas | Risk level |
-|---|---|---|
-```
-
-Report each file as created or skipped (already existed).
+Stop. Do not invoke setup, migration, or any project-mutating skill from this path.
 
 ---
 
-## Step 5: Toolchain detection (existing projects only)
-
-Skip this step for new projects.
-
-Run:
-```bash
-# Language / runtime detection
-ls package.json pyproject.toml Cargo.toml go.mod pom.xml build.gradle Gemfile 2>/dev/null
-# Test runner
-cat package.json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('scripts',{}))" 2>/dev/null || true
-ls pytest.ini setup.cfg .pytest.ini Makefile 2>/dev/null
-# Build commands
-grep -r "\"test\"\|\"build\"\|\"dev\"\|\"start\"" package.json 2>/dev/null | head -5 || true
-```
-
-Use findings to populate CLAUDE.md with real commands instead of placeholders.
-
----
-
-## Step 6: Generate CLAUDE.md
-
-Check if `CLAUDE.md` already exists:
-```bash
-ls CLAUDE.md 2>/dev/null && echo "EXISTS" || echo "MISSING"
-```
-
-**If EXISTS:** skip generation. Tell user: "CLAUDE.md already exists — leaving it untouched."
-
-**If MISSING:** generate and present before writing.
-
-For **new projects** — ask one question first:
-> "One line about the project (used in CLAUDE.md):"
-
-For **existing projects** — use toolchain findings from Step 5.
-
-CLAUDE.md template:
-```markdown
-# {Project name or directory name}
-
-{One-line description}
-
-## Key directories
-
-- `src/` — source code
-- `tests/` — test suite
-
-## Commands
+## Step 2: State detection
 
 ```bash
-# Install
-{install command or: # TODO: add install command}
+python3 - << 'PY'
+import pathlib, yaml
 
-# Test
-{test command or: # TODO: add test command}
+state = pathlib.Path('.sweetclaude/state')
+sc = state / 'sweetclaude.yaml'
+legacy = [p for p in (state / 'phase.yaml', state / 'skills.yaml') if p.exists()]
 
-# Build
-{build command or: # TODO: add build command}
-```
+if not sc.exists():
+    print('STATE=legacy' if legacy else 'STATE=none')
+    if legacy:
+        print('LEGACY_FILES=' + ','.join(p.name for p in legacy))
+    raise SystemExit
 
-## Project-specific rules
+try:
+    d = yaml.safe_load(sc.read_text()) or {}
+except Exception as exc:
+    print('STATE=damaged')
+    print(f'REASON=sweetclaude.yaml does not parse: {exc}')
+    raise SystemExit
 
-- {Add your rules here}
+if not isinstance(d, dict):
+    print('STATE=damaged')
+    print('REASON=sweetclaude.yaml is not a mapping')
+    raise SystemExit
 
-## SweetClaude
+schema = d.get('schema_version')
+if schema not in (1, 2):
+    print('STATE=damaged')
+    print(f'REASON=unknown schema_version: {schema!r}')
+    raise SystemExit
 
-- Read `.sweetclaude/state/phase.yaml` and `.sweetclaude/state/improvement-register.md` at session start if they exist. If `.sweetclaude/state/phase.yaml` exists and `.sweetclaude/disabled` does not exist, invoke `sweetclaude:status` automatically at session start.
-- Follow the interaction model in `${CLAUDE_PLUGIN_ROOT}/rules/interaction-model.md`.
-- Respect the current deference level. Ask if not set.
-- Never push for phase advancement. The user decides when to move on.
-```
-
-Present to user. Write only after confirmation (or immediately if deference is `autonomous`).
-
----
-
-## Step 7: Git safety snapshot (existing projects only)
-
-Skip for new projects.
-
-```bash
-git rev-parse --git-dir 2>/dev/null && echo "GIT_PRESENT" || echo "NO_GIT"
-git branch --show-current 2>/dev/null
-```
-
-If git is present and no `pre-sweetclaude` branch exists:
-```bash
-git branch pre-sweetclaude 2>/dev/null && echo "SNAPSHOT_CREATED" || echo "SNAPSHOT_EXISTS"
-```
-
-Tell user: "Created `pre-sweetclaude` branch as a rollback point."
-
-If no git: "No git repository found. Consider running `git init` to get version control before going further."
-
----
-
-## Step 7b: Claude config audit (existing projects only)
-
-Skip for new projects (no CLAUDE.md to scan yet).
-
-For existing projects, scan for instructions in the existing CLAUDE.md that conflict with SweetClaude, before SweetClaude starts relying on those files:
-
-Invoke `sweetclaude:claude-config-audit` via the Skill tool.
-
-If no conflicts are found, proceed immediately. If FATAL conflicts are found, resolve them before proceeding to Step 8 — a FATAL conflict will prevent SweetClaude hooks from functioning.
-
----
-
-## Step 8: Run generate-session-state
-
-```bash
-bash "${CLAUDE_PLUGIN_ROOT}/hooks/generate-session-state.sh" 2>/dev/null || \
-echo "SESSION_STATE_SKIPPED"
+if (d.get('framework') or {}).get('setup_complete') is True:
+    print('STATE=configured')
+    print('NAME=' + str((d.get('project') or {}).get('name') or ''))
+else:
+    print('STATE=partial')
+PY
 ```
 
 ---
 
-## Step 9: Close
+## Step 3: Route
 
-Report:
+Route on `STATE`. Every branch either delegates to the owning skill or stops
+with a concrete next command. Init never falls through to doing the work itself.
 
-```
-════════════════════════════════════
-SweetClaude Initialized
-════════════════════════════════════
-```
+**`STATE=none`** — no SweetClaude state. This is the onboarding path.
 
-> "SweetClaude initialized.
->
-> Created:
-> - `.sweetclaude/state/` — phase, skills, decision log, assumption register, improvement register, scope changes
-> - `.sweetclaude/traceability/` — requirements map, ripple map
-> - `strategy/` — competitive-analysis, market-messaging, meeting-prep, narrative-arc, academic-research
-> {- CLAUDE.md (if created)}
-> {- `pre-sweetclaude` git branch (if existing project)}
->
-> Next: run `/sweetclaude:go` and describe what you want to do — it routes new products into product discovery and existing work to the right skill."
+Invoke `sweetclaude:setup` via the Skill tool. Setup detects project shape
+(new / existing codebase / messy-inherited), asks its own questions, writes
+`sweetclaude.yaml`, runs v4 storage setup, and hands off to `sweetclaude:_features`.
+
+Stop after setup returns. Do not add anything on top of it.
+
+**`STATE=legacy`** — v3 state files (`LEGACY_FILES`) with no `sweetclaude.yaml`.
+
+Say:
+
+> "This project has v3 state files ({LEGACY_FILES}) and no `sweetclaude.yaml`. That needs migration, not re-onboarding."
+
+Invoke `sweetclaude:_migrate` via the Skill tool. Stop.
+
+**`STATE=partial`** — `sweetclaude.yaml` parses but `framework.setup_complete`
+is not `true`. A previous onboarding did not finish.
+
+Say:
+
+> "Found a partial setup — `sweetclaude.yaml` exists but onboarding never completed. Resuming it."
+
+Invoke `sweetclaude:setup` via the Skill tool. Stop.
+
+**`STATE=damaged`** — `sweetclaude.yaml` is present but unusable. Print `REASON`, then:
+
+> "`.sweetclaude/state/sweetclaude.yaml` is present but unusable — {REASON}. This is a repair, not an initialization. Run `/sweetclaude:doctor`; it archives what it changes and can roll back."
+
+Stop. Do not overwrite the file.
+
+**`STATE=configured`** — healthy state, setup already complete.
+
+Say:
+
+> "{NAME} is already configured for SweetClaude — nothing to initialize. Run `/sweetclaude:go` to pick up work, or `/sweetclaude:status` to see where things stand."
+
+Stop.
 
 ---
 
 ## Rules
 
-- Never overwrite files that already exist — skip and report.
-- Never run product discovery — that belongs to `sweetclaude:product-discovery`, reached through `/sweetclaude:go`.
-- Ask project type once; do not re-ask.
-- For CLAUDE.md: present before writing (unless autonomous deference).
-- If `.sweetclaude/disabled` exists: warn "SweetClaude is disabled for this project (`.sweetclaude/disabled` exists). Remove it to proceed." Stop.
+- Init creates no directories, no state files, and no CLAUDE.md. Every one of
+  those belongs to `sweetclaude:setup`.
+- Init never overwrites, repairs, or migrates state. Damaged state routes to
+  `sweetclaude:doctor`; v3 state routes to `sweetclaude:_migrate`.
+- `sweetclaude:setup` is not user-invocable — always reach it through the Skill
+  tool, never by telling the user to type `/sweetclaude:setup`.
+- Init never runs product discovery. That belongs to
+  `sweetclaude:product-discovery`, reached through `/sweetclaude:go`.
+- Ask no questions of your own. Setup owns the onboarding interview.

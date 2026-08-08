@@ -137,7 +137,7 @@ Always visible regardless of `version_stage`. No phases — these are point-in-t
 | Work Type | Skill to invoke |
 |---|---|
 | Set up SweetClaude on a new or existing project | `sweetclaude:setup` |
-| Bootstrap infrastructure only (no product discovery) | `sweetclaude:init` |
+| Onboard a project, unsure which entry point applies | `sweetclaude:init` |
 | Deactivate SweetClaude for a project | `sweetclaude:off` |
 | Update SweetClaude to the latest version | `sweetclaude:update` |
 | Audit or repair SweetClaude configuration | `sweetclaude:fix-sweetclaude` |

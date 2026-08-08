@@ -82,7 +82,7 @@ Run on first invocation (no `john-wick.yaml`) OR when `status: error` from a pre
 
 | # | Check | How | Error if missing |
 |---|---|---|---|
-| 1 | SweetClaude initialized | `.sweetclaude/state/phase.yaml` exists | "Run `/sweetclaude:init` first." |
+| 1 | SweetClaude initialized | `.sweetclaude/state/sweetclaude.yaml` exists | "Run `/sweetclaude:init` first." |
 | 2 | Personas artifact | `.sweetclaude/` or `docs/` contains a file with "persona" in the name | "Complete product discovery first: `/sweetclaude:product-discovery`" |
 | 3 | Task analysis with success + failure criteria | A task analysis artifact exists with "success" and "failure" in its content | "Task analysis incomplete. Rerun `/sweetclaude:product-discovery`." |
 | 4 | Constraints analysis | A constraints artifact exists in `.sweetclaude/` or `docs/` | "Constraints analysis missing." |
