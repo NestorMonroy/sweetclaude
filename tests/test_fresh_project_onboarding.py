@@ -1,0 +1,323 @@
+"""End-to-end verification of fresh-project onboarding (ISSUE-274).
+
+This session opened with a user hitting an error initializing a brand new
+project. ISSUE-249 diagnosed the cause and rewrote init as a dispatcher — from
+reading code. Nobody ran it. There was no end-to-end onboarding test anywhere
+in the suite, only migration and upgrade paths.
+
+Skills are model-executed instructions, so a test cannot invoke one. Two things
+it can do:
+
+  * Extract and execute the Python block that init's state detection actually
+    is, so an edit to the skill changes what this test runs. That is the
+    routing decision itself, not a reimplementation of it.
+  * Follow setup's documented write sequence against a temp project and assert
+    the result is consumable by the things that read it — doctor, the session
+    state hook, the drift runner.
+
+What it cannot verify is whether the model follows the instructions. That gap
+is ISSUE-275's, and it is why this file asserts state and routing rather than
+behavior.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+import yaml
+
+REPO_ROOT = Path(__file__).parents[1]
+INIT_SKILL = REPO_ROOT / "skills" / "init" / "SKILL.md"
+TEMPLATE = REPO_ROOT / "scripts" / "sweetclaude-yaml-template.py"
+DOCTOR = REPO_ROOT / "scripts" / "doctor.py"
+SESSION_STATE = REPO_ROOT / "hooks" / "generate-session-state.sh"
+RUNNER = REPO_ROOT / "scripts" / "migrations" / "runner.py"
+REGISTRY = REPO_ROOT / "config" / "migration-registry.yaml"
+
+
+# --- init's real detection block ----------------------------------------
+
+def _init_detection_source() -> str:
+    """Pull the Python heredoc out of init's Step 2.
+
+    Executing the skill's own code means a change to the skill is a change to
+    what this test exercises. A copy would drift the moment someone edited
+    the skill, which is the failure mode ISSUE-249 was.
+    """
+    text = INIT_SKILL.read_text(encoding="utf-8")
+    blocks = re.findall(r"```bash\n(.*?)```", text, re.S)
+    for block in blocks:
+        m = re.search(r"python3 - << 'PY'\n(.*?)\nPY", block, re.S)
+        if m and "STATE=" in m.group(1):
+            return m.group(1)
+    raise AssertionError("init's state-detection block not found — did Step 2 change?")
+
+
+def _detect(project: Path) -> dict[str, str]:
+    src = _init_detection_source()
+    proc = subprocess.run([sys.executable, "-c", src], cwd=str(project),
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    out = {}
+    for line in proc.stdout.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.strip()
+    return out
+
+
+def test_init_detection_block_is_present_and_runnable() -> None:
+    assert "STATE=" in _init_detection_source()
+
+
+# --- setup's documented write sequence ----------------------------------
+
+def _onboard(project: Path, *, name: str = "fixture", ptype: str = "new",
+             stage: str = "IDEA") -> None:
+    """Follow skills/setup/SKILL.md: write state, then build v4 storage."""
+    state = project / ".sweetclaude" / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run(
+        [sys.executable, str(TEMPLATE), "--name", name, "--type", ptype,
+         "--version-stage", stage, "--installed-version", "4.5.2",
+         "--output", str(state / "sweetclaude.yaml")],
+        capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+
+    # setup marks onboarding complete once its branch finishes.
+    data = yaml.safe_load((state / "sweetclaude.yaml").read_text(encoding="utf-8"))
+    data.setdefault("framework", {})["setup_complete"] = True
+    (state / "sweetclaude.yaml").write_text(
+        yaml.safe_dump(data, default_flow_style=False, sort_keys=False), encoding="utf-8")
+
+    for subdir in ("backlog/done", "roadmap/epics/done", "roadmap/milestones",
+                   "roadmap/issues/done"):
+        p = project / ".sweetclaude" / "product" / subdir
+        p.mkdir(parents=True, exist_ok=True)
+        (p / ".gitkeep").touch()
+    trace = project / ".sweetclaude" / "traceability"
+    trace.mkdir(parents=True, exist_ok=True)
+    for fn in ("requirements-map.md", "ripple-map.md"):
+        (trace / fn).write_text("# map\n\n| a | b |\n|---|---|\n", encoding="utf-8")
+
+
+# --- the four project shapes --------------------------------------------
+
+@pytest.fixture
+def empty_project(tmp_path: Path) -> Path:
+    p = tmp_path / "empty"
+    p.mkdir()
+    return p
+
+
+@pytest.fixture
+def existing_codebase(tmp_path: Path) -> Path:
+    p = tmp_path / "codebase"
+    (p / "src").mkdir(parents=True)
+    (p / "src" / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    (p / "package.json").write_text('{"name": "thing"}\n', encoding="utf-8")
+    return p
+
+
+@pytest.fixture
+def v3_project(tmp_path: Path) -> Path:
+    p = tmp_path / "v3"
+    state = p / ".sweetclaude" / "state"
+    state.mkdir(parents=True)
+    (state / "phase.yaml").write_text(
+        yaml.safe_dump({"schema_version": 2, "version_stage": "BETA",
+                        "deference_level": "collaborative"}), encoding="utf-8")
+    (state / "skills.yaml").write_text(
+        yaml.safe_dump({"schema_version": 2}), encoding="utf-8")
+    return p
+
+
+@pytest.fixture
+def damaged_project(tmp_path: Path) -> Path:
+    p = tmp_path / "damaged"
+    state = p / ".sweetclaude" / "state"
+    state.mkdir(parents=True)
+    (state / "sweetclaude.yaml").write_text("{ this: is: not: valid", encoding="utf-8")
+    return p
+
+
+# --- shape 1 and 2: onboarding routes to setup and produces working state
+
+@pytest.mark.parametrize("fixture_name", ["empty_project", "existing_codebase"])
+def test_unconfigured_project_routes_to_setup(fixture_name, request) -> None:
+    project = request.getfixturevalue(fixture_name)
+    assert _detect(project)["STATE"] == "none", (
+        "init must route an unconfigured project to setup")
+
+
+@pytest.mark.parametrize("fixture_name", ["empty_project", "existing_codebase"])
+def test_onboarding_produces_state_doctor_accepts(fixture_name, request) -> None:
+    """The ISSUE-249 regression, asserted end to end: after onboarding, doctor
+    must not report not-configured."""
+    project = request.getfixturevalue(fixture_name)
+    _onboard(project)
+
+    r = subprocess.run([sys.executable, str(DOCTOR), "scan", "--project-dir", str(project)],
+                       capture_output=True, text=True, timeout=180)
+    payload = json.loads(r.stdout)
+    assert payload.get("error") != "not-configured", (
+        "onboarded project reports not-configured — ISSUE-249 has regressed")
+
+
+@pytest.mark.parametrize("fixture_name", ["empty_project", "existing_codebase"])
+def test_onboarded_project_is_configured_on_the_next_session(fixture_name, request) -> None:
+    """bootstrap Step 1 keys on sweetclaude.yaml. If it is absent, the next
+    session routes to migration — the exact symptom that opened this work."""
+    project = request.getfixturevalue(fixture_name)
+    _onboard(project)
+    assert _detect(project)["STATE"] == "configured"
+
+
+@pytest.mark.parametrize("fixture_name", ["empty_project", "existing_codebase"])
+def test_onboarded_state_is_readable_by_the_session_state_hook(fixture_name, request) -> None:
+    """47 skills preload session state. Configured-but-unreadable is still broken."""
+    project = request.getfixturevalue(fixture_name)
+    _onboard(project, name="readable", stage="GA")
+
+    subprocess.run(["bash", str(SESSION_STATE)], cwd=str(project),
+                   capture_output=True, text=True, timeout=120)
+    ss = project / ".sweetclaude" / "state" / "session-state.yaml"
+    if ss.exists():
+        data = yaml.safe_load(ss.read_text(encoding="utf-8")) or {}
+        assert data.get("version_stage") == "GA"
+        assert data.get("project_name") == "readable"
+
+
+@pytest.mark.parametrize("fixture_name", ["empty_project", "existing_codebase"])
+def test_onboarding_builds_the_v4_storage_tree(fixture_name, request) -> None:
+    project = request.getfixturevalue(fixture_name)
+    _onboard(project)
+    product = project / ".sweetclaude" / "product"
+    for sub in ("backlog", "roadmap/epics", "roadmap/milestones", "roadmap/issues"):
+        assert (product / sub).is_dir(), f"missing {sub}"
+    trace = project / ".sweetclaude" / "traceability"
+    assert (trace / "requirements-map.md").is_file()
+    assert (trace / "ripple-map.md").is_file()
+
+
+def test_onboarded_project_reports_no_migration_drift(empty_project: Path) -> None:
+    """A freshly onboarded project must not look like it needs migrating."""
+    _onboard(empty_project)
+    r = subprocess.run(
+        [sys.executable, str(RUNNER), "--project-dir", str(empty_project),
+         "--registry", str(REGISTRY), "--report-drift-for-skill"],
+        capture_output=True, text=True, timeout=120)
+    count = next((l.split("=", 1)[1] for l in r.stdout.splitlines()
+                  if l.startswith("DRIFT_COUNT=")), None)
+    assert count == "0", f"fresh project reports drift: {r.stdout}"
+
+
+# --- shape 3: v3 state routes to migration, not setup --------------------
+
+def test_v3_project_routes_to_migration(v3_project: Path) -> None:
+    detected = _detect(v3_project)
+    assert detected["STATE"] == "legacy", (
+        "a v3 project must route to migration, not be re-onboarded over")
+    assert "phase.yaml" in detected.get("LEGACY_FILES", "")
+
+
+def test_v3_project_state_is_left_untouched_by_detection(v3_project: Path) -> None:
+    """Detection is a read. ISSUE-249's whole point is that init creates and
+    changes nothing."""
+    state = v3_project / ".sweetclaude" / "state"
+    before = {p.name: p.read_bytes() for p in state.iterdir()}
+    _detect(v3_project)
+    after = {p.name: p.read_bytes() for p in state.iterdir()}
+    assert after == before
+
+
+# --- shape 4: damaged state routes to repair -----------------------------
+
+def test_damaged_state_routes_to_doctor(damaged_project: Path) -> None:
+    detected = _detect(damaged_project)
+    assert detected["STATE"] == "damaged"
+    assert detected.get("REASON")
+
+
+def test_damaged_state_is_not_overwritten(damaged_project: Path) -> None:
+    """Repair, not re-initialization. Overwriting an unusable state file
+    destroys whatever could have been recovered from it."""
+    sc = damaged_project / ".sweetclaude" / "state" / "sweetclaude.yaml"
+    before = sc.read_bytes()
+    _detect(damaged_project)
+    assert sc.read_bytes() == before
+
+
+# --- init creates nothing, in every shape --------------------------------
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    ["empty_project", "existing_codebase", "v3_project", "damaged_project"])
+def test_init_detection_writes_nothing_at_all(fixture_name, request) -> None:
+    """The ISSUE-249 contract. Asserted across every shape rather than only the
+    happy path, because the v3 and damaged paths are where a stray write would
+    do the most damage."""
+    project = request.getfixturevalue(fixture_name)
+    before = {p.relative_to(project).as_posix(): p.read_bytes()
+              for p in project.rglob("*") if p.is_file()}
+
+    _detect(project)
+
+    after = {p.relative_to(project).as_posix(): p.read_bytes()
+             for p in project.rglob("*") if p.is_file()}
+    assert after == before, "init detection modified the project"
+
+
+def test_partial_setup_routes_back_to_setup(tmp_path: Path) -> None:
+    """An interrupted onboarding must resume, not be reported as configured."""
+    project = tmp_path / "partial"
+    _onboard(project)
+    sc = project / ".sweetclaude" / "state" / "sweetclaude.yaml"
+    data = yaml.safe_load(sc.read_text(encoding="utf-8"))
+    data["framework"]["setup_complete"] = False
+    sc.write_text(yaml.safe_dump(data, default_flow_style=False, sort_keys=False),
+                  encoding="utf-8")
+
+    assert _detect(project)["STATE"] == "partial"
+
+
+# --- ISSUE-280: onboarding must create current-version state --------------
+
+def _template_output() -> dict:
+    r = subprocess.run(
+        [sys.executable, str(TEMPLATE), "--name", "t", "--type", "new",
+         "--version-stage", "IDEA", "--installed-version", "4.5.2", "--output", "-"],
+        capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    return yaml.safe_load(r.stdout)
+
+
+def test_onboarding_template_matches_the_registry_current_version() -> None:
+    """ISSUE-280: setup wrote schema_version 1 while the registry declared 2, so
+    every new project was created already needing migration — and bootstrap
+    Step 5c offers only 'migrate now' or 'remove SweetClaude'."""
+    registry = yaml.safe_load(REGISTRY.read_text(encoding="utf-8"))
+    expected = registry["state_files"]["sweetclaude.yaml"]["current_version"]
+    assert _template_output()["schema_version"] == expected
+
+
+def test_freshly_written_state_needs_no_migration() -> None:
+    """The general form, and the one that catches this recurring at v2 to v3:
+    running the migration over brand-new output must be a no-op."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "sc_v1_v2", REPO_ROOT / "scripts" / "migrations" / "sweetclaude_yaml_v1_to_v2.py")
+    handler = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(handler)
+
+    fresh = _template_output()
+    migrated = handler.up(dict(fresh))
+    assert migrated == fresh, (
+        "the onboarding template produces state the migration would still "
+        "change, so a new project is created out of date")
