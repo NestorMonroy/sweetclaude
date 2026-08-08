@@ -75,26 +75,81 @@ def test_rollback_with_only_runner_arg_still_reports_usage() -> None:
     assert r.stdout.startswith("ROLLBACK_FAIL|usage:")
 
 
-# --- import-failure branch ----------------------------------------------
+# --- runner resolution (ISSUE-267) --------------------------------------
 #
-# Python puts a script's own directory on sys.path[0], so `from runner import
-# ...` always resolves to the sibling runner.py no matter what runner_path
-# argument the caller passes. The runner_path argument is therefore inert, and
-# the "cannot import runner" branch is reachable only when the sibling
-# runner.py is genuinely absent — a broken install, not a bad argument.
-# Behavior recorded, not changed: see ISSUE-267.
+# These helpers used to accept a runner_path and then ignore it: Python puts a
+# script's own directory on sys.path[0], so `from runner import ...` resolved
+# to the sibling before the inserted path was ever consulted. They now load
+# runner_path by explicit file location when it exists and fall back to the
+# sibling when it does not. The fallback is what kept migrations working while
+# the argument was ignored, so dropping it would turn a stale $RUNNER into a
+# hard failure.
 
 @pytest.mark.parametrize("script", [SNAPSHOT, MIGRATE, ROLLBACK], ids=lambda p: p.stem)
-def test_runner_path_argument_is_inert(script: Path, tmp_path: Path, project: Path) -> None:
-    """A bogus runner_path does not change which runner is loaded. Locking the
-    current behavior so a future change to it cannot pass unnoticed."""
+def test_missing_runner_path_falls_back_to_the_sibling(
+    script: Path, tmp_path: Path, project: Path
+) -> None:
+    """A stale or empty $RUNNER must not break an otherwise working install."""
     args = [str(tmp_path / "nowhere" / "runner.py")]
     if script is ROLLBACK:
         args.append("{}")
     args.append(str(project))
     r = _run(script, *args)
-    assert "cannot import runner" not in r.stdout
+    assert "cannot import runner" not in r.stdout, r.stdout
     assert "Traceback" not in r.stderr
+
+
+def test_explicit_runner_path_is_actually_used(tmp_path: Path) -> None:
+    """Proof the argument is honoured rather than quietly ignored: point it at
+    a copy of the runner carrying a marker, and observe the marker."""
+    alt_dir = tmp_path / "other-install"
+    alt_dir.mkdir()
+    alt_runner = alt_dir / "runner.py"
+    marker = "MARKER_FROM_THE_EXPLICIT_RUNNER"
+    alt_runner.write_text(
+        (MIGRATIONS / "runner.py").read_text(encoding="utf-8")
+        + f'\n\nEXPLICIT_RUNNER_MARKER = "{marker}"\n',
+        encoding="utf-8",
+    )
+
+    probe = tmp_path / "probe_explicit.py"
+    probe.write_text(
+        "import importlib.util\n"
+        f"spec = importlib.util.spec_from_file_location('h', r'{SNAPSHOT}')\n"
+        "mod = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(mod)\n"
+        f"runner_mod = mod._import_runner(r'{alt_runner}')\n"
+        "print(getattr(runner_mod, 'EXPLICIT_RUNNER_MARKER', 'NOT_THE_EXPLICIT_RUNNER'))\n",
+        encoding="utf-8",
+    )
+    r = subprocess.run([sys.executable, str(probe)], capture_output=True,
+                       text=True, timeout=120)
+    assert marker in r.stdout, r.stdout + r.stderr
+
+
+def test_runner_resolution_raises_when_neither_path_exists(tmp_path: Path) -> None:
+    """Both candidates missing is a broken install, not a fallback case."""
+    isolated = tmp_path / "install"
+    isolated.mkdir()
+    copy = isolated / SNAPSHOT.name
+    copy.write_text(SNAPSHOT.read_text(encoding="utf-8"), encoding="utf-8")
+
+    probe = tmp_path / "probe_absent.py"
+    probe.write_text(
+        "import importlib.util\n"
+        f"spec = importlib.util.spec_from_file_location('h', r'{copy}')\n"
+        "mod = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(mod)\n"
+        "try:\n"
+        f"    mod._import_runner(r'{isolated / 'nope.py'}')\n"
+        "    print('NO_ERROR')\n"
+        "except ImportError:\n"
+        "    print('IMPORT_ERROR')\n",
+        encoding="utf-8",
+    )
+    r = subprocess.run([sys.executable, str(probe)], capture_output=True,
+                       text=True, timeout=120)
+    assert "IMPORT_ERROR" in r.stdout, r.stdout + r.stderr
 
 
 @pytest.mark.parametrize(
