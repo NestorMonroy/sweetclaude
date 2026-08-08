@@ -21,7 +21,7 @@ omit =
 [report]
 # Gate. Raise this when coverage improves; see tests/test_coverage_gate.py for
 # the ratchet that makes lowering it a deliberate, reviewable act.
-fail_under = 77
+fail_under = 80
 precision = 0
 show_missing = true
 skip_covered = false

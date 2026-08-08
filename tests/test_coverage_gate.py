@@ -17,7 +17,7 @@ COVERAGERC = REPO_ROOT / ".coveragerc"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "test.yml"
 
 # Highest threshold the gate has held. Only ever increase this.
-RATCHET_FLOOR = 77
+RATCHET_FLOOR = 80
 
 
 def _fail_under() -> int:
