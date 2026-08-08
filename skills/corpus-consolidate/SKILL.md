@@ -8,7 +8,7 @@ description: "Scan source directories, deduplicate files, copy unique files into
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
-STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Tell the user: "This project is not set up for SweetClaude. Run `/sweetclaude:setup` first." Then stop.
+STOP. Before executing this skill, check: does .sweetclaude/state/sweetclaude.yaml or .sweetclaude/state/phase.yaml exist in the project directory? If NEITHER, do not proceed. Tell the user: "This project is not set up for SweetClaude. Run `/sweetclaude:init` first." Then stop.
 </preflight-guard>
 
 # Corpus Consolidate

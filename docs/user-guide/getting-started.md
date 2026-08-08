@@ -33,7 +33,7 @@ Inside Claude Code, install the stable channel:
 
 Restart Claude Code after install. See [Installing SweetClaude](install.md) for
 update instructions. After install, every Claude Code session in any project folder has
-SweetClaude skills available as `/sweetclaude:something` commands.
+SweetClaude skills available as `/sweetclaude:<skill-name>` commands.
 
 ---
 
@@ -170,7 +170,7 @@ These cost nothing and surface capabilities that are not obvious from the comman
 
 **4. `/sweetclaude:help`** All commands grouped by category, one line each. Faster than the full reference.
 
-**5. `/sweetclaude:find-skill`** Then describe what you want to do in plain English. SweetClaude classifies the work, picks the right starting skill, and runs it.
+**5. `/sweetclaude:go`** Then describe what you want to do in plain English. SweetClaude classifies the work, picks the right starting skill, and runs it.
 
 ---
 

@@ -92,6 +92,29 @@ Don't start here unless you've already contributed to the simpler skill surface 
 
 ---
 
+## Running the Test Suite
+
+Install the test dependencies once:
+
+```
+bash scripts/setup-dev.sh
+```
+
+Then:
+
+```
+python3 -m pytest tests/ -q
+```
+
+Use the setup script rather than plain `pip install`. Playwright pins an exact
+browser revision per package release and will not fall back to an older build,
+so installing the package without downloading the matching browser leaves
+`tests/test_dashboard_ui.py` failing with "Executable doesn't exist". The script
+does both. Re-run it after changing the pinned `playwright` version in
+`requirements-dev.txt`.
+
+---
+
 ## Running the Behavioral Regression Tests
 
 After any significant skill edit, run the behavioral regression tests to check that the change doesn't break existing contracts:

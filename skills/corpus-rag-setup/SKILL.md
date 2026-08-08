@@ -8,7 +8,7 @@ description: "Configure and run local semantic search on project documents using
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
-STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Tell the user: "This project is not set up for SweetClaude. Run `/sweetclaude:setup` first." Then stop.
+STOP. Before executing this skill, check: does .sweetclaude/state/sweetclaude.yaml or .sweetclaude/state/phase.yaml exist in the project directory? If NEITHER, do not proceed. Tell the user: "This project is not set up for SweetClaude. Run `/sweetclaude:init` first." Then stop.
 </preflight-guard>
 
 # Set Up RAG
@@ -159,6 +159,6 @@ Report:
 - How to search: "Ask questions naturally once the MCP server connects. The index supports semantic search — query by meaning, not just keywords."
 - How to update: "Run `/sweetclaude:corpus-rag-setup` again to update the index when files change."
 
-**Update project SOP:** After reporting, update `.sweetclaude/state/project-sop.md` — find the RAG Indexes table and update (or add) the row for this MCP with the scope used (canonical-only or full), today's date as Last Indexed, and a note if this was a canonical-only build. If `project-sop.md` does not exist, create it with just the RAG Indexes section populated — the MCP Tools and Corpus sections can be filled in by running `/sweetclaude:setup`.
+**Update project SOP:** After reporting, update `.sweetclaude/state/project-sop.md` — find the RAG Indexes table and update (or add) the row for this MCP with the scope used (canonical-only or full), today's date as Last Indexed, and a note if this was a canonical-only build. If `project-sop.md` does not exist, create it with just the RAG Indexes section populated — the MCP Tools and Corpus sections are filled in during onboarding.
 
 **Supported formats:** PDF, DOCX, TXT, Markdown. Excel and PowerPoint are not supported.

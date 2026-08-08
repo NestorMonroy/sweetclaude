@@ -116,7 +116,7 @@ Report: "Milestone files deleted. SweetClaude will no longer track milestones fo
 
 Runs when the skill is invoked normally but `status` is `uninitialized`. Does NOT run when `$ARGUMENTS` is `onboard`.
 
-1. Read `artifact-privacy.yaml` → `{base_path}`. If absent: "No artifact privacy manifest found. Run `/sweetclaude:setup` to configure artifact privacy, then return here." Stop.
+1. Read `artifact-privacy.yaml` → `{base_path}`. If absent: "No artifact privacy manifest found. Run `/sweetclaude:doctor` to repair the artifact privacy configuration, then return here." Stop.
 
 2. Present inline:
    > "No milestones set up yet. I'll create the milestones directory at `{base_path}/milestones/`.
@@ -192,7 +192,7 @@ If nothing found:
    - Measuring success criteria: ask for a list. For each criterion, offer: "Link this to a canonical artifact path? (optional, e.g. `strategy/narrative-arc.md`)"
    - Non-goals: require at least one. If the user offers none, prompt: "What is this milestone explicitly NOT? A non-goals list with zero items is a scope red flag."
    - Depends on: list of other MS-XXX refs (optional)
-   - Owner: default to the value of `owner` in `.sweetclaude/state/phase.yaml` if present; otherwise prompt.
+   - Owner: default to the value of `project.owner` in `.sweetclaude/state/sweetclaude.yaml` if present; otherwise prompt.
    - Sequence: "Sequence position for ordering in the milestone list? (optional — enter an integer, or press enter to skip): " Store as `sequence` integer or null if skipped.
 4. Default `Status:` to `proposed`. Ask the user only if they indicate otherwise.
 5. Write the file at `{base_path}/milestones/MS-XXX-<slug>.md` using the milestone template from the previous section, filling in all fields. `<slug>` is a dash-lowercased version of the title (e.g., "Exit Stealth" → `exit-stealth`).
@@ -373,7 +373,7 @@ Categories:
 List each follow-up as: "<category>: <short title>". Enter blank line when done.
 ```
 
-9. For each follow-up entered, invoke `sweetclaude:product/backlog` with arguments that route to its `add` flow. Pass the category as context. Do not inline the backlog-add logic — delegate. If the user indicated a strategic item, the backlog skill's existing router will redirect to `strategy/`.
+9. For each follow-up entered, invoke `sweetclaude:project-backlog` with arguments that route to its `add` flow. Pass the category as context. Do not inline the backlog-add logic — delegate. If the user indicated a strategic item, the backlog skill's existing router will redirect to `strategy/`.
 
 Before delegating each follow-up, collect two fields:
 
@@ -385,7 +385,7 @@ Before delegating each follow-up, collect two fields:
 > "P0/P1 item assigned to '{horizon}' — these usually signal urgent work. Reconcile: raise the horizon (now/sooner/soon), lower the priority (P2/SPIKE/none), or keep as-is with a note."
 Apply whichever field the user adjusts. If they choose keep-as-is, ask for a brief note and append it to the item's Notes field when delegating.
 
-Then delegate to `sweetclaude:product/backlog`, passing horizon and priority hint (if provided) so the backlog add flow can pre-fill those fields.
+Then delegate to `sweetclaude:project-backlog`, passing horizon and priority hint (if provided) so the backlog add flow can pre-fill those fields.
 
 10. Tell the user: "MS-XXX marked achieved. {N} follow-ups filed."
 

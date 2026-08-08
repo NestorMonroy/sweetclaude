@@ -90,7 +90,7 @@ A bug fix does not need discovery. A data migration does not need user stories. 
 | `migration` | ASSESS → DESIGN → PLAN → IMPLEMENT → VERIFY → CUTOVER → CLEANUP | Tech migrations, API deprecations |
 | `compressed` | DIAGNOSE → IMPLEMENT → SHIP → POST-MORTEM | Hotfixes |
 
-The work type determines the shape. You do not pick. When you describe the work to `/sweetclaude:find-skill` ("there is a bug in the auth flow"), the framework classifies it (`bug-fix`), reads the shape from config (`diagnostic`), and starts at DIAGNOSE. The diagnostic shape exists because you cannot fix what you cannot reproduce.
+The work type determines the shape. You do not pick. When you describe the work to `/sweetclaude:go` ("there is a bug in the auth flow"), the framework classifies it (`bug-fix`), reads the shape from config (`diagnostic`), and starts at DIAGNOSE. The diagnostic shape exists because you cannot fix what you cannot reproduce.
 
 ---
 

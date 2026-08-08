@@ -1,6 +1,6 @@
 ---
 spdx-license: AGPL-3.0-or-later
-user-invocable: false
+user-invocable: true
 description: "Run SweetClaude's behavioral regression test suite."
 ---
 

@@ -7,7 +7,7 @@ description: "Build a new feature end-to-end."
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
-STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Tell the user: "This project is not set up for SweetClaude. Running the pre-flight check now." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
+STOP. Before executing this skill, check: does .sweetclaude/state/sweetclaude.yaml or .sweetclaude/state/phase.yaml exist in the project directory? If NEITHER, do not proceed. Tell the user: "This project is not set up for SweetClaude. Running the pre-flight check now." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
 </preflight-guard>
 
 # Build Feature
@@ -95,9 +95,9 @@ Run the full Level 3 pipeline from `sweetclaude:code-tdd`:
 1. **Spawn test writer subagent.** Receives: the `.feature` file, existing codebase for patterns. No knowledge of planned implementation. Writes failing tests that fully specify the Gherkin behavior.
 
 2. **QA Caucus**. Spawn three parallel, independent review subagents:
-   - `sweetclaude:qa-caucus-service` — service/API coverage
-   - `sweetclaude:qa-caucus-component` — UI/component coverage (if applicable)
-   - `sweetclaude:qa-caucus-integration` — cross-cutting concerns
+   - `qa-caucus-service` — service/API coverage
+   - `qa-caucus-component` — UI/component coverage (if applicable)
+   - `qa-caucus-integration` — cross-cutting concerns
    Consolidate findings. Present gaps to user for approval. Add approved gaps to test files.
 
    The process-control ledger must show one available three-reviewer caucus

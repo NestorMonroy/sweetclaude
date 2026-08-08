@@ -33,9 +33,9 @@ caucus budget, reopen/split test coverage scope, or pause. Do not spawn
 reviewers while stopped.
 
 Spawn three QA caucus subagents in parallel:
-- `sweetclaude:qa-caucus-service`
-- `sweetclaude:qa-caucus-component`
-- `sweetclaude:qa-caucus-integration`
+- `qa-caucus-service`
+- `qa-caucus-component`
+- `qa-caucus-integration`
 
 Input for each: test files, Gherkin specs, stories, PRD.
 

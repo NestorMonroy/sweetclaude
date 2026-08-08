@@ -47,7 +47,7 @@ Framework management — setup, teardown, updates, audits, and guards. Always av
 | Skill | Invocation | What it does |
 |---|---|---|
 | **Setup** | _(internal)_ | Activate on any project — new idea or existing codebase. Detects context, walks through setup, writes `sweetclaude.yaml`. Invoked automatically by `/sweetclaude` when no state file exists. |
-| **Init** | `/sweetclaude:init` | Bootstrap SweetClaude infrastructure only (no product discovery). Detects project type, creates `.sweetclaude/`, generates CLAUDE.md stub. For existing codebases with real history, use `/sweetclaude` (which routes to setup) instead. |
+| **Init** | `/sweetclaude:init` | Onboarding entry point. Creates nothing itself — reads the project's current state and hands off: unconfigured projects go to Setup, v3 state goes to Migrate, damaged state goes to Doctor, and an already-configured project is left alone. |
 | **Off** | `/sweetclaude:off` | Suspend SweetClaude for this project. Preserves all artifacts. Reactivate with `/sweetclaude:go`. |
 | **Update** | `/sweetclaude:update` | Sync SweetClaude framework files inside the installed plugin channel. It reports project drift but does not run project-state or taxonomy migrations inline. Update the Claude Code plugin package and restart Claude Code before running it. |
 | **Migrate** | `/sweetclaude:migrate` | Taxonomy migration for supported flat v3 `BL-NNN` backlog layouts. Runs read-only preflight before locks or backups. Unsafe typed legacy layouts and duplicate IDs route to `/sweetclaude:recover` instead of blind migration. |
@@ -221,7 +221,7 @@ Long-form document work, corpus management, and specialized strategy capabilitie
 | **Documents Narrative Arc** | `/sweetclaude:documents-narrative-arc` | Knowledge graph connecting your claims, evidence, and strategic objectives. Query later: "What evidence supports claim X?" |
 | **Misc Meeting Prep** | `/sweetclaude:misc-meeting-prep` | Prepare for a specific meeting. Drafts agenda, talking points with confidence levels, anticipated questions with prepared responses, and leave-behinds. Captures debrief afterward. |
 | **John Wick** | `/sweetclaude:john-wick` | Autonomous multi-session SDLC pipeline. Runs the full pipeline without stopping at every sub-step, using phase check-ins to validate exit criteria. For when you want maximum autonomy. |
-| **John Wick Check-In** | `/sweetclaude:john-wick-checkin` | Phase check-in subagent used internally by John Wick. Available standalone for drift detection. |
+| **John Wick Check-In** | _(internal)_ | Phase check-in subagent used internally by John Wick. Available standalone for drift detection. |
 
 ### Document Corpus sub-skills
 

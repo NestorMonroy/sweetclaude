@@ -1,6 +1,6 @@
 ---
 spdx-license: AGPL-3.0-or-later
-user-invocable: false
+user-invocable: true
 description: "Internal TDD process skill — invoked by code-feature, code-issue, and code-debt."
 ---
 
@@ -8,7 +8,7 @@ description: "Internal TDD process skill — invoked by code-feature, code-issue
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
-STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Tell the user: "This project is not set up for SweetClaude. Running the pre-flight check now." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
+STOP. Before executing this skill, check: does .sweetclaude/state/sweetclaude.yaml or .sweetclaude/state/phase.yaml exist in the project directory? If NEITHER, do not proceed. Tell the user: "This project is not set up for SweetClaude. Running the pre-flight check now." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
 </preflight-guard>
 
 # SweetClaude TDD
@@ -144,9 +144,9 @@ After the user selects a level, record the selection:
    ```
 
 5. **QA Caucus.** Invoke all three reviewer agents **in a single message** (multiple Agent tool calls in one response) so they run in parallel. These agents are read-only — no worktree needed.
-   - `sweetclaude:qa-caucus-service` — service/API coverage
-   - `sweetclaude:qa-caucus-component` — UI/component coverage (if applicable)
-   - `sweetclaude:qa-caucus-integration` — cross-cutting concerns
+   - `qa-caucus-service` — service/API coverage
+   - `qa-caucus-component` — UI/component coverage (if applicable)
+   - `qa-caucus-integration` — cross-cutting concerns
 
    Each agent receives the test file paths and the `.feature` file for context. After all three return, consolidate gaps. Present to user for approval. Add approved gaps to test files.
 

@@ -35,11 +35,11 @@ state_dir = os.path.join(project_dir, '.sweetclaude', 'state')
 phase_path = os.path.join(state_dir, 'phase.yaml')
 sc_path    = os.path.join(state_dir, 'sweetclaude.yaml')
 
+# sweetclaude.yaml is canonical. phase.yaml is a mirror the story controllers
+# write while a workflow is running, so it is only consulted when the canonical
+# file is absent (a project mid-migration).
 phase = {}
-if os.path.exists(phase_path):
-    with open(phase_path) as f:
-        phase = yaml.safe_load(f) or {}
-elif os.path.exists(sc_path):
+if os.path.exists(sc_path):
     with open(sc_path) as f:
         sc = yaml.safe_load(f) or {}
     proj = sc.get('project', {})
@@ -49,10 +49,14 @@ elif os.path.exists(sc_path):
     phase = {
         'project_name': proj.get('name', ''),
         'version_stage': proj.get('version_stage', ''),
+        'mode': proj.get('mode') or sc.get('mode') or '',
         'deference_level': sess.get('deference_level', ''),
         'schema_version': 2,
         'active_work_item': active,
     }
+elif os.path.exists(phase_path):
+    with open(phase_path) as f:
+        phase = yaml.safe_load(f) or {}
 else:
     sys.exit(0)
 
@@ -210,6 +214,7 @@ result = {
     'project_name': phase.get('project_name', ''),
     'phase_schema_version': phase.get('schema_version', 1),
     'version_stage': phase.get('version_stage', ''),
+    'mode': phase.get('mode', ''),
     'deference': phase.get('deference_level', ''),
     'active_work_item': dict(
         id=awi.get('id'),

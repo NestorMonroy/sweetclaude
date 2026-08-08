@@ -15,7 +15,7 @@ category: design
 Before writing any artifact file:
 
 1. Read `.sweetclaude/artifact-privacy.yaml`. If it does not exist, stop and say:
-   > "No artifact privacy manifest found. Run `/sweetclaude:setup` to configure artifact privacy, then return here."
+   > "No artifact privacy manifest found. Run `/sweetclaude:doctor` to repair the artifact privacy configuration, then return here."
    Do not guess a path. Do not fall back to a default.
 
 2. Read `categories.design.base_path`. This is the base directory for all design artifacts.
@@ -32,7 +32,7 @@ All output is labeled **synthetic**. Synthetic findings are hypotheses to valida
 
 ## Entry
 
-Check for `.sweetclaude/` directory. If not found, tell the user to run `/sweetclaude:setup` first. Stop.
+Check for `.sweetclaude/` directory. If not found, tell the user to run `/sweetclaude:init` first. Stop.
 
 Read `.sweetclaude/state/personas.yaml` — required. If missing or empty:
 > "A UX review requires defined personas. Run `/sweetclaude:user-personas` first to define who you're designing for."

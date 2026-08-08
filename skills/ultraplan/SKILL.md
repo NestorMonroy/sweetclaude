@@ -9,7 +9,7 @@ category: design
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
-STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Tell the user: "This project is not set up for SweetClaude. Running the pre-flight check now." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
+STOP. Before executing this skill, check: does .sweetclaude/state/sweetclaude.yaml or .sweetclaude/state/phase.yaml exist in the project directory? If NEITHER, do not proceed. Tell the user: "This project is not set up for SweetClaude. Running the pre-flight check now." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
 </preflight-guard>
 
 # ultraplan Integration
@@ -127,7 +127,7 @@ If the output doesn't fit this structure cleanly, extract what's present and not
 
 ### Artifact path resolution
 
-Read `.sweetclaude/artifact-privacy.yaml`. If missing: stop and tell the user to run `/sweetclaude:setup` first.
+Read `.sweetclaude/artifact-privacy.yaml`. If missing: stop and tell the user to run `/sweetclaude:doctor` first.
 
 Read `categories.technical.base_path`. Construct: `{base_path}/architecture.md`.
 

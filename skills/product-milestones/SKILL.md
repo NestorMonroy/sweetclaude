@@ -9,7 +9,7 @@ category: product
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
-STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Instead say: "This project is not configured for SweetClaude. Let me run the pre-flight check." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
+STOP. Before executing this skill, check: does .sweetclaude/state/sweetclaude.yaml or .sweetclaude/state/phase.yaml exist in the project directory? If NEITHER, do not proceed. Instead say: "This project is not configured for SweetClaude. Let me run the pre-flight check." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
 </preflight-guard>
 
 # Milestones
@@ -70,7 +70,7 @@ Read `${CLAUDE_PLUGIN_ROOT}/config/skills-registry.yaml`. Find `skills.product-m
 Before writing any artifact file:
 
 1. Read `.sweetclaude/artifact-privacy.yaml`. If it does not exist, stop and say:
-   > "No artifact privacy manifest found. Run `/sweetclaude:setup` to configure artifact privacy, then return here."
+   > "No artifact privacy manifest found. Run `/sweetclaude:doctor` to repair the artifact privacy configuration, then return here."
    Do not guess a path. Do not fall back to a default.
 
 2. Read `categories.product.base_path`. This is the base directory for all product artifacts.
@@ -181,7 +181,7 @@ Read [operations.md](operations.md) and execute the matching sub-section.
 The milestones skill is the single source of truth for milestone data. Other skills should follow this protocol rather than writing their own milestone logic:
 
 - **`sweetclaude:project-issues`**: after creating an issue, prompt "Assign this issue to a milestone? [list of active + proposed milestones, or 'none / later']". On user selection, invoke `sweetclaude:product-milestones link <ISSUE-NNN> <MS-NNN>`.
-- **`sweetclaude:product/sprint-plan`**: after stories are chosen for a sprint, read each story's `**Milestone:**` header. Report which milestones the sprint advances and count unassigned stories. If > 50% of sprint stories are unassigned, flag it as a scope concern.
+- **`sweetclaude:product-sprint-plan`**: after stories are chosen for a sprint, read each story's `**Milestone:**` header. Report which milestones the sprint advances and count unassigned stories. If > 50% of sprint stories are unassigned, flag it as a scope concern.
 - **`sweetclaude:status`**: in the orient view, include an "Active milestones" section showing each `active` milestone with its criterion-met count.
 
 Strategy skills (`strategy/narrative-arc`, `product/market-messaging`, etc.) are **not modified**. Milestones reference their canonical artifacts by path as Measuring-success criteria; the milestones skill reads those files directly.

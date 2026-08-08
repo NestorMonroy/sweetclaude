@@ -53,7 +53,6 @@ case "$SKILL_NAME" in
   sweetclaude:purge|\
   sweetclaude:setup|\
   sweetclaude:init|\
-  sweetclaude:adopt|\
   sweetclaude:update)
     echo '{"ok": true}'; exit 0 ;;
 esac
@@ -81,9 +80,9 @@ except Exception:
     print('A')
 " "$DRIFT_MARKER" 2>/dev/null)
   if [ "$CASE" = "B" ]; then
-    echo '{"ok": false, "reason": "BLOCKED: SweetClaude artifact drift (out-of-support-window). Run /sweetclaude:purge to remove, or re-onboard with /sweetclaude:adopt after archiving .sweetclaude/ manually."}'
+    echo '{"ok": false, "reason": "BLOCKED: SweetClaude artifact drift (out-of-support-window). Run /sweetclaude:purge to remove, or re-onboard with /sweetclaude:init after archiving .sweetclaude/ manually."}'
   else
-    echo '{"ok": false, "reason": "BLOCKED: SweetClaude artifact drift — migration required. Run /sweetclaude:_migrate to migrate, or /sweetclaude:purge to remove SweetClaude."}'
+    echo '{"ok": false, "reason": "BLOCKED: SweetClaude artifact drift — migration required. Invoke the sweetclaude:_migrate skill to migrate, or run /sweetclaude:purge to remove SweetClaude."}'
   fi
   exit 0
 fi
@@ -93,7 +92,7 @@ PROJECT_HASH=$(printf '%s' "$PROJECT_DIR" | md5 2>/dev/null \
   || printf '%s' "$PROJECT_DIR" | md5sum 2>/dev/null | cut -d' ' -f1)
 BOOTSTRAP_FLAG="/tmp/.sweetclaude-bootstrap-ran-${PROJECT_HASH}"
 if [ ! -f "$BOOTSTRAP_FLAG" ]; then
-  echo '{"ok": false, "reason": "BLOCKED: sweetclaude:bootstrap has not run this session. Bootstrap handles drift detection and session setup. Run /sweetclaude:bootstrap first, then retry."}'
+  echo '{"ok": false, "reason": "BLOCKED: sweetclaude:bootstrap has not run this session. Bootstrap handles drift detection and session setup. Invoke the sweetclaude:bootstrap skill first, then retry."}'
   exit 0
 fi
 

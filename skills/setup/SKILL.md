@@ -199,7 +199,18 @@ for subdir in ['backlog/done', 'roadmap/epics/done', 'roadmap/milestones', 'road
     p.mkdir(parents=True, exist_ok=True)
     (p / '.gitkeep').touch()
 
-# 3. Build initial cache (INDEX.md is no longer created — cache provides all views)
+# 3. Create the traceability tree that code and docs skills append to
+traceability = pathlib.Path('.sweetclaude/traceability')
+traceability.mkdir(parents=True, exist_ok=True)
+for name, header in [
+    ('requirements-map.md', '# Requirements Traceability Map\n\n| Requirement | User Story | Test | Status |\n|---|---|---|---|\n'),
+    ('ripple-map.md', '# Ripple Map\n\n| Change | Affected areas | Risk level |\n|---|---|---|\n'),
+]:
+    p = traceability / name
+    if not p.exists():
+        p.write_text(header, encoding='utf-8')
+
+# 4. Build initial cache (INDEX.md is no longer created — cache provides all views)
 import subprocess, os
 subprocess.run(['python3', os.path.expanduser('${CLAUDE_PLUGIN_ROOT}/scripts/cache.py'), '--project-dir', '.', '--rebuild'], capture_output=True)
 ```

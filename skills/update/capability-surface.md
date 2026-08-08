@@ -97,7 +97,7 @@ After the onboarding prompt (or immediately if no uninitialized skills), add:
 ```
 You don't need to learn the skill list — SweetClaude routes you automatically.
 Just describe what you want to do and /sweetclaude:go will handle the rest.
-Type /sweetclaude:skills to see all available skills at any time.
+Type /sweetclaude:help to see all available skills at any time.
 ```
 
 Do not print the full skill catalog. Do not continue to any further step.

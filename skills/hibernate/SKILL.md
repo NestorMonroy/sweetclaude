@@ -8,7 +8,7 @@ description: "Use when hibernating or unhibernating a project managed by SweetCl
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
-STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Instead say: "This project is not configured for SweetClaude. Running pre-flight check." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
+STOP. Before executing this skill, check: does .sweetclaude/state/sweetclaude.yaml or .sweetclaude/state/phase.yaml exist in the project directory? If NEITHER, do not proceed. Instead say: "This project is not configured for SweetClaude. Running pre-flight check." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
 </preflight-guard>
 
 # SweetClaude Hibernate
@@ -21,10 +21,10 @@ Extends `hibernate-project` with SweetClaude-specific state management. Invoke `
 
 **Before hibernate-project Step 4 (Write HIBERNATION.md):** Gather SweetClaude state to include.
 
-1. Read `.sweetclaude/state/phase.yaml` from `.sweetclaude/`. Extract:
-   - Current phase
-   - Current work type
-   - Deference level
+1. Read `.sweetclaude/state/sweetclaude.yaml`. Extract:
+   - Current phase (`work.active.phase`)
+   - Current work type (`work.active.type`)
+   - Deference level (`session.deference_level`)
    - Any pending detour
 2. Read `.sweetclaude/state/improvement-register.md`. Summarize entries.
 3. Read `.sweetclaude/state/decision-log.md`. Note count and date range.
@@ -67,11 +67,11 @@ SweetClaude was not initialized for this project.
   - "Resume" — keep {phase} phase at {deference level}
   - "Reconfigure" — change the deference level before resuming
 
-  If "Resume," update `.sweetclaude/state/phase.yaml` to active. If "Reconfigure," ask for the new deference level.
+  If "Resume," update `.sweetclaude/state/sweetclaude.yaml` to active. If "Reconfigure," ask for the new deference level.
 
 - If no SweetClaude state:
   > "This project was not using SweetClaude before. SweetClaude manages a 7-phase development pipeline covering discovery, design, TDD, and review. Set it up now?"
 
   If accepted, invoke `/sweetclaude:init`.
 
-**During Step 6 (Update Docs):** If SweetClaude is active, update `.sweetclaude/state/phase.yaml` to reflect resumed status.
+**During Step 6 (Update Docs):** If SweetClaude is active, update `.sweetclaude/state/sweetclaude.yaml` to reflect resumed status.

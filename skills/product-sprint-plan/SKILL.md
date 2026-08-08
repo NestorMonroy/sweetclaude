@@ -8,7 +8,7 @@ description: "Plan a sprint by selecting stories from the backlog, estimating sc
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
-STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Instead say: "This project is not configured for SweetClaude. Let me run the pre-flight check." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
+STOP. Before executing this skill, check: does .sweetclaude/state/sweetclaude.yaml or .sweetclaude/state/phase.yaml exist in the project directory? If NEITHER, do not proceed. Instead say: "This project is not configured for SweetClaude. Let me run the pre-flight check." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
 </preflight-guard>
 
 # Sprint Plan
@@ -119,6 +119,13 @@ If `$ARGUMENTS` is `onboard`:
 1. Check whether any backlog item files exist (`.sweetclaude/product/backlog/ISSUE-*.md`).
    - If not: > "Sprint planning requires backlog items. Create some first with `/sweetclaude:project-issues create`."
    - If yes: continue.
+
+1b. **Resolve the artifact base path.** Read `.sweetclaude/artifact-privacy.yaml` and take
+   `categories.product.base_path` as `{base_path}` for every path below. If the manifest does
+   not exist, stop and say:
+   > "No artifact privacy manifest found. Run `/sweetclaude:doctor` to repair the artifact
+   > privacy configuration, then return here."
+   Do not guess a path. Do not fall back to a default.
 
 2. Check whether any milestone files exist (`{base_path}/milestones/MS-*.md`) or any epics exist (`.sweetclaude/product/roadmap/epics/EP-*.md`).
    - If not: > "Sprint planning works best with milestones defined so each sprint can be tied to a roadmap target. Want to set up milestones now? (yes/skip)"

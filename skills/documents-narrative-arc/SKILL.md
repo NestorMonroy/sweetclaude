@@ -9,7 +9,7 @@ category: strategy
 !`bash ${CLAUDE_SKILL_DIR}/../../hooks/read-state.sh session-state`
 
 <preflight-guard>
-STOP. Before executing this skill, check: does .sweetclaude/state/phase.yaml exist in the project directory? If NO, do not proceed. Instead say: "This project is not configured for SweetClaude. Let me run the pre-flight check." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
+STOP. Before executing this skill, check: does .sweetclaude/state/sweetclaude.yaml or .sweetclaude/state/phase.yaml exist in the project directory? If NEITHER, do not proceed. Instead say: "This project is not configured for SweetClaude. Let me run the pre-flight check." Then invoke the sweetclaude master skill (Skill tool, skill: "sweetclaude:master") and run its pre-flight. Return here only after the pre-flight passes.
 </preflight-guard>
 
 # Narrative Arc
@@ -21,7 +21,7 @@ Build and query the strategic narrative graph.
 Before writing any artifact file:
 
 1. Read `.sweetclaude/artifact-privacy.yaml`. If it does not exist, stop and say:
-   > "No artifact privacy manifest found. Run `/sweetclaude:setup` to configure artifact privacy, then return here."
+   > "No artifact privacy manifest found. Run `/sweetclaude:doctor` to repair the artifact privacy configuration, then return here."
    Do not guess a path. Do not fall back to a default.
 
 2. Read `categories.strategy.base_path`. This is the base directory for all strategy artifacts.

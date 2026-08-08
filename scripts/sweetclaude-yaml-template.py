@@ -10,11 +10,15 @@ def build_template(name, project_type, version_stage, installed_version='unknown
     feat = lambda: {'status': 'not_offered', 'offered_at': None,
                     'decided_at': None, 'defer_until': None}
     return {
-        'schema_version': 1,
+        # Must match config/migration-registry.yaml current_version for
+        # sweetclaude.yaml, or every new project is created already needing
+        # migration and bootstrap prompts for it at first session (ISSUE-280).
+        'schema_version': 2,
         'project': {
             'name': name,
             'type': project_type,
             'version_stage': version_stage,
+            'mode': None,
             'safety_snapshot': '',
         },
         'framework': {
@@ -33,7 +37,9 @@ def build_template(name, project_type, version_stage, installed_version='unknown
             'update': {
                 'available': None,
                 'last_checked': None,
-                'declined': False,
+                # None, not False: the v1->v2 migration exists to clear the
+                # legacy boolean, so writing it fresh recreates v1 shape.
+                'declined': None,
                 'check_error': None,
             },
         },
