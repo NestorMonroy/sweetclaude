@@ -1,4 +1,5 @@
 ---
+spdx-license: AGPL-3.0-or-later
 name: sweetclaude:migrate-diagnose
 description: "Redirects to sweetclaude:doctor. File diagnostics are now part of the doctor system."
 ---

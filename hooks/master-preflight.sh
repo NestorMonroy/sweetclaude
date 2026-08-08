@@ -53,7 +53,6 @@ case "$SKILL_NAME" in
   sweetclaude:purge|\
   sweetclaude:setup|\
   sweetclaude:init|\
-  sweetclaude:adopt|\
   sweetclaude:update)
     echo '{"ok": true}'; exit 0 ;;
 esac

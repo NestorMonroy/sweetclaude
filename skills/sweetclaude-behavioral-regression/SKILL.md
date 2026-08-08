@@ -1,4 +1,5 @@
 ---
+spdx-license: AGPL-3.0-or-later
 user-invocable: true
 description: "Validates that mode enforcement is working correctly across all four modes."
 version: 1.0.0

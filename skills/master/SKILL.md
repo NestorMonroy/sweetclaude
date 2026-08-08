@@ -181,7 +181,7 @@ When the user asks to do something, the `find-skill` skill classifies it into th
 
 When delegating to early-phase skills, set depth expectations:
 
-**For `sweetclaude:product/discovery`:** Invoke for net-new products and apps. The skill runs a structured 3-stage workflow (persona discovery → feature brainstorming → competitive analysis) with user control at every gate. Do not substitute freeform brainstorming for this structured workflow when building a product. For CLIs/libraries, the skill scales down automatically. For utilities/scripts, skip it — handle minimal discovery directly.
+**For `sweetclaude:product-discovery`:** Invoke for net-new products and apps. The skill runs a structured 3-stage workflow (persona discovery → feature brainstorming → competitive analysis) with user control at every gate. Do not substitute freeform brainstorming for this structured workflow when building a product. For CLIs/libraries, the skill scales down automatically. For utilities/scripts, skip it — handle minimal discovery directly.
 
 **For `sweetclaude:product-brief`:** Present the outline first and get adjustment before writing. Ask about audience and NDA material. Sections scale to available input. Always end with "Additional Development" noting what wasn't covered. Follow the document production system (front matter, versioned naming, paragraph numbering in drafts).
 

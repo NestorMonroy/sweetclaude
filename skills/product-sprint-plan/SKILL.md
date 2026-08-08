@@ -120,6 +120,13 @@ If `$ARGUMENTS` is `onboard`:
    - If not: > "Sprint planning requires backlog items. Create some first with `/sweetclaude:project-issues create`."
    - If yes: continue.
 
+1b. **Resolve the artifact base path.** Read `.sweetclaude/artifact-privacy.yaml` and take
+   `categories.product.base_path` as `{base_path}` for every path below. If the manifest does
+   not exist, stop and say:
+   > "No artifact privacy manifest found. Run `/sweetclaude:doctor` to repair the artifact
+   > privacy configuration, then return here."
+   Do not guess a path. Do not fall back to a default.
+
 2. Check whether any milestone files exist (`{base_path}/milestones/MS-*.md`) or any epics exist (`.sweetclaude/product/roadmap/epics/EP-*.md`).
    - If not: > "Sprint planning works best with milestones defined so each sprint can be tied to a roadmap target. Want to set up milestones now? (yes/skip)"
      - If yes: invoke `sweetclaude:product-milestones onboard` and wait.

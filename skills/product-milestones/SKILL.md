@@ -181,7 +181,7 @@ Read [operations.md](operations.md) and execute the matching sub-section.
 The milestones skill is the single source of truth for milestone data. Other skills should follow this protocol rather than writing their own milestone logic:
 
 - **`sweetclaude:project-issues`**: after creating an issue, prompt "Assign this issue to a milestone? [list of active + proposed milestones, or 'none / later']". On user selection, invoke `sweetclaude:product-milestones link <ISSUE-NNN> <MS-NNN>`.
-- **`sweetclaude:product/sprint-plan`**: after stories are chosen for a sprint, read each story's `**Milestone:**` header. Report which milestones the sprint advances and count unassigned stories. If > 50% of sprint stories are unassigned, flag it as a scope concern.
+- **`sweetclaude:product-sprint-plan`**: after stories are chosen for a sprint, read each story's `**Milestone:**` header. Report which milestones the sprint advances and count unassigned stories. If > 50% of sprint stories are unassigned, flag it as a scope concern.
 - **`sweetclaude:status`**: in the orient view, include an "Active milestones" section showing each `active` milestone with its criterion-met count.
 
 Strategy skills (`strategy/narrative-arc`, `product/market-messaging`, etc.) are **not modified**. Milestones reference their canonical artifacts by path as Measuring-success criteria; the milestones skill reads those files directly.

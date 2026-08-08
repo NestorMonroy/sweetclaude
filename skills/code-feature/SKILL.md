@@ -95,9 +95,9 @@ Run the full Level 3 pipeline from `sweetclaude:code-tdd`:
 1. **Spawn test writer subagent.** Receives: the `.feature` file, existing codebase for patterns. No knowledge of planned implementation. Writes failing tests that fully specify the Gherkin behavior.
 
 2. **QA Caucus**. Spawn three parallel, independent review subagents:
-   - `sweetclaude:qa-caucus-service` — service/API coverage
-   - `sweetclaude:qa-caucus-component` — UI/component coverage (if applicable)
-   - `sweetclaude:qa-caucus-integration` — cross-cutting concerns
+   - `qa-caucus-service` — service/API coverage
+   - `qa-caucus-component` — UI/component coverage (if applicable)
+   - `qa-caucus-integration` — cross-cutting concerns
    Consolidate findings. Present gaps to user for approval. Add approved gaps to test files.
 
    The process-control ledger must show one available three-reviewer caucus

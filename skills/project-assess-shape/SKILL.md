@@ -1,4 +1,5 @@
 ---
+spdx-license: AGPL-3.0-or-later
 user-invocable: true
 description: "Interview user and recommend a SweetClaude project mode (Flow, Kanban, Shape Up, or Agile)"
 version: 1.0.0
