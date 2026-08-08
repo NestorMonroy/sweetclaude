@@ -33,4 +33,9 @@ PY
 
 echo
 echo "Ready. Playwright expects chromium build ${EXPECTED}."
-echo "Run the suite with: ${PYTHON} -m pytest tests/ -q"
+echo "Run the suite with:     ${PYTHON} -m pytest tests/ -q"
+echo "With coverage:          ${PYTHON} -m pytest tests/ -q --cov --cov-report=term"
+echo "HTML coverage report:   ${PYTHON} -m pytest tests/ -q --cov --cov-report=html && open htmlcov/index.html"
+echo
+echo "The coverage gate lives in .coveragerc (fail_under) and is ratcheted"
+echo "by tests/test_coverage_gate.py."

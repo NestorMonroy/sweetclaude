@@ -1,0 +1,35 @@
+# SweetClaude coverage configuration (ISSUE-254)
+#
+# Without an explicit source scope, pytest tmp fixtures that copy scripts/ into
+# a temporary project directory are measured as if they were repo files. That
+# moves the denominator with the test suite and makes any gate meaningless.
+
+[run]
+source = scripts
+branch = false
+parallel = false
+
+omit =
+    */__pycache__/*
+    */.venv/*
+    */site-packages/*
+    # pytest tmp fixture projects — copies of scripts/, not the real tree
+    /private/var/folders/*
+    /tmp/*
+    */pytest-of-*/*
+
+[report]
+# Gate. Raise this when coverage improves; see tests/test_coverage_gate.py for
+# the ratchet that makes lowering it a deliberate, reviewable act.
+fail_under = 77
+precision = 0
+show_missing = true
+skip_covered = false
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError
+    if TYPE_CHECKING:
+
+[html]
+directory = htmlcov

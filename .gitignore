@@ -53,3 +53,9 @@ __pycache__/
 # Private review artifacts must not be committed at repo root
 /caucus_checkpoint_*.md
 /caucus_review_*.md
+
+# Coverage artifacts (ISSUE-254)
+.coverage
+.coverage.*
+htmlcov/
+coverage.json

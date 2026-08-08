@@ -5,6 +5,10 @@
 pytest>=8.0
 PyYAML>=6.0
 
+# Coverage measurement and the CI gate (see .coveragerc).
+coverage>=7.0
+pytest-cov>=4.0
+
 # Pinned exactly on purpose. Playwright ships a hard-coded browser revision per
 # release and refuses to fall back to an older one, so upgrading the package
 # without re-running `playwright install` breaks tests/test_dashboard_ui.py with

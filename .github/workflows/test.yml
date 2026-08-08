@@ -40,5 +40,7 @@ jobs:
           python3 -m pip install --quiet -r requirements-dev.txt
           python3 -m playwright install --with-deps chromium
 
-      - name: Run test suite
-        run: python3 -m pytest tests/ -q
+      - name: Run test suite with coverage gate
+        # Threshold and source scope live in .coveragerc; the gate is
+        # ratcheted by tests/test_coverage_gate.py.
+        run: python3 -m pytest tests/ -q --cov --cov-report=term
