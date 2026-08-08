@@ -6,8 +6,14 @@ pytest>=8.0
 PyYAML>=6.0
 
 # Coverage measurement and the CI gate (see .coveragerc).
-coverage>=7.0
-pytest-cov>=4.0
+#
+# Pinned exactly, for the same reason as playwright below: an unpinned test
+# toolchain means CI measures with different code than a developer does.
+# Subprocess coverage in particular is carried by pytest-cov's .pth hook, and
+# a version difference there silently reports 0% for every script the tests
+# drive as a subprocess.
+coverage==7.9.1
+pytest-cov==4.1.0
 
 # Pinned exactly on purpose. Playwright ships a hard-coded browser revision per
 # release and refuses to fall back to an older one, so upgrading the package

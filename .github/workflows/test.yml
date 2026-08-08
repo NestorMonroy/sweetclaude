@@ -38,6 +38,7 @@ jobs:
       - name: Install dependencies
         run: |
           python3 -m pip install --quiet -r requirements-dev.txt
+          python3 -m pip list | grep -iE 'pytest|coverage|playwright'
           python3 -m playwright install --with-deps chromium
 
       - name: Run test suite with coverage gate
