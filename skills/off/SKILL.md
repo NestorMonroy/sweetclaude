@@ -16,11 +16,11 @@ Suspend SweetClaude for this project without deleting anything. All state, decis
 ## Step 1: Check project state
 
 If `.sweetclaude/` does not exist:
-> "SweetClaude is not set up for this project. Run `/sweetclaude:setup` to initialize it."
+> "SweetClaude is not set up for this project. Run `/sweetclaude:init` to initialize it."
 Stop.
 
 If `.sweetclaude/disabled` already exists:
-> "SweetClaude is already inactive for this project. Run `/sweetclaude:setup` to reactivate."
+> "SweetClaude is already inactive for this project. Run `/sweetclaude:go` to reactivate."
 Stop.
 
 ---
@@ -37,4 +37,4 @@ touch .sweetclaude/disabled
 
 > "SweetClaude is now inactive for this project. All artifacts are preserved.
 >
-> Run `/sweetclaude:setup` to reactivate."
+> Run `/sweetclaude:go` to reactivate."

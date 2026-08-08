@@ -1,6 +1,6 @@
 ---
 spdx-license: AGPL-3.0-or-later
-user-invocable: false
+user-invocable: true
 description: "Internal TDD process skill — invoked by code-feature, code-issue, and code-debt."
 ---
 

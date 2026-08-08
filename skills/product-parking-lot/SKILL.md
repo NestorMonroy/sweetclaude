@@ -68,7 +68,7 @@ Read `${CLAUDE_PLUGIN_ROOT}/config/skills-registry.yaml`. Find `skills.product-p
 Before writing any artifact file:
 
 1. Read `.sweetclaude/artifact-privacy.yaml`. If it does not exist, stop and say:
-   > "No artifact privacy manifest found. Run `/sweetclaude:setup` to configure artifact privacy, then return here."
+   > "No artifact privacy manifest found. Run `/sweetclaude:doctor` to repair the artifact privacy configuration, then return here."
    Do not guess a path. Do not fall back to a default.
 
 2. Read `categories.product.base_path`. This is the base directory for all product artifacts.
@@ -197,7 +197,7 @@ Report: "Backlog files deleted."
 
 Runs when the skill is invoked normally but `status` is `uninitialized`. Does NOT run when `$ARGUMENTS` is `onboard`.
 
-1. Read `artifact-privacy.yaml` → `{base_path}`. If absent: "No artifact privacy manifest found. Run `/sweetclaude:setup` to configure artifact privacy, then return here." Stop.
+1. Read `artifact-privacy.yaml` → `{base_path}`. If absent: "No artifact privacy manifest found. Run `/sweetclaude:doctor` to repair the artifact privacy configuration, then return here." Stop.
 
 2. Present inline:
    > "No backlog set up yet. I'll create the backlog directory at `{base_path}/backlog/`.

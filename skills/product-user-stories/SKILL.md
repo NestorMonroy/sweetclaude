@@ -17,7 +17,7 @@ Write user stories for your product, in the format and scope that best fits your
 Before writing any artifact file:
 
 1. Read `.sweetclaude/artifact-privacy.yaml`. If it does not exist, stop and say:
-   > "No artifact privacy manifest found. Run `/sweetclaude:setup` to configure artifact privacy, then return here."
+   > "No artifact privacy manifest found. Run `/sweetclaude:doctor` to repair the artifact privacy configuration, then return here."
    Do not guess a path. Do not fall back to a default.
 
 2. Read `categories.product.base_path`. This is the base directory for all product artifacts.
@@ -177,7 +177,7 @@ Report: "Story files deleted."
 
 Runs when the skill is invoked normally but `status` is `uninitialized`.
 
-1. Read `artifact-privacy.yaml` → `{base_path}`. If absent: "No artifact privacy manifest found. Run `/sweetclaude:setup` to configure artifact privacy, then return here." Stop.
+1. Read `artifact-privacy.yaml` → `{base_path}`. If absent: "No artifact privacy manifest found. Run `/sweetclaude:doctor` to repair the artifact privacy configuration, then return here." Stop.
 
 2. Ask inline:
    > "No stories set up yet. I'll create the stories directory at `{base_path}/stories/`.

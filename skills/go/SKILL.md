@@ -433,20 +433,40 @@ Report: `✓ {STORY-ID} → done/{filename}`
 **Step C6 — Cache rebuilt** (handled by `set-terminal` in C5):
 Report: `✓ Cache rebuilt`
 
-**Step C7 — Clear active_work_item** (if `phase.yaml` exists):
+**Step C7 — Clear the active work item.** Clear the canonical file first, then the
+`phase.yaml` mirror if a story controller left one behind. Leaving `work.active`
+set is what makes `go`, `status`, and the controllers disagree about what is in
+flight.
+
 ```bash
 python3 - << 'PY'
 import yaml, os, tempfile
-path = '.sweetclaude/state/phase.yaml'
-if not os.path.exists(path): exit()
-d = yaml.safe_load(open(path)) or {}
-last_id = (d.get('active_work_item') or {}).get('id')
-d['active_work_item'] = {'id': None, 'title': None, 'type': None, 'phase': None}
-if last_id:
-    d['last_work_item_id'] = last_id
-with tempfile.NamedTemporaryFile('w', dir='.sweetclaude/state', suffix='.tmp', delete=False) as tmp:
-    yaml.dump(d, tmp, default_flow_style=False); tmp_name = tmp.name
-os.replace(tmp_name, path)
+
+def _write(path, data):
+    with tempfile.NamedTemporaryFile('w', dir='.sweetclaude/state', suffix='.tmp', delete=False) as tmp:
+        yaml.dump(data, tmp, default_flow_style=False, sort_keys=False)
+        tmp_name = tmp.name
+    os.replace(tmp_name, path)
+
+canonical = '.sweetclaude/state/sweetclaude.yaml'
+last_id = None
+if os.path.exists(canonical):
+    d = yaml.safe_load(open(canonical)) or {}
+    work = d.setdefault('work', {})
+    last_id = (work.get('active') or {}).get('id')
+    work['active'] = {'id': None, 'title': None, 'type': None, 'phase': None}
+    if last_id:
+        work['last_item_id'] = last_id
+    _write(canonical, d)
+
+mirror = '.sweetclaude/state/phase.yaml'
+if os.path.exists(mirror):
+    d = yaml.safe_load(open(mirror)) or {}
+    mirror_id = (d.get('active_work_item') or {}).get('id')
+    d['active_work_item'] = {'id': None, 'title': None, 'type': None, 'phase': None}
+    if mirror_id or last_id:
+        d['last_work_item_id'] = mirror_id or last_id
+    _write(mirror, d)
 PY
 ```
 

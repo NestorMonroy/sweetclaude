@@ -1,6 +1,6 @@
 ---
 spdx-license: AGPL-3.0-or-later
-user-invocable: false
+user-invocable: true
 description: "Enable the Protocol Guardian — enforces skill invocations, TDD discipline, and artifact saves for the current session"
 ---
 
@@ -54,9 +54,9 @@ EOF
 
 `tdd_status` starts as `"pending"` (TDD not yet started). It transitions to `"writing_tests"` → `"red"` → `"implementing"` → `"green"` as work progresses in the IMPLEMENT phase.
 
-**4. Create obligation task chain** based on current phase from `.sweetclaude/state/phase.yaml`:
+**4. Create obligation task chain** based on `work.active.phase` in `.sweetclaude/state/sweetclaude.yaml`:
 
-If `.sweetclaude/state/phase.yaml` does not exist or is unreadable, use the Unknown branch below.
+If `.sweetclaude/state/sweetclaude.yaml` does not exist or is unreadable, use the Unknown branch below.
 
 *IMPLEMENT phase:*
 - Task 1: Invoke `sweetclaude:code-feature` or `sweetclaude:code-issue`

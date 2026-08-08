@@ -35,7 +35,7 @@ fi
 
 - `STATE=unified` → Step 1 (runner path).
 - `STATE=legacy` → Step 5 (one-shot consolidation, then re-enter via re-run).
-- `STATE=none` → report `"Nothing to migrate. Run /sweetclaude:setup to initialize."` and stop.
+- `STATE=none` → report `"Nothing to migrate. Run /sweetclaude:init to onboard this project."` and stop.
 
 ---
 

@@ -159,6 +159,6 @@ Report:
 - How to search: "Ask questions naturally once the MCP server connects. The index supports semantic search — query by meaning, not just keywords."
 - How to update: "Run `/sweetclaude:corpus-rag-setup` again to update the index when files change."
 
-**Update project SOP:** After reporting, update `.sweetclaude/state/project-sop.md` — find the RAG Indexes table and update (or add) the row for this MCP with the scope used (canonical-only or full), today's date as Last Indexed, and a note if this was a canonical-only build. If `project-sop.md` does not exist, create it with just the RAG Indexes section populated — the MCP Tools and Corpus sections can be filled in by running `/sweetclaude:setup`.
+**Update project SOP:** After reporting, update `.sweetclaude/state/project-sop.md` — find the RAG Indexes table and update (or add) the row for this MCP with the scope used (canonical-only or full), today's date as Last Indexed, and a note if this was a canonical-only build. If `project-sop.md` does not exist, create it with just the RAG Indexes section populated — the MCP Tools and Corpus sections are filled in during onboarding.
 
 **Supported formats:** PDF, DOCX, TXT, Markdown. Excel and PowerPoint are not supported.

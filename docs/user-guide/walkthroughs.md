@@ -124,7 +124,7 @@ The tone of this onboarding is deliberate. SweetClaude treats existing codebases
 Production is broken. You need to ship a fix now. SweetClaude has a workflow for this and it skips most of the ceremony.
 
 ```
-/sweetclaude:find-skill production is down, the OAuth callback is throwing 500s
+/sweetclaude:go production is down, the OAuth callback is throwing 500s
 ```
 
 SweetClaude classifies this as a `hotfix` — work type, not bug fix. The difference matters: hotfix runs the **compressed** workflow shape (DIAGNOSE → IMPLEMENT → SHIP → POST-MORTEM), skips most prerequisite checks, and accepts that the POST-MORTEM is a follow-on work item, not a step you can skip.
@@ -201,7 +201,7 @@ Full reference: [Corpus and RAG](corpus-system.md).
 You have been building. New information arrived — a customer interview, a competitive shift, a regulatory ruling — and the direction is wrong. You need to pivot without throwing away the work that still applies.
 
 ```
-/sweetclaude:find-skill we need to change direction, the target user is not who we thought
+/sweetclaude:go we need to change direction, the target user is not who we thought
 ```
 
 SweetClaude classifies this as `course-correction`. The workflow is `full-pipeline` but with a TRIAGE phase between DEFINE and SHIP. That phase exists for exactly this situation.

@@ -127,7 +127,7 @@ If the output doesn't fit this structure cleanly, extract what's present and not
 
 ### Artifact path resolution
 
-Read `.sweetclaude/artifact-privacy.yaml`. If missing: stop and tell the user to run `/sweetclaude:setup` first.
+Read `.sweetclaude/artifact-privacy.yaml`. If missing: stop and tell the user to run `/sweetclaude:doctor` first.
 
 Read `categories.technical.base_path`. Construct: `{base_path}/architecture.md`.
 

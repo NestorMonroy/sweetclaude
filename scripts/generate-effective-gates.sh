@@ -33,7 +33,9 @@ with open(config_path) as f:
 with open(sc_path) as f:
     project = yaml.safe_load(f) or {}
 
-mode = project.get('mode', 'flow')
+# Canonical home is project.mode. Top-level `mode` is accepted for projects
+# written before it moved into the project block.
+mode = (project.get('project') or {}).get('mode') or project.get('mode') or 'flow'
 mc = config.get('mode_defaults', {}).get(mode)
 if mc is None:
     print(f"ERROR: unknown mode '{mode}'", file=sys.stderr)

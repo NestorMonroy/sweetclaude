@@ -56,7 +56,7 @@ The shape determines the phase sequence. The work type determines the shape.
 
 ## All 19 Work Types
 
-When you tell `/sweetclaude:find-skill` what you want to do, it classifies the work into one of these. The classification determines the workflow shape, the entry category, and which phases apply.
+When you tell `/sweetclaude:go` what you want to do, it classifies the work into one of these. The classification determines the workflow shape, the entry category, and which phases apply.
 
 ### Build new
 

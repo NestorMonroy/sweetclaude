@@ -143,14 +143,14 @@ Tell the user:
 
 ---
 
-## Step 8: Update phase.yaml
+## Step 8: Update the canonical state file
 
 If this was an active work item:
 ```bash
-cat .sweetclaude/state/phase.yaml
+cat .sweetclaude/state/sweetclaude.yaml
 ```
 
-Update `active_work_item` to reflect the incident work item at `phase: SHIP` completed, or clear it if it was a reactive one-off.
+Update `work.active` to reflect the incident work item at `phase: SHIP` completed, or clear it if it was a reactive one-off. Do not write `phase.yaml` — the story controllers mirror `work.active` into it when a workflow is running.
 
 ---
 

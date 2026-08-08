@@ -13,9 +13,9 @@ source "${CLAUDE_PLUGIN_ROOT}/hooks/sc-artifact.sh"
 CURRENT_MODE=$(python3 -c "
 import yaml
 try:
-    p = yaml.safe_load(open('$PWD/.sweetclaude/state/phase.yaml'))
-    print(p.get('mode','flow'))
-except:
+    d = yaml.safe_load(open('$PWD/.sweetclaude/state/sweetclaude.yaml')) or {}
+    print((d.get('project') or {}).get('mode') or 'flow')
+except Exception:
     print('flow')
 " 2>/dev/null || echo "flow")
 
@@ -101,8 +101,8 @@ Arguments: `shift <target_mode>`
 ```bash
 CURRENT_MODE=$(python3 -c "
 import yaml
-p = yaml.safe_load(open('$PWD/.sweetclaude/state/phase.yaml'))
-print(p.get('mode','flow'))
+d = yaml.safe_load(open('$PWD/.sweetclaude/state/sweetclaude.yaml')) or {}
+print((d.get('project') or {}).get('mode') or 'flow')
 " 2>/dev/null)
 ```
 
@@ -178,6 +178,7 @@ SNAPSHOT_DIR="$PWD/.sweetclaude/state/snapshots/$SNAPSHOT_ID"
 mkdir -p "$SNAPSHOT_DIR"
 
 # Snapshot current state
+cp "$PWD/.sweetclaude/state/sweetclaude.yaml" "$SNAPSHOT_DIR/sweetclaude.yaml" 2>/dev/null
 cp "$PWD/.sweetclaude/state/phase.yaml" "$SNAPSHOT_DIR/phase.yaml" 2>/dev/null
 cp "$PWD/.sweetclaude/state/scope.yaml" "$SNAPSHOT_DIR/scope.yaml" 2>/dev/null
 cp "$PWD/.sweetclaude/state/project-index.json" "$SNAPSHOT_DIR/project-index.json" 2>/dev/null
@@ -212,36 +213,36 @@ sc_artifact_write <SP-NNN> '{"status": "cancelled"}'
 
 Do not touch `active` sprints — ask the user to close them first.
 
-**Step 5: Update phase.yaml.**
+**Step 5: Update the canonical state file.**
 
 ```bash
 python3 - <<'PYEOF'
-import yaml
-from datetime import datetime
+import pathlib, yaml
+from datetime import datetime, timezone
 
-with open('$PWD/.sweetclaude/state/phase.yaml') as f:
-    phase = yaml.safe_load(f)
+path = pathlib.Path('$PWD/.sweetclaude/state/sweetclaude.yaml')
+d = yaml.safe_load(path.read_text()) or {}
+project = d.setdefault('project', {})
 
-phase['mode'] = '<target_mode>'
-phase['mode_set_at'] = datetime.now(timezone.utc).isoformat(timespec='seconds')
+now = datetime.now(timezone.utc).isoformat(timespec='seconds')
+previous_set_at = project.get('mode_set_at') or now
 
-if 'mode_history' not in phase:
-    phase['mode_history'] = []
-phase['mode_history'].append({
+project.setdefault('mode_history', []).append({
     'mode': '$CURRENT_MODE',
-    'set_at': phase.get('mode_set_at', datetime.now(timezone.utc).isoformat(timespec='seconds')),
-    'snapshot_id': '$SNAPSHOT_ID'
+    'set_at': previous_set_at,
+    'snapshot_id': '$SNAPSHOT_ID',
 })
+project['mode'] = '<target_mode>'
+project['mode_set_at'] = now
 
 # Storage backend defaults
 backend_defaults = {
     'flow': 'markdown', 'kanban': 'markdown', 'shape_up': 'markdown',
     'agile': 'markdown', 'agile_enterprise': 'sqlite'
 }
-phase['storage_backend'] = backend_defaults.get('<target_mode>', 'markdown')
+project['storage_backend'] = backend_defaults.get('<target_mode>', 'markdown')
 
-with open('$PWD/.sweetclaude/state/phase.yaml', 'w') as f:
-    yaml.dump(phase, f, default_flow_style=False, allow_unicode=True)
+path.write_text(yaml.safe_dump(d, default_flow_style=False, allow_unicode=True, sort_keys=False), encoding='utf-8')
 print('ok')
 PYEOF
 ```
@@ -271,9 +272,10 @@ Storage:      {new backend}
 ```bash
 python3 -c "
 import yaml
-p = yaml.safe_load(open('$PWD/.sweetclaude/state/phase.yaml'))
+d = yaml.safe_load(open('$PWD/.sweetclaude/state/sweetclaude.yaml')) or {}
+p = d.get('project') or {}
 history = p.get('mode_history', [])
-current = p.get('mode', 'unknown')
+current = p.get('mode') or 'unknown'
 print(f'Current: {current}')
 for h in reversed(history):
     print(f\"  {h.get('set_at','?')}  {h.get('mode','?')}  snapshot={h.get('snapshot_id','—')}\")

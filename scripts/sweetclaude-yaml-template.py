@@ -15,6 +15,7 @@ def build_template(name, project_type, version_stage, installed_version='unknown
             'name': name,
             'type': project_type,
             'version_stage': version_stage,
+            'mode': None,
             'safety_snapshot': '',
         },
         'framework': {

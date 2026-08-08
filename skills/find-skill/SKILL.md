@@ -19,11 +19,11 @@ The full work-type → skill mapping lives in [routing-tables.md](routing-tables
 
 ## Process
 
-1. **Read version stage.** Read `.sweetclaude/state/phase.yaml`. Extract `version_stage` (default: PROTOTYPE if not set). This controls which buckets are surfaced — see the visibility note at the top of `routing-tables.md`.
+1. **Read version stage.** Read `.sweetclaude/state/sweetclaude.yaml`. Extract `project.version_stage` (default: PROTOTYPE if not set). This controls which buckets are surfaced — see the visibility note at the top of `routing-tables.md`.
 
 1b. **Check structured state for starting phase.** Before classifying or prompting, read the authoritative state sources in order:
 
-  1. **`phase.yaml` `active_work_item`** — already read in Step 1. If a work item is active and matches the request, use its `phase` directly. Do not re-derive.
+  1. **`sweetclaude.yaml` `work.active`** — already read in Step 1. If a work item is active and matches the request, use its `phase` directly. Do not re-derive. (`.sweetclaude/state/phase.yaml` mirrors this block when a story controller is running; it is never the source of truth.)
   2. **Roadmap file** — if the request references a roadmap epic, find it in the roadmap file and read its `Status:` field:
      - `not_started` → `{starting_phase}` = first phase in the workflow
      - `in_progress` + a `Phase:` annotation → use that phase
@@ -78,38 +78,44 @@ The full work-type → skill mapping lives in [routing-tables.md](routing-tables
 
    **If not Plan 3:** Proceed to step 7.
 
-7. **Update state and invoke.** Determine the next `id`: read `last_work_item_id` from phase.yaml (this persists across work item completions). If present (e.g., `WI-003`), parse the number and increment by 1. If absent, start at `WI-001`. Format as `WI-{NNN}` with three zero-padded digits. Write the new id to both `active_work_item.id` and `last_work_item_id`.
+7. **Update state and invoke.** Determine the next `id` with the shared allocator so the project's existing sequence is never clobbered:
 
-   Write `active_work_item` to `.sweetclaude/state/phase.yaml`:
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/cache.py" --project-dir . --query next-id --prefix ISSUE
+   ```
+
+   Write the allocated id to both `work.active.id` and `work.last_item_id` in `.sweetclaude/state/sweetclaude.yaml` — the canonical state file:
 
    ```yaml
-   last_work_item_id: WI-{NNN}
-
-   active_work_item:
-     id: WI-{NNN}
-     type: {work_type_key}
-     workflow: [{phases from routing-tables.md, comma-separated}]
-     phase: {starting_phase — assessed in Step 1b, NOT assumed to be first phase}
-     title: "{one-sentence description from user's request}"
-     started: {YYYY-MM-DD today}
-     entry_category: {cold-start|mid-project-planned|mid-project-reactive}
+   work:
+     last_item_id: {allocated id}
+     active:
+       id: {allocated id}
+       type: {work_type_key}
+       workflow: [{phases from routing-tables.md, comma-separated}]
+       phase: {starting_phase — assessed in Step 1b, NOT assumed to be first phase}
+       title: "{one-sentence description from user's request}"
+       started: {YYYY-MM-DD today}
+       entry_category: {cold-start|mid-project-planned|mid-project-reactive}
    ```
+
+   Do not write `phase.yaml`. The story controllers mirror `work.active` into it when a workflow is running.
 
    If `{starting_phase}` differs from the first phase in the workflow, tell the user:
    > "Found existing {artifact type} — starting at {starting_phase} instead of {first phase}."
 
    Example for a bug fix entered reactively:
    ```yaml
-   last_work_item_id: WI-003
-
-   active_work_item:
-     id: WI-003
-     type: bug-fix
-     workflow: [DIAGNOSE, IMPLEMENT, VERIFY, SHIP]
-     phase: DIAGNOSE
-     title: "Login fails when email contains uppercase letters"
-     started: 2026-04-29
-     entry_category: mid-project-reactive
+   work:
+     last_item_id: ISSUE-003
+     active:
+       id: ISSUE-003
+       type: bug-fix
+       workflow: [DIAGNOSE, IMPLEMENT, VERIFY, SHIP]
+       phase: DIAGNOSE
+       title: "Login fails when email contains uppercase letters"
+       started: 2026-04-29
+       entry_category: mid-project-reactive
    ```
 
    Then use the Skill tool to start the matched skill. Pass any relevant context from the user's description as the skill's starting input so the user does not have to repeat themselves.

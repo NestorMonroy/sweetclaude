@@ -68,7 +68,7 @@ Steps 3–5 operate on the current working directory (the user's project), not `
 ```
 
 If `NO_SWEETCLAUDE`: stop with:
-> "No SweetClaude state found in this project. Run `/sweetclaude:setup` first."
+> "No SweetClaude state found in this project. Run `/sweetclaude:init` first."
 
 If `NO_BACKLOG_DIR`: create the directory tree:
 

@@ -33,9 +33,9 @@ If any are missing:
 > "SweetClaude is not fully installed. Missing: [list]. Reinstall the plugin from the SweetClaude repo."
 
 **Step 2: Check project configuration.**
-- Does `.sweetclaude/state/phase.yaml` exist in the project directory?
+- Does `.sweetclaude/state/sweetclaude.yaml` exist in the project directory? (A project mid-migration may have only the legacy `.sweetclaude/state/phase.yaml` — treat either as configured.)
 - Does the project's `CLAUDE.md` exist and contain a SweetClaude section?
-- Legacy fallback: check `<project>-sweetclaude/state/phase.yaml` if `.sweetclaude/` does not exist
+- Legacy fallback: check `<project>-sweetclaude/state/sweetclaude.yaml`, then `<project>-sweetclaude/state/phase.yaml`, if `.sweetclaude/` does not exist
 
 If the project is not set up:
 > "This project is not configured for SweetClaude yet. I can set it up — detecting whether this is a new or existing project and walking you through initialization. Set it up now?"
@@ -90,7 +90,7 @@ operations/  — Keeping it running. Something broke, postmortem, break-glass no
 deploy/      — Shipping it. (Deferred — not yet scoped.)
 ```
 
-**Work-type routing (via `/sweetclaude:find-skill`):**
+**Work-type routing (via the internal `sweetclaude:find-skill` skill):**
 
 *strategy/* — concept articulation, pain analysis, customer profiling, strategic competitive analysis, research papers, meeting prep, market messaging
 *product/* — new features, product briefs, PRDs, user stories, scope changes, backlog, sprint planning, product-level competitive analysis
@@ -191,7 +191,7 @@ When delegating to early-phase skills, set depth expectations:
 
 ## State Directory
 
-SweetClaude internal state always lives in `.sweetclaude/`. Planning artifact paths (milestones, backlog, product briefs, architecture docs, etc.) are determined per-project by the artifact privacy manifest — set during `/sweetclaude:setup` and stored in `.sweetclaude/artifact-privacy.yaml`.
+SweetClaude internal state always lives in `.sweetclaude/`. Planning artifact paths (milestones, backlog, product briefs, architecture docs, etc.) are determined per-project by the artifact privacy manifest — set during onboarding and stored in `.sweetclaude/artifact-privacy.yaml`.
 
 ```
 .sweetclaude/
@@ -210,8 +210,8 @@ SweetClaude internal state always lives in `.sweetclaude/`. Planning artifact pa
   design/               → design artifacts when design category is private
                           (wireframes/, user-flows/, ux.md, etc.)
 
-{configured path}/      → public artifact locations as confirmed during /sweetclaude:setup
+{configured path}/      → public artifact locations as confirmed during onboarding
                           (e.g. docs/, strategy/, docs/design/ — or user-specified paths)
 ```
 
-All planning skills read `.sweetclaude/artifact-privacy.yaml` before writing any file. If the manifest does not exist, skills stop and direct the user to run `/sweetclaude:setup`.
+All planning skills read `.sweetclaude/artifact-privacy.yaml` before writing any file. If the manifest does not exist, skills stop and direct the user to run `/sweetclaude:doctor`.
