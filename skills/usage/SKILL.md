@@ -69,6 +69,25 @@ Read `.sweetclaude/metrics/events.log` and compute the dashboard.
 
 If metrics are not enabled or no events exist, say so and offer to enable.
 
+### Outcome report
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/usage_report.py --project-dir .
+```
+
+Reports how often skills complete, fail, are abandoned, or are blocked, and
+keeps apart three things that are easy to conflate:
+
+| Reported as | Means |
+|---|---|
+| `unknown` | Invoked, no completion recorded. Not a success. |
+| `unobserved` | Never invoked in this project at all. Not zero-failure. |
+| `failed` | A completion was recorded and it failed. |
+
+The success rate is computed over records that actually carry an outcome.
+Dividing by every invocation would let unknowns inflate it — on a log where
+nothing reports outcomes yet, that would read as 100%.
+
 ### Dashboard format
 
 ```
@@ -146,6 +165,29 @@ event: skill_invoked
 skill: sweetclaude:product-discovery
 phase: discover
 ```
+
+#### skill_completed
+Recorded when a skill reaches its exit. Carries the outcome; the log is
+append-only, so an outcome cannot be attached to the `skill_invoked` record
+after the fact and rides on this paired event instead.
+
+```yaml
+---
+timestamp: 2026-04-23T14:38:00Z
+event: skill_completed
+skill: sweetclaude:doctor
+outcome: completed|failed|abandoned|blocked
+detail: 2 errors, 1 warning, 3 auto-fixed
+```
+
+`outcome` is required and validated by `scripts/record-event.sh`. An invalid or
+missing value is rejected with exit 2 rather than written, because a
+`skill_completed` that lands as `unknown` is indistinguishable from a skill
+that never reported at all.
+
+A `skill_invoked` with no matching `skill_completed` is reported as **unknown**
+— never as a success. That is deliberate: honest reporting does not depend on
+every skill cooperating, because the absence is itself the signal.
 
 #### phase_gate_check
 Recorded when phase gate exit criteria are evaluated.

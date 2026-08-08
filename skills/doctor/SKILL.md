@@ -788,6 +788,27 @@ Silent — do not report pruning results to the user.
 
 ---
 
+Record the outcome so the run appears in `/sweetclaude:usage` as something
+other than unknown. An invocation with no completion is reported as unknown,
+never as a success (ISSUE-276):
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/record-event.sh skill_completed \
+  skill=sweetclaude:doctor outcome=completed \
+  "detail={errors} errors, {warnings} warnings, {auto_fixed} auto-fixed"
+```
+
+If the run stopped early — a hard-stop route, a refused precondition, or a
+failure part-way through — record that instead, with the reason:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/record-event.sh skill_completed \
+  skill=sweetclaude:doctor outcome=blocked "detail={what stopped it}"
+```
+
+Valid outcomes are `completed`, `failed`, `abandoned`, `blocked`. Anything else
+is rejected by the recorder rather than silently logged as unknown.
+
 ## Rules
 
 - **Read-only scan.** The scan phase (Step 1) never writes. All writes happen in Steps 5-8.

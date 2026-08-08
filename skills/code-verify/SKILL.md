@@ -72,6 +72,25 @@ Keep the returned `receipt` path and pass it to closeout commands with
 do not write a passing receipt for partial verification, stale output, failed
 commands, unrelated test runs, or an unspecified work item.
 
+## Record the outcome
+
+Verification either passed or it did not, and that is the whole point of the
+skill — so it is the clearest signal the metrics log can carry. Record it
+before finishing (ISSUE-276):
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/record-event.sh skill_completed \
+  skill=sweetclaude:code-verify outcome=completed "detail=all checks passed"
+```
+
+If any check failed, record the failure and name the check — a failure with no
+detail cannot be acted on later:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/record-event.sh skill_completed \
+  skill=sweetclaude:code-verify outcome=failed "detail={which check failed}"
+```
+
 ## Stop Signs
 
 Do not proceed to commit, PR, or phase advancement if any of the following are true:
