@@ -3,7 +3,8 @@
 # SweetClaude Pre-Flight Guard
 # PreToolUse — blocks ALL tool calls if the SessionStart hook flagged this
 # project as needing configuration. The flag persists until the project is
-# configured (.sweetclaude/state/phase.yaml exists) or opted out (.sweetclaude-skip).
+# configured (.sweetclaude/state/sweetclaude.yaml or the legacy phase.yaml
+# exists) or opted out (.sweetclaude-skip).
 
 PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
 
@@ -23,7 +24,7 @@ if [ ! -f "$FLAG" ]; then
 fi
 
 # Flag exists — but maybe the project was configured since it was planted
-if [ -f "$PROJECT_DIR/.sweetclaude/state/phase.yaml" ] || [ -f "$PROJECT_DIR/.sweetclaude-skip" ]; then
+if [ -f "$PROJECT_DIR/.sweetclaude/state/sweetclaude.yaml" ] || [ -f "$PROJECT_DIR/.sweetclaude/state/phase.yaml" ] || [ -f "$PROJECT_DIR/.sweetclaude-skip" ]; then
   rm -f "$FLAG"
   echo '{"ok": true}'
   exit 0
@@ -31,7 +32,7 @@ fi
 
 # Legacy fallback
 LEGACY_REPO="${PROJECT_DIR}-sweetclaude"
-if [ -f "$LEGACY_REPO/state/phase.yaml" ]; then
+if [ -f "$LEGACY_REPO/state/sweetclaude.yaml" ] || [ -f "$LEGACY_REPO/state/phase.yaml" ]; then
   rm -f "$FLAG"
   echo '{"ok": true}'
   exit 0
