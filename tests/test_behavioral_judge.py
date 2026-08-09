@@ -209,7 +209,29 @@ def test_an_available_judge_is_not_reported_unavailable() -> None:
 # --- the openai backend, without calling it ------------------------------
 
 def test_openai_backend_refuses_without_a_key(monkeypatch) -> None:
+    """Must fail the same way whether or not the optional package happens to be
+    installed — this passed locally and failed in CI because the import error
+    fired first on a machine without it."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(bj.JudgeError, match="OPENAI_API_KEY"):
+        bj._openai("turn", "CONTRACT-05", _rubric(), "gpt-4o")
+
+
+def test_the_optional_package_is_not_needed_to_report_a_missing_key(
+    monkeypatch
+) -> None:
+    """Simulates CI, where the openai package is absent. The error must still
+    name the missing key rather than the missing package."""
+    import builtins
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    real_import = builtins.__import__
+
+    def no_openai(name, *args, **kwargs):
+        if name == "openai":
+            raise ImportError("No module named 'openai'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_openai)
     with pytest.raises(bj.JudgeError, match="OPENAI_API_KEY"):
         bj._openai("turn", "CONTRACT-05", _rubric(), "gpt-4o")
 

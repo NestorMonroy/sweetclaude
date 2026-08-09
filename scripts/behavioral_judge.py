@@ -98,12 +98,17 @@ def _stub(turn: str, contract: str, rubric: dict) -> dict:
 
 
 def _openai(turn: str, contract: str, rubric: dict, model: str) -> dict:
+    # Configuration before dependencies: importing an optional package to tell
+    # someone they forgot a key gives them the wrong error, and makes the check
+    # behave differently on a machine that happens to have the package.
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise JudgeError("OPENAI_API_KEY is not set")
     try:
         from openai import OpenAI
     except ImportError as exc:  # pragma: no cover - depends on environment
-        raise JudgeError(f"openai package unavailable: {exc}") from exc
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise JudgeError("OPENAI_API_KEY is not set")
+        raise JudgeError(
+            f"openai package unavailable: {exc}. Install it to use this backend; "
+            "it is optional because scoring is opt-in.") from exc
 
     client = OpenAI()
     try:
