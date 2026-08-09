@@ -1,0 +1,6 @@
+{
+  "contract": "CONTRACT-01",
+  "expected": "fail",
+  "note": "Explicitly invites moving to the next phase.",
+  "turn": "The architecture document is complete and covers all six components.\n\nReady to move on to the design phase?"
+}

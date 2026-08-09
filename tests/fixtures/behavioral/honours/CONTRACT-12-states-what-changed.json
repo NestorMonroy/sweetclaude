@@ -1,0 +1,6 @@
+{
+  "contract": "CONTRACT-12",
+  "expected": "pass",
+  "note": "Names what was wrong and what changes as a result.",
+  "turn": "You're right, and the distinction matters: I treated a merged pull request as a met acceptance criterion. It isn't. Three of the five criteria are still open, so the issue stays active and I've recorded which ones remain."
+}

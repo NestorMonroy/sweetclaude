@@ -1,0 +1,305 @@
+"""The behavioural judge harness, and proof it can catch a bad judge (ISSUE-275).
+
+The contracts have never been scored because the obvious assessor is the model
+being assessed. An independent model fixes the conflict of interest but not the
+credibility problem: an external judge that agrees with everything produces
+confident, official-looking output and is worse than no judge, because it is
+harder to distrust.
+
+So what is tested here is the harness, not the judge's opinions:
+
+  * a judge that cannot separate honouring from breaking is reported unscorable
+  * a judge that never ran is reported differently from one that ran badly —
+    a billing failure is not a verdict about the contracts
+  * an uncited or fabricated citation is discarded rather than counted
+
+No test here calls a real model. The openai backend is opt-in, so CI never
+makes a network call and no transcript ever leaves the machine during a test
+run.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+import yaml
+
+REPO_ROOT = Path(__file__).parents[1]
+SCRIPT = REPO_ROOT / "scripts" / "behavioral_judge.py"
+RUBRICS = REPO_ROOT / "config" / "behavioral-rubrics.yaml"
+CORPUS = REPO_ROOT / "tests" / "fixtures" / "behavioral"
+CONTRACTS_SKILL = REPO_ROOT / "skills" / "behavioral-regression" / "SKILL.md"
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+import behavioral_judge as bj  # noqa: E402
+
+
+# --- the corpus ----------------------------------------------------------
+
+def test_the_corpus_has_both_sides() -> None:
+    """A corpus of only-broken turns trains a judge to fail everything, and a
+    corpus of only-good turns trains it to pass everything. Both halves are
+    what make the discrimination check mean anything."""
+    honours = list((CORPUS / "honours").glob("*.json"))
+    breaks = list((CORPUS / "breaks").glob("*.json"))
+    assert honours and breaks
+    assert {json.loads(p.read_text())["contract"] for p in honours} == \
+           {json.loads(p.read_text())["contract"] for p in breaks}, (
+        "every contract needs a turn that honours it and one that breaks it")
+
+
+def test_every_fixture_declares_its_contract_and_expectation() -> None:
+    for item in bj.load_corpus():
+        assert item["contract"].startswith("CONTRACT-")
+        assert item["expected"] in {"pass", "fail"}
+        assert item["turn"].strip()
+        assert item["note"].strip(), "a fixture with no note cannot be reviewed"
+
+
+def test_fixtures_reference_real_contracts() -> None:
+    defined = set(bj.load_rubrics())
+    for item in bj.load_corpus():
+        assert item["contract"] in defined, (
+            f"{item['file']} names {item['contract']}, which has no rubric")
+
+
+def test_rubric_contracts_exist_in_the_behavioural_suite() -> None:
+    """A rubric for a contract nobody declared would score nothing real."""
+    import re
+    declared = set(re.findall(r"^### (CONTRACT-\d+):",
+                              CONTRACTS_SKILL.read_text(encoding="utf-8"), re.M))
+    for contract in bj.load_rubrics():
+        assert contract in declared, f"{contract} has a rubric but is not a contract"
+
+
+# --- rubric shape --------------------------------------------------------
+
+@pytest.mark.parametrize("contract", sorted(bj.load_rubrics()))
+def test_each_rubric_states_both_directions(contract: str) -> None:
+    """A rubric that only says what passes invites a judge to pass everything."""
+    r = bj.load_rubrics()[contract]
+    assert r["question"].strip()
+    assert r["passes_when"].strip()
+    assert r["fails_when"].strip()
+
+
+@pytest.mark.parametrize("contract", sorted(bj.load_rubrics()))
+def test_each_rubric_declares_how_strong_its_evidence_is(contract: str) -> None:
+    assert bj.load_rubrics()[contract]["evidence_strength"] in {"observable", "inferred"}
+
+
+def test_the_prompt_judges_one_contract_only() -> None:
+    rubrics = bj.load_rubrics()
+    prompt = bj.build_prompt("some turn", "CONTRACT-05", rubrics["CONTRACT-05"])
+    assert "CONTRACT-05" in prompt
+    assert "CONTRACT-01" not in prompt
+    assert "verbatim" in prompt.lower()
+    assert "discarded" in prompt.lower()
+
+
+# --- citation enforcement ------------------------------------------------
+
+def _rubric(cid: str = "CONTRACT-05") -> dict:
+    return bj.load_rubrics()[cid]
+
+
+def test_a_verdict_without_a_citation_is_discarded(monkeypatch) -> None:
+    monkeypatch.setattr(bj, "_stub", lambda t, c, r: {"verdict": "pass",
+                                                      "citation": "", "reason": "x"})
+    r = bj.evaluate("a turn", "CONTRACT-05", _rubric())
+    assert r["counted"] is False
+    assert "no citation" in r["discarded"]
+
+
+def test_a_fabricated_citation_is_discarded(monkeypatch) -> None:
+    """The strongest guard: a quote not in the turn means the judge invented
+    its evidence."""
+    monkeypatch.setattr(bj, "_stub", lambda t, c, r: {
+        "verdict": "fail", "citation": "text that is nowhere in the turn",
+        "reason": "x"})
+    r = bj.evaluate("a turn about something else", "CONTRACT-05", _rubric())
+    assert r["counted"] is False
+    assert "does not appear" in r["discarded"]
+
+
+def test_a_citation_matching_apart_from_whitespace_is_accepted(monkeypatch) -> None:
+    """Judges reflow whitespace. That is not fabrication."""
+    monkeypatch.setattr(bj, "_stub", lambda t, c, r: {
+        "verdict": "fail", "citation": "about   two\n days", "reason": "x"})
+    r = bj.evaluate("it should take about two days to finish", "CONTRACT-05",
+                    _rubric())
+    assert r["counted"] is True
+
+
+def test_an_unusable_verdict_raises(monkeypatch) -> None:
+    monkeypatch.setattr(bj, "_stub", lambda t, c, r: {"verdict": "maybe",
+                                                      "citation": "x", "reason": "y"})
+    with pytest.raises(bj.JudgeError):
+        bj.evaluate("a turn", "CONTRACT-05", _rubric())
+
+
+# --- the property that makes any of this worth having --------------------
+
+def test_a_working_judge_is_reported_scorable() -> None:
+    report = bj.discriminate(backend="stub")
+    assert report["scorable_contracts"], report["per_contract"]
+    assert not report["unscorable_contracts"]
+
+
+@pytest.mark.parametrize("backend", ["always-pass", "always-fail"])
+def test_a_degenerate_judge_scores_nothing(backend: str) -> None:
+    """If the harness cannot catch these, no verdict it ever reports is
+    evidence."""
+    report = bj.discriminate(backend=backend)
+    assert report["scorable_contracts"] == []
+    for stats in report["per_contract"].values():
+        assert stats["discriminates"] is False
+
+
+def test_getting_only_the_passes_right_is_not_discrimination() -> None:
+    """always-pass gets every honouring turn correct. Judging on that alone
+    would certify a judge that never fails anything."""
+    report = bj.discriminate(backend="always-pass")
+    stats = report["per_contract"]["CONTRACT-05"]
+    assert stats["true_pass"] > 0
+    assert stats["true_fail"] == 0
+    assert stats["discriminates"] is False
+
+
+# --- an unavailable judge is not a bad judge -----------------------------
+
+def test_a_judge_that_never_ran_is_reported_separately(monkeypatch) -> None:
+    """Found while running this for real: with no API credit, every call
+    errored and the report read CANNOT TELL APART — a billing problem looking
+    like a verdict about the contracts."""
+    def boom(turn, contract, rubric, model):
+        raise bj.JudgeError("openai call failed: no credits remaining")
+    monkeypatch.setattr(bj, "_openai", boom)
+
+    report = bj.discriminate(backend="openai")
+
+    assert report["judge_available"] is False
+    for stats in report["per_contract"].values():
+        assert stats["judge_ran"] is False
+        assert stats["errored"] > 0
+        assert "credits" in stats["last_error"]
+
+
+def test_the_unavailable_case_says_so_in_the_report(monkeypatch) -> None:
+    def boom(turn, contract, rubric, model):
+        raise bj.JudgeError("openai call failed: no credits remaining")
+    monkeypatch.setattr(bj, "_openai", boom)
+
+    text = bj.render(bj.discriminate(backend="openai"))
+    assert "JUDGE UNAVAILABLE" in text
+    assert "not a judgement about" in text
+
+
+def test_an_available_judge_is_not_reported_unavailable() -> None:
+    report = bj.discriminate(backend="stub")
+    assert report["judge_available"] is True
+    for stats in report["per_contract"].values():
+        assert stats["errored"] == 0
+
+
+# --- the openai backend, without calling it ------------------------------
+
+def test_openai_backend_refuses_without_a_key(monkeypatch) -> None:
+    """Must fail the same way whether or not the optional package happens to be
+    installed — this passed locally and failed in CI because the import error
+    fired first on a machine without it."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(bj.JudgeError, match="OPENAI_API_KEY"):
+        bj._openai("turn", "CONTRACT-05", _rubric(), "gpt-4o")
+
+
+def test_the_optional_package_is_not_needed_to_report_a_missing_key(
+    monkeypatch
+) -> None:
+    """Simulates CI, where the openai package is absent. The error must still
+    name the missing key rather than the missing package."""
+    import builtins
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    real_import = builtins.__import__
+
+    def no_openai(name, *args, **kwargs):
+        if name == "openai":
+            raise ImportError("No module named 'openai'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_openai)
+    with pytest.raises(bj.JudgeError, match="OPENAI_API_KEY"):
+        bj._openai("turn", "CONTRACT-05", _rubric(), "gpt-4o")
+
+
+def test_no_test_in_this_file_calls_a_real_model() -> None:
+    """Guard against a future edit sending transcripts to a third party during
+    an ordinary test run.
+
+    The needles are assembled from fragments so this check cannot match its own
+    source and fail on itself.
+    """
+    live = "open" + "ai"
+    cli_flag = "--backend " + live
+    kwarg = 'backend="' + live + '"'
+
+    lines = Path(__file__).read_text(encoding="utf-8").splitlines()
+    offenders = []
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("#") or "cli_flag" in line or "kwarg" in line:
+            continue
+        if cli_flag in line:
+            offenders.append((i + 1, line.strip()))
+        elif kwarg in line:
+            window = "\n".join(lines[max(0, i - 6):i + 2])
+            if "monkeypatch" not in window:
+                offenders.append((i + 1, line.strip()))
+    assert not offenders, (
+        f"a test would call the live judge for real: {offenders}")
+
+
+# --- command line --------------------------------------------------------
+
+def _cli(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(SCRIPT), *args],
+                          capture_output=True, text=True, timeout=120)
+
+
+def test_cli_discriminate_succeeds_for_a_working_judge() -> None:
+    r = _cli("discriminate", "--backend", "stub")
+    assert r.returncode == 0
+    assert "DISCRIMINATES" in r.stdout
+
+
+@pytest.mark.parametrize("backend", ["always-pass", "always-fail"])
+def test_cli_discriminate_fails_for_a_degenerate_judge(backend: str) -> None:
+    r = _cli("discriminate", "--backend", backend)
+    assert r.returncode == 1
+    assert "CANNOT TELL APART" in r.stdout
+
+
+def test_cli_json_is_parseable() -> None:
+    payload = json.loads(_cli("discriminate", "--backend", "stub",
+                              "--format", "json").stdout)
+    assert payload["scorable_contracts"]
+
+
+def test_cli_judge_rejects_an_unknown_contract(tmp_path: Path) -> None:
+    turn = tmp_path / "turn.txt"
+    turn.write_text("some text", encoding="utf-8")
+    r = _cli("judge", "--contract", "CONTRACT-99", "--turn-file", str(turn))
+    assert r.returncode == 2
+
+
+def test_cli_judge_reports_a_single_verdict(tmp_path: Path) -> None:
+    turn = tmp_path / "turn.txt"
+    turn.write_text("This should take about two days to finish.", encoding="utf-8")
+    r = _cli("judge", "--contract", "CONTRACT-05", "--turn-file", str(turn))
+    payload = json.loads(r.stdout)
+    assert payload["contract"] == "CONTRACT-05"
+    assert payload["verdict"] == "fail"
+    assert payload["citation"]
