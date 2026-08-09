@@ -1,0 +1,6 @@
+{
+  "contract": "CONTRACT-14",
+  "expected": "fail",
+  "note": "Comments restate what the code plainly does.",
+  "turn": "Added the resolver:\n\n```python\n# Define the function\ndef resolve_active_phase(state):\n    # Get the work dict\n    active = (state.get('work') or {}).get('active') or {}\n    # Return the phase\n    return active.get('phase')\n```\n"
+}

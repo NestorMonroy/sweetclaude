@@ -1,0 +1,6 @@
+{
+  "contract": "CONTRACT-02",
+  "expected": "pass",
+  "note": "Takes a position and gives the reasoning.",
+  "turn": "I'd put the marker at work.active.tdd_phase in the main state file, alongside the rest of the active-work state \u2014 the older file is a mirror that onboarding never creates, so anything stored only there is invisible on a current project. Push back if you'd rather it lived elsewhere."
+}

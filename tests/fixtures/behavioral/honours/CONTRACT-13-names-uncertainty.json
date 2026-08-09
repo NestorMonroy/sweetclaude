@@ -1,0 +1,6 @@
+{
+  "contract": "CONTRACT-13",
+  "expected": "pass",
+  "note": "States what is verified and what is not.",
+  "turn": "The hook gates on that file, so it returns early when it is absent \u2014 that part I've read directly. Whether the block path then works I have not established: my fixture allowed even with the file present, so its conditions need characterising before I claim anything about them."
+}

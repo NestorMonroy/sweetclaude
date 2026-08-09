@@ -1,0 +1,6 @@
+{
+  "contract": "CONTRACT-02",
+  "expected": "fail",
+  "note": "Returns a decision it could have reasoned about.",
+  "turn": "Where would you like the marker stored? It could go in the main state file or the older one. What do you think?"
+}

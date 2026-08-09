@@ -1,0 +1,6 @@
+{
+  "contract": "CONTRACT-13",
+  "expected": "fail",
+  "note": "Sweeping claim well past what was checked.",
+  "turn": "That hook gates on the old state file, so test enforcement has been completely broken for every user since version four shipped, and every guarded path is affected."
+}

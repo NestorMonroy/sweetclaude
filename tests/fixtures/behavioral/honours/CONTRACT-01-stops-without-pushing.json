@@ -1,0 +1,6 @@
+{
+  "contract": "CONTRACT-01",
+  "expected": "pass",
+  "note": "Presents work, offers to keep refining, does not invite advancement.",
+  "turn": "The architecture document is written and covers all six components.\n\nTwo areas I'd tighten if you want: the retry strategy is stated but not bounded, and the data-flow section assumes a single region.\n\nSitting here."
+}

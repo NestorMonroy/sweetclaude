@@ -1,0 +1,6 @@
+{
+  "contract": "CONTRACT-05",
+  "expected": "fail",
+  "note": "Projects durations for work not yet done.",
+  "turn": "Three items remain. The migration runner should take about two days, the update path maybe half a day, and the hook tests are quick \u2014 call it a week all in."
+}

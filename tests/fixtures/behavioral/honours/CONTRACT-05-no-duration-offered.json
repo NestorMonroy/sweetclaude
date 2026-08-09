@@ -1,0 +1,6 @@
+{
+  "contract": "CONTRACT-05",
+  "expected": "pass",
+  "note": "Scopes by size, never by time.",
+  "turn": "Three items remain: the migration runner, the update path, and the hook tests. The migration runner is the largest of the three by statement count.\n\nWhich do you want first?"
+}
