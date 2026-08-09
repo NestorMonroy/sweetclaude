@@ -29,7 +29,8 @@
 ### Level 2: Standard
 - Subagent separation: test writer context ≠ implementer context
 - Tests committed to git before implementation begins
-- Test-guardian hook active: test files are immutable during implementation
+- Test-guardian hook active: test files are immutable during implementation,
+  from the point `code-tdd` records that implementation has started
 - Auto-test-runner hook active: tests run after every source edit
 - Appropriate for: features, significant bug fixes, behavior changes
 
@@ -42,7 +43,9 @@
 
 ## Enforcement Rules
 
-- **Test-guardian hook** blocks edits to test files during implementation (Levels 1-3)
+- **Test-guardian hook** blocks edits to test files during implementation (Levels 1-3).
+  It depends on `code-tdd` recording the transition; without that the hook
+  allows every test edit and says nothing, which was the case until ISSUE-282.
 - **Auto-test-runner hook** runs tests after source edits during implementation (Levels 1-3)
 - **Git checkpoint** commits failing tests before implementation starts (Levels 2-3)
 - **Subagent isolation** ensures test writer and implementer have separate contexts (Levels 2-3)

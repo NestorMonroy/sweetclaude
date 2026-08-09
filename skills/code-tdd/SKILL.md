@@ -89,10 +89,22 @@ After the user selects a level, record the selection:
 
 1. **RED:** Write a failing test for the behavior. Use the project's detected test runner.
 2. **Verify RED:** Run the test. It must fail. If it passes, the test is wrong — rewrite it.
+
+   Once RED is confirmed, freeze the tests:
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/tdd_phase.py set --phase implementing --project-dir .
+   ```
+   This is what makes "tests are immutable during implementation" real — the
+   guardian hook reads this marker. Skipping it means the rule is documented
+   and unenforced (ISSUE-282).
+
 3. **GREEN:** Write the minimum code to pass the test.
 4. **Verify GREEN:** Run the test. It must pass. All other tests must still pass.
 5. **REFACTOR:** Clean up. Tests must stay green after each change.
-6. **Repeat** for next behavior.
+6. **Repeat** for next behavior. Before writing the next test, unfreeze:
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/tdd_phase.py set --phase writing_tests --project-dir .
+   ```
 
 ## Level 2: Standard
 
@@ -100,7 +112,10 @@ After the user selects a level, record the selection:
 
 2. **Verify RED:** Run tests. All must fail (the modules do not exist).
 
-3. **Commit tests:** Auto-commit with `test: RED - [story-id] failing tests`. This is the git checkpoint. Test files are now immutable.
+3. **Commit tests:** Auto-commit with `test: RED - [story-id] failing tests`. This is the git checkpoint. Test files are now immutable — record that, or the immutability is a claim rather than a fact:
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/tdd_phase.py set --phase implementing --project-dir .
+   ```
 
 4. **Spawn implementer subagent.** The implementer receives:
    - Test files (READ ONLY)
@@ -112,7 +127,10 @@ After the user selects a level, record the selection:
 
 6. **Verify GREEN:** All tests pass.
 
-7. **REFACTOR:** Clean up implementation. Run tests after each change.
+7. **REFACTOR:** Clean up implementation. Run tests after each change. When the story is done, release the freeze:
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/tdd_phase.py clear --project-dir .
+   ```
 
 ## Level 3: Full (from Gherkin)
 
@@ -176,7 +194,14 @@ After the user selects a level, record the selection:
 ## Rules — Non-Negotiable
 
 ### Tests Are Immutable During Implementation
-The test-guardian hook enforces this. Editing a test file during implementation triggers: "Test files are immutable during implementation. Fix your code, not the tests."
+The test-guardian hook enforces this, but only once this skill has recorded
+that implementation has started. Editing a test file then triggers: "Test files
+are immutable during implementation. Fix your code, not the tests."
+
+The hook reads `work.active.tdd_phase` from `.sweetclaude/state/sweetclaude.yaml`.
+Nothing else writes it. If the `tdd_phase.py set --phase implementing` step is
+skipped, the hook allows every test edit and says nothing — the rule reads as
+enforced and is not. That was the state of things until ISSUE-282.
 
 Override requires explicit user approval.
 
