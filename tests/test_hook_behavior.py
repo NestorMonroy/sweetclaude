@@ -139,21 +139,37 @@ def test_wip_limit_allows_when_gates_are_not_compiled(v3_project: Path) -> None:
     assert decision(run_hook("wip-limit.sh", v3_project)) is True
 
 
-def test_wip_limit_is_silently_disabled_on_a_v4_project(v4_project: Path) -> None:
-    """Recorded, not endorsed — ISSUE-281.
+def test_wip_limit_applies_on_a_v4_project(v4_project: Path) -> None:
+    """ISSUE-281 regression.
 
-    The hook reads the active phase from phase.yaml and allows when that file
-    is absent. v4 onboarding never creates phase.yaml, so on a correctly
-    configured project in kanban mode, at three items over a limit of two,
-    the WIP limit does not apply. The phase is in sweetclaude.yaml under
-    work.active.phase, which the hook never reads.
-
-    This test asserts the current behavior so a fix flips it deliberately.
+    The hook used to read the active phase from phase.yaml and allow when that
+    file was absent. Onboarding never creates phase.yaml, so the WIP limit did
+    not apply on any correctly configured v4 project — choosing kanban is
+    choosing the limit, and the limit was off. Phase now resolves from
+    work.active.phase in sweetclaude.yaml.
     """
     _kanban_at_wip(v4_project)
     assert not (v4_project / ".sweetclaude" / "state" / "phase.yaml").exists()
-    assert decision(run_hook("wip-limit.sh", v4_project)) is True, (
-        "ISSUE-281 appears fixed — update this test to assert the block")
+    assert decision(run_hook("wip-limit.sh", v4_project)) is False
+
+
+def test_wip_limit_still_reads_the_mirror_for_projects_mid_migration(
+    tmp_path: Path
+) -> None:
+    """A project part-way through migration may have phase.yaml and no
+    work.active yet. The fallback must keep working."""
+    p = tmp_path / "mid"
+    state = p / ".sweetclaude" / "state"
+    state.mkdir(parents=True)
+    (state / "sweetclaude.yaml").write_text(
+        yaml.safe_dump({"schema_version": 2, "framework": {"setup_complete": True}}),
+        encoding="utf-8")
+    (state / "phase.yaml").write_text(
+        yaml.safe_dump({"schema_version": 2, "phase": "IMPLEMENT"}), encoding="utf-8")
+    _git_init(p)
+    _kanban_at_wip(p)
+
+    assert decision(run_hook("wip-limit.sh", p)) is False
 
 
 # --- phase-dwelling-guard ------------------------------------------------
@@ -206,21 +222,31 @@ def test_phase_dwelling_guard_allows_when_no_transcript_is_available(
     assert r.returncode == 0
 
 
-def test_phase_dwelling_guard_is_silently_disabled_on_a_v4_project(
-    v4_project: Path
-) -> None:
-    """Recorded, not endorsed — ISSUE-281.
+def test_phase_dwelling_guard_runs_on_a_v4_project(v4_project: Path) -> None:
+    """ISSUE-281 regression.
 
-    The guard returns early when phase.yaml is absent, so on a v4 project it
-    never runs even with the guardian enabled and unambiguous advancement
-    language in the transcript. The rule reads as enforced and is not.
+    The guard used to return before reading the transcript whenever phase.yaml
+    was absent, so it never ran on a v4 project even with the Protocol Guardian
+    explicitly enabled. A user who turned the guardian on got no enforcement
+    and no indication it was inactive.
     """
     _enable_guardian(v4_project)
     t = _transcript(v4_project, ADVANCEMENT)
     r = run_hook("phase-dwelling-guard.sh", v4_project,
                  env={"CLAUDE_TRANSCRIPT_PATH": str(t)})
-    assert r.returncode == 0, (
-        "ISSUE-281 appears fixed — update this test to assert the block")
+    assert r.returncode != 0 or decision(r) is False, (
+        "guard did not act on advancement language on a v4 project")
+
+
+def test_phase_dwelling_guard_still_allows_clean_responses_on_v4(
+    v4_project: Path
+) -> None:
+    """Enabling the guard must not make it block everything."""
+    _enable_guardian(v4_project)
+    t = _transcript(v4_project, "Here is the document. Push back if it is wrong.")
+    r = run_hook("phase-dwelling-guard.sh", v4_project,
+                 env={"CLAUDE_TRANSCRIPT_PATH": str(t)})
+    assert r.returncode == 0
 
 
 # --- tdd-prewrite-guardian -----------------------------------------------

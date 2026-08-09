@@ -12,8 +12,12 @@ if [ -z "$PROJECT_DIR" ]; then
   exit 0
 fi
 
-# SweetClaude not active for this project — allow
-if [ ! -f "$PROJECT_DIR/.sweetclaude/state/phase.yaml" ]; then
+# SweetClaude not active for this project — allow.
+# sweetclaude.yaml is canonical; phase.yaml is a mirror onboarding never
+# creates, so gating on it alone disabled this guard on every v4 project even
+# with the Protocol Guardian explicitly enabled (ISSUE-281).
+if [ ! -f "$PROJECT_DIR/.sweetclaude/state/sweetclaude.yaml" ] \
+   && [ ! -f "$PROJECT_DIR/.sweetclaude/state/phase.yaml" ]; then
   exit 0
 fi
 
