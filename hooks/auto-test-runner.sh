@@ -30,16 +30,42 @@ if [ -z "$STATE_DIR" ]; then
 fi
 
 PHASE_FILE="${STATE_DIR}/phase.yaml"
+SC_YAML="${STATE_DIR}/sweetclaude.yaml"
 PROJECT_CONFIG="${STATE_DIR}/project.yaml"
 
-# If no phase file or project config, skip
-if [ ! -f "$PHASE_FILE" ] || [ ! -f "$PROJECT_CONFIG" ]; then
+# No state at all, or no project config — skip
+if { [ ! -f "$PHASE_FILE" ] && [ ! -f "$SC_YAML" ]; } || [ ! -f "$PROJECT_CONFIG" ]; then
   exit 0
 fi
 
+# Resolve phase and tdd_phase from sweetclaude.yaml, which is canonical, and
+# fall back to the phase.yaml mirror for projects mid-migration. Reading only
+# the mirror meant this never ran on a v4 project (ISSUE-281), and tdd_phase
+# was written by nothing at all (ISSUE-282).
+read_tdd_state() {
+  SC_YAML="$1" PHASE_YAML="$2" python3 - <<'PYEOF' 2>/dev/null
+import os, yaml
+
+def load(path):
+    try:
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+
+sc = load(os.environ.get("SC_YAML", ""))
+mirror = load(os.environ.get("PHASE_YAML", ""))
+active = (sc.get("work") or {}).get("active") or {}
+phase = active.get("phase") or mirror.get("phase") or ""
+tdd = active.get("tdd_phase") or mirror.get("tdd_phase") or ""
+print(f"{phase}\n{tdd}")
+PYEOF
+}
+
 # Only run during implementation phase, tdd_phase = implementing
-PHASE=$(grep "^phase:" "$PHASE_FILE" 2>/dev/null | awk '{print $2}')
-TDD_PHASE=$(grep "^tdd_phase:" "$PHASE_FILE" 2>/dev/null | awk '{print $2}')
+TDD_STATE=$(read_tdd_state "$SC_YAML" "$PHASE_FILE")
+PHASE=$(printf '%s' "$TDD_STATE" | sed -n '1p')
+TDD_PHASE=$(printf '%s' "$TDD_STATE" | sed -n '2p')
 
 if [[ "$PHASE" != "implement" && "$PHASE" != "IMPLEMENT" ]] || [[ "$TDD_PHASE" != "implementing" ]]; then
   exit 0

@@ -20,19 +20,49 @@ if [ -z "$PROJECT_DIR" ]; then
   exit 0
 fi
 
-# Resolve phase file — .sweetclaude/ first, legacy fallback
+# Resolve state files — .sweetclaude/ first, legacy fallback
+SC_YAML=""
 PHASE_FILE=""
+if [ -f "$PROJECT_DIR/.sweetclaude/state/sweetclaude.yaml" ]; then
+  SC_YAML="$PROJECT_DIR/.sweetclaude/state/sweetclaude.yaml"
+elif [ -f "${PROJECT_DIR}-sweetclaude/state/sweetclaude.yaml" ]; then
+  SC_YAML="${PROJECT_DIR}-sweetclaude/state/sweetclaude.yaml"
+fi
 if [ -f "$PROJECT_DIR/.sweetclaude/state/phase.yaml" ]; then
   PHASE_FILE="$PROJECT_DIR/.sweetclaude/state/phase.yaml"
 elif [ -f "${PROJECT_DIR}-sweetclaude/state/phase.yaml" ]; then
   PHASE_FILE="${PROJECT_DIR}-sweetclaude/state/phase.yaml"
 fi
 
-# If no phase file, SweetClaude isn't active — allow
-if [ -z "$PHASE_FILE" ]; then
+# Neither state file — SweetClaude isn't active, allow
+if [ -z "$SC_YAML" ] && [ -z "$PHASE_FILE" ]; then
   echo '{"ok": true}'
   exit 0
 fi
+# Resolve phase and tdd_phase from sweetclaude.yaml, which is canonical, and
+# fall back to the phase.yaml mirror for projects mid-migration. Reading only
+# the mirror meant this never ran on a v4 project (ISSUE-281), and tdd_phase
+# was written by nothing at all (ISSUE-282).
+read_tdd_state() {
+  SC_YAML="$1" PHASE_YAML="$2" python3 - <<'PYEOF' 2>/dev/null
+import os, yaml
+
+def load(path):
+    try:
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+
+sc = load(os.environ.get("SC_YAML", ""))
+mirror = load(os.environ.get("PHASE_YAML", ""))
+active = (sc.get("work") or {}).get("active") or {}
+phase = active.get("phase") or mirror.get("phase") or ""
+tdd = active.get("tdd_phase") or mirror.get("tdd_phase") or ""
+print(f"{phase}\n{tdd}")
+PYEOF
+}
+
 
 # Check john-wick mode locked files
 JW_STATE="$PROJECT_DIR/.sweetclaude/state/john-wick.yaml"
@@ -70,8 +100,9 @@ PYEOF
 fi
 
 # Check if we're in implementation phase
-PHASE=$(grep "^phase:" "$PHASE_FILE" 2>/dev/null | awk '{print $2}')
-TDD_PHASE=$(grep "^tdd_phase:" "$PHASE_FILE" 2>/dev/null | awk '{print $2}')
+TDD_STATE=$(read_tdd_state "$SC_YAML" "$PHASE_FILE")
+PHASE=$(printf '%s' "$TDD_STATE" | sed -n '1p')
+TDD_PHASE=$(printf '%s' "$TDD_STATE" | sed -n '2p')
 
 # Only block during implementation phase when tdd_phase is "implementing"
 if [[ "$PHASE" != "implement" && "$PHASE" != "IMPLEMENT" ]] || [[ "$TDD_PHASE" != "implementing" ]]; then
@@ -93,16 +124,25 @@ TEST_PATTERNS=(
   "test_"
 )
 
+# Match against the path *within the project*, not the absolute path. A
+# project checked out under a directory whose name contains "test_" or
+# "tests/" would otherwise have every source file treated as a test file and
+# refused during implementation (ISSUE-282). Whether a file is a test is a
+# property of where it sits in the project, not where the project sits on disk.
+REAL_PROJECT=$(cd "$PROJECT_DIR" 2>/dev/null && pwd -P || echo "$PROJECT_DIR")
+REAL_TARGET=$(cd "$(dirname "$FILE")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$FILE")" || echo "$FILE")
+REL_FILE="${REAL_TARGET#"$REAL_PROJECT"/}"
+
 IS_TEST=false
 for pattern in "${TEST_PATTERNS[@]}"; do
-  if [[ "$FILE" == *"$pattern"* ]]; then
+  if [[ "$REL_FILE" == *"$pattern"* ]]; then
     IS_TEST=true
     break
   fi
 done
 
 # Also check .feature files (Gherkin specs are immutable during implementation)
-if [[ "$FILE" == *.feature ]]; then
+if [[ "$REL_FILE" == *.feature ]]; then
   IS_TEST=true
 fi
 
