@@ -276,7 +276,19 @@ if [ ${#STATE_CONTENT} -gt 9500 ]; then
 [state truncated — run sweetclaude:status for full context]"
 fi
 
+# Report protections that cannot run. Three of them were switched off for
+# months with no signal, because allowing looked identical to approving. This
+# surfaces it at session start, before the protection is needed.
+PROTECTION_NOTICE=""
+_PS="${CLAUDE_PLUGIN_ROOT:-$(dirname "$(dirname "$0")")}/scripts/protection_status.py"
+if [ -f "$_PS" ]; then
+  PROTECTION_NOTICE=$(python3 "$_PS" --project-dir "$PROJECT_DIR" 2>/dev/null || true)
+fi
+
 CTX="SweetClaude is active. Pre-loaded session state:"$'\n\n'"${STATE_CONTENT}"
+if [ -n "$PROTECTION_NOTICE" ]; then
+  CTX="${CTX}"$'\n\n'"${PROTECTION_NOTICE}"
+fi
 
 _BR=$'\033[1;31m'
 _BB=$'\033[1;34m'
