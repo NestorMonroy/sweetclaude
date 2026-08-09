@@ -8,6 +8,7 @@ set -euo pipefail
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 EFFECTIVE_GATES="$PROJECT_DIR/.sweetclaude/state/effective-gates.yaml"
 PHASE_YAML="$PROJECT_DIR/.sweetclaude/state/phase.yaml"
+SC_YAML="$PROJECT_DIR/.sweetclaude/state/sweetclaude.yaml"
 
 allow()  { echo '{"ok": true}'; exit 0; }
 block() { python3 -c "import json,sys; print(json.dumps({'ok':False,'reason':sys.argv[1]}))" "$1"; exit 0; }
@@ -22,13 +23,26 @@ print(d.get('mode','flow'))
 
 [ "$mode" = "kanban" ] || allow
 
-[ -f "$PHASE_YAML" ] || allow
+# Phase lives at work.active.phase in sweetclaude.yaml. phase.yaml is a mirror
+# the story controllers write lazily and onboarding never creates, so gating on
+# it disabled this hook entirely on v4 projects (ISSUE-281).
+phase=$(SC_YAML="$SC_YAML" PHASE_YAML="$PHASE_YAML" python3 - <<'PYEOF' 2>/dev/null || echo ""
+import os, yaml
 
-phase=$(python3 -c "
-import yaml
-with open('$PHASE_YAML') as f: d=yaml.safe_load(f)
-print(d.get('phase',''))
-" 2>/dev/null) || allow
+def load(path):
+    try:
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+
+sc = load(os.environ.get("SC_YAML", ""))
+phase = ((sc.get("work") or {}).get("active") or {}).get("phase")
+if not phase:
+    phase = load(os.environ.get("PHASE_YAML", "")).get("phase")
+print(phase or "")
+PYEOF
+)
 
 [ "$phase" = "IMPLEMENT" ] || allow
 
