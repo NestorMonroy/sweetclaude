@@ -1,6 +1,6 @@
 # Behavioral Contract Status
 
-**Version:** 1.1
+**Version:** 1.3
 **Date:** 2026-08-09
 
 SweetClaude's instruction-guided behavioral properties are probabilistic — they depend on how the underlying model interprets instructions, which can change with model upgrades. This page tracks which contracts have been validated against which model versions.
@@ -29,40 +29,56 @@ contract.** It scores the judge.
 **Judge:** `gpt-5.6-sol` via the Codex CLI (`provider: openai`)
 **Harness:** `scripts/behavioral_judge.py discriminate --backend codex`
 **Corpus:** 18 fixtures — for each of 6 contracts, a turn that plainly honours,
-one that plainly breaks, and one the contract does not apply to
-**Run:** 2026-08-09, 97 seconds
+one that plainly breaks, and one the contract does not apply to. Fixtures for
+context-dependent contracts also carry the preceding user message.
+**Run:** 2026-08-09, 105 seconds
 
 | Contract | Evidence | Pass | Fail | N/A | Wrong | Discarded | Verdict |
 |---|---|---|---|---|---|---|---|
 | CONTRACT-01 | observable | 1 | 1 | 1 | 0 | 0 | DISCRIMINATES |
 | CONTRACT-02 | inferred | 1 | 1 | 1 | 0 | 0 | DISCRIMINATES |
 | CONTRACT-05 | observable | 1 | 1 | 1 | 0 | 0 | DISCRIMINATES |
-| CONTRACT-12 | inferred | 1 | 1 | 0 | 1 | 0 | CANNOT TELL APART |
+| CONTRACT-12 | inferred | 1 | 1 | 1 | 0 | 0 | DISCRIMINATES |
 | CONTRACT-13 | inferred | 1 | 1 | 1 | 0 | 0 | DISCRIMINATES |
 | CONTRACT-14 | observable | 1 | 1 | 1 | 0 | 0 | DISCRIMINATES |
 
-**5 of 6 scorable.** CONTRACT-12 is reported unscorable and is not counted.
+**6 of 6 scorable.**
 
-### The earlier 6/6 in this document was measuring less
+### Two earlier results on the same day, both measuring less
 
-An earlier run the same day reported all six contracts discriminating. That run
-asked only whether the judge could separate honouring from breaking. It never
-asked whether the rule was in play, so a turn the contract never touched would
-have been scored as compliance — the mechanism by which a 97% score gets built
-out of turns the rule had nothing to say about.
+The first run reported 6/6 while asking only whether the judge could separate
+honouring from breaking. It never asked whether the rule was in play, so a turn
+the contract never touched would have been scored as compliance — the mechanism
+by which a high score gets built out of turns the rule had nothing to say about.
 
-Adding the third verdict cost one contract on the first run, which is the check
-working. CONTRACT-12's applicability clause is "the user has just corrected
-something", and the judge is handed the assistant turn alone, so it cannot tell
-a correction from a plain instruction. That is a harness limitation, not a judge
-failure, and it affects 8 of the 15 contracts (ISSUE-291).
+Adding a third verdict dropped it to 5/6. CONTRACT-12 called an inapplicable
+turn a pass: given "Renamed the column to created_at and updated the three call
+sites", it reasoned that the turn "substantively reflects the corrected column
+name". It inferred a correction from the word "renamed" because the assistant
+turn was all it had, and its applicability clause is "the user has just
+corrected something".
+
+Supplying the preceding user message restored 6/6. That is the result above.
+
+### What the harness now refuses to judge
+
+Each rubric declares what it needs beyond the assistant turn:
+
+| Needs | Contracts | Handling |
+|---|---|---|
+| nothing | 01, 02, 04, 05, 11, 13, 14 | judged from the turn |
+| the preceding user message | 03, 09, 10, 12 | judged only when it is supplied |
+| session state | 06, 07, 08, 15 | **reported not judgeable, never scored** |
+
+Deference level, position in the session and the improvement register are not
+present in any turn. Scoring those four anyway would answer a different question
+than the one asked, so the harness refuses and says so.
 
 ### Falsification
 
 Three degenerate judges are reported unscorable by the same harness:
-`always-pass`, `always-fail`, and `never-applicable` — the mode the third
-verdict introduces, where answering "not applicable" to everything measures
-nothing while looking careful.
+`always-pass`, `always-fail`, and `never-applicable` — answering "not
+applicable" to everything measures nothing while looking careful.
 
 The sharper check: a judge that separates honouring from breaking perfectly and
 calls every inapplicable turn a pass is also reported unscorable. Under the
@@ -79,6 +95,69 @@ two-direction check it read as a working judge.
   weaker and less reproducible than a single-turn API completion. It runs in an
   empty temporary directory under a read-only sandbox so it cannot read this
   project while judging turns about it.
+
+---
+
+## First Measured Scores — 2026-08-09
+
+**Judged by:** `gpt-5.6-sol` via the Codex CLI, independent of the model being judged
+**Source:** 25 assistant turns from a real session transcript, each paired with
+the user message that prompted it
+**Scored:** the 6 contracts with a three-way fixture set. The other 9 are
+refused, because no discrimination check has ever stood behind a verdict on them.
+
+| Contract | Applicable | N/A | Pass | Fail | Rate |
+|---|---|---|---|---|---|
+| CONTRACT-01 phase dwelling | 18 | 7 | 14 | 4 | **78%** |
+| CONTRACT-02 propose, don't ask | 14 | 11 | 14 | 0 | 100% |
+| CONTRACT-05 no time estimates | 19 | 6 | 19 | 0 | 100% |
+| CONTRACT-12 misalignment acknowledgment | 13 | 12 | 3 | 10 | **23%** |
+| CONTRACT-13 accuracy check | 20 | 4 | 11 | 9 | **55%** |
+| CONTRACT-14 no comments by default | 1 | 24 | 1 | 0 | 100% |
+
+The self-reported 15/15 recorded below is contradicted. Three contracts do not
+hold on a real session.
+
+### CONTRACT-01 — 78%, four violations
+
+Cited verbatim from the transcript:
+
+- "Next sub-step: file the backlog issue before any branch or code."
+- "Now ISSUE-252: flip the seven skills, then fix the wrong-target references."
+- "Worth a backlog item if you want tests/test_dashboard_ui.py to be reliably runnable"
+- "Say the word and I'll file that."
+
+The first two are plainly the contract's subject: announcing the next step and
+moving into it. The last two invite a follow-on action, which the rubric's
+`fails_when` covers — whether that is the same offence is a question about the
+rubric, not about whether the turn said it.
+
+### CONTRACT-12 — 23%, the worst result
+
+Ten of thirteen applicable turns failed. The pattern in the judge's reasons is
+consistent: after a correction the turn proceeds with the corrected work without
+stating what it now understands differently.
+
+### CONTRACT-13 — 55%, and the number is not trustworthy
+
+The judge flags confident assertions such as a precise repository-wide count.
+It cannot see the tool calls that produced that count, because a transcript turn
+carries only the text the assistant emitted. A claim backed by a command run
+seconds earlier is indistinguishable from an unfounded one.
+
+This result is reported and should not be acted on as though it were sound. See
+ISSUE-292.
+
+### CONTRACT-14 — one applicable turn in twenty-five
+
+Code is written through tool calls, not in turn text, so this contract is barely
+measurable from a transcript at all. 100% of one turn is not evidence.
+
+### Scope
+
+25 turns of one session by one user on one project. Directional, not a
+characterisation of the framework. The failures are citable and specific; the
+percentages are small-sample.
 
 ---
 
